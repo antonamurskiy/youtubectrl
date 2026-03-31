@@ -1,0 +1,6 @@
+node_modules
+.env
+.tokens.json
+.history.json
+cookies.txt
+.yt-cookies.txt
