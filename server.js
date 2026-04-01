@@ -324,12 +324,19 @@ app.get("/api/home", async (req, res) => {
         const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
         return res.json(videos.map(v => {
           const e = enrichMap[v.id];
-          if (!e) return v;
-          return { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers };
+          const h = history.find(x => x.url === v.url);
+          const merged = e ? { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
+          if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
+          return merged;
         }));
       } catch {}
     }
-    res.json(videos);
+    // Even without enrichment, add progress
+    res.json(videos.map(v => {
+      const h = history.find(x => x.url === v.url);
+      if (h?.position > 0 && h?.duration > 0) { v.savedPosition = h.position; v.savedDuration = h.duration; }
+      return v;
+    }));
   } catch (err) {
     console.error("Home feed failed:", err.message);
     res.json([]);
@@ -447,17 +454,23 @@ app.post("/api/play", async (req, res) => {
 
   try {
     const savedEntry = history.find((h) => h.url === url);
-    const resumePos = savedEntry?.position && savedEntry?.duration && savedEntry.position < savedEntry.duration - 5 ? savedEntry.position : 0;
+    const pos = savedEntry?.position || 0;
+    const dur = savedEntry?.duration || 0;
+    const resumePos = pos > 0 && dur > 0 && pos < dur * 0.95 && pos < dur - 10 ? pos : 0;
 
     // If mpv is already running, load new video in existing player
-    if (mpvProcess && !mpvProcess.killed) {
+    let reused = false;
+    if (mpvProcess) {
       try {
+        // Ping IPC to check if mpv is alive
+        await mpvCommand(["get_property", "pid"]);
         await mpvCommand(["loadfile", url, "replace"]);
         if (resumePos > 0) {
           setTimeout(() => mpvCommand(["seek", resumePos, "absolute"]).catch(() => {}), 2000);
         }
         nowPlaying = url;
         addToHistory(url, "");
+        reused = true;
         res.json({ ok: true });
 
         setTimeout(async () => {
@@ -467,17 +480,29 @@ app.post("/api/play", async (req, res) => {
           } catch {}
         }, 3000);
         return;
-      } catch {
-        // IPC failed — fall through to spawn new instance
-      }
+      } catch {}
     }
 
-    // No existing player — spawn new one
+    // No existing player or IPC failed — spawn new one
     try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
     mpvProcess = null;
+    await new Promise(r => setTimeout(r, 200));
     try { require("fs").unlinkSync("/tmp/mpv-socket"); } catch {}
 
+    // Calculate geometry for floating mode so mpv starts in the right place
+    let geometry = "";
+    if (!windowMode || windowMode === "floating") {
+      try {
+        const screens = getScreenInfo();
+        const main = screens.find(s => s.main) || screens[0];
+        const w = Math.round(main.w * 0.375);
+        const h = Math.round(w * 9 / 16);
+        geometry = `${w}x${h}+${main.w - w - 12}+38`;
+      } catch {}
+    }
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`];
+    if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
+    if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
 
@@ -491,22 +516,28 @@ app.post("/api/play", async (req, res) => {
 
     // Apply current window mode after mpv window appears
     const targetMode = windowMode;
-    setTimeout(async () => {
+    const applyWindowMode = async () => {
+      // Wait for mpv window to appear in aerospace
+      let wid = "";
+      for (let i = 0; i < 20; i++) {
+        await new Promise(r => setTimeout(r, 200));
+        wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        if (wid) break;
+      }
+      if (!wid) return;
+      await new Promise(r => setTimeout(r, 300));
       try {
         if (targetMode === "fullscreen") {
           await mpvCommand(["set_property", "fullscreen", true]);
         } else if (targetMode === "maximize") {
-          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-          if (wid) {
-            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-            execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
-          }
+          execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+          execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
         } else {
-          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-          if (wid) await floatTopRight(wid);
+          await floatTopRight(wid);
         }
       } catch {}
-    }, 1500);
+    };
+    applyWindowMode();
     addToHistory(url, "");
 
     // Clear old progress interval and start new one
@@ -855,20 +886,25 @@ print(json.dumps(screens))
   return JSON.parse(out.trim());
 }
 
-// Move mpv between monitors fullscreen — fs-screen 0=LG, 1=laptop
+// Move mpv between monitors fullscreen
 app.post("/api/move-monitor", async (req, res) => {
   const { target } = req.body;
-  const screen = target === "laptop" ? 1 : 0;
   try {
     // Ensure aerospace isn't in floating mode
     try {
       const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
       if (wid) execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
     } catch {}
+    // Find screen index dynamically — LG is main (origin 0,0), laptop is the other
+    const screens = getScreenInfo();
+    const mainIdx = screens.findIndex(s => s.main);
+    const otherIdx = screens.findIndex(s => !s.main);
+    const screen = target === "laptop" ? (otherIdx >= 0 ? otherIdx : 1) : (mainIdx >= 0 ? mainIdx : 0);
     await mpvCommand(["set_property", "fullscreen", false]);
     await new Promise((r) => setTimeout(r, 300));
     await mpvCommand(["set_property", "fs-screen", screen]);
     await new Promise((r) => setTimeout(r, 300));
+    await mpvCommand(["set_property", "ontop", false]);
     await mpvCommand(["set_property", "fullscreen", true]);
     windowMode = "fullscreen";
     res.json({ ok: true });
@@ -878,18 +914,20 @@ app.post("/api/move-monitor", async (req, res) => {
   }
 });
 
-// Float mpv window to top-right corner
+// Float mpv window to top-right corner of current screen
 async function floatTopRight(wid) {
-  execSync(`aerospace layout --window-id ${wid} floating`, { stdio: "ignore" });
-  const screen = await mpvCommand(["get_property", "fs-screen"]);
-  const isLaptop = screen?.data === 1;
-  const w = isLaptop ? 640 : 960;
-  const h = isLaptop ? 360 : 540;
+  try { execSync(`aerospace layout --window-id ${wid} floating`, { stdio: "ignore" }); } catch {}
   try {
+    const screens = getScreenInfo();
+    const main = screens.find(s => s.main) || screens[0];
+    const w = Math.round(main.w * 0.375);
+    const h = Math.round(w * 9 / 16);
+    const posX = main.w - w - 12;
     execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
-    const screenW = parseInt(execSync(`osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null || echo "0 0 2560 1440"`, { encoding: "utf8" }).trim().split(", ")[2] || "2560");
-    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${screenW - w - 12}, 12}'`, { stdio: "ignore" });
+    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, 38}'`, { stdio: "ignore" });
   } catch {}
+  // Always on top
+  try { await mpvCommand(["set_property", "ontop", true]); } catch {}
 }
 
 // Aerospace fullscreen (with dock visible) — exit mpv fullscreen first
@@ -905,6 +943,7 @@ app.post("/api/maximize", async (req, res) => {
     if (!wid) return res.json({ ok: true });
 
     if (force) {
+      try { await mpvCommand(["set_property", "ontop", false]); } catch {}
       execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
       execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
@@ -912,6 +951,7 @@ app.post("/api/maximize", async (req, res) => {
     } else {
       // Try to enter fullscreen — if already fullscreen, exit to floating
       try {
+        try { await mpvCommand(["set_property", "ontop", false]); } catch {}
         execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
         execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
         execSync(`aerospace fullscreen on --window-id ${wid} --fail-if-noop`, { stdio: "ignore" });
@@ -942,6 +982,7 @@ app.post("/api/fullscreen", async (_req, res) => {
       if (wid) await floatTopRight(wid);
       windowMode = "floating";
     } else {
+      await mpvCommand(["set_property", "ontop", false]);
       await mpvCommand(["set_property", "fullscreen", true]);
       windowMode = "fullscreen";
     }
