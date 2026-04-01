@@ -577,6 +577,9 @@ app.post("/api/play", async (req, res) => {
     mpvArgs.push(url);
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
 
+    // Focus LG workspace so mpv spawns there
+    try { execSync("aerospace workspace 1", { stdio: "ignore" }); } catch {}
+
     const child = spawn("mpv", mpvArgs, {
       stdio: "ignore",
     });
@@ -1035,6 +1038,8 @@ print(json.dumps(screens))
 
 // Move mpv between monitors — uses aerospace to move, then re-applies current window mode
 app.post("/api/move-monitor", async (req, res) => {
+  if (windowLock) return res.json({ ok: true, skipped: true });
+  windowLock = true;
   const { target } = req.body;
   try {
     const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
@@ -1044,14 +1049,22 @@ app.post("/api/move-monitor", async (req, res) => {
     const screenIdx = target === "laptop" ? screens.findIndex(s => s.isLaptop) : screens.findIndex(s => s.isMain);
     const idx = screenIdx >= 0 ? screenIdx : 0;
 
-    // Always exit everything first
+    const targetWs = target === "laptop" ? "8" : "1";
+
+    // Exit all fullscreen modes
     try { execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" }); } catch {}
     await mpvCommand(["set_property", "fullscreen", false]).catch(() => {});
     await new Promise(r => setTimeout(r, 500));
 
-    // Now set target screen and enter fullscreen there
+    // Move aerospace window to target workspace, then focus it
+    try {
+      execSync(`aerospace move-node-to-workspace --window-id ${wid} ${targetWs}`, { stdio: "ignore" });
+      execSync(`aerospace workspace ${targetWs}`, { stdio: "ignore" });
+    } catch {}
+    await new Promise(r => setTimeout(r, 200));
+
+    // Bounce through fullscreen on target screen to physically move mpv
     await mpvCommand(["set_property", "fs-screen", idx]);
-    await new Promise(r => setTimeout(r, 100));
     await mpvCommand(["set_property", "fullscreen", true]);
     if (windowMode !== "fullscreen") {
       await new Promise(r => setTimeout(r, 300));
@@ -1068,6 +1081,8 @@ app.post("/api/move-monitor", async (req, res) => {
   } catch (err) {
     console.error("Move failed:", err.message);
     res.status(500).json({ error: "Move failed" });
+  } finally {
+    windowLock = false;
   }
 });
 
@@ -1116,7 +1131,10 @@ async function floatOnScreen(wid, screenIdx) {
 }
 
 // Aerospace fullscreen (with dock visible) — exit mpv fullscreen first
+let windowLock = false;
 app.post("/api/maximize", async (req, res) => {
+  if (windowLock) return res.json({ ok: true });
+  windowLock = true;
   try {
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     const wasFullscreen = fs?.data === true;
@@ -1159,11 +1177,15 @@ app.post("/api/maximize", async (req, res) => {
   } catch (err) {
     console.error("Maximize failed:", err.message);
     res.status(500).json({ error: "Maximize failed" });
+  } finally {
+    windowLock = false;
   }
 });
 
 // Toggle fullscreen on/off — resize when exiting to fit current screen
 app.post("/api/fullscreen", async (_req, res) => {
+  if (windowLock) return res.json({ ok: true });
+  windowLock = true;
   try {
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
@@ -1181,6 +1203,8 @@ app.post("/api/fullscreen", async (_req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Fullscreen toggle failed" });
+  } finally {
+    windowLock = false;
   }
 });
 
