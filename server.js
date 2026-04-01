@@ -96,6 +96,14 @@ async function ytFetch(endpoint, params, accessToken) {
   return res.json();
 }
 
+function fmtSecs(n) {
+  const h = Math.floor(n / 3600);
+  const m = Math.floor((n % 3600) / 60);
+  const s = Math.floor(n % 60);
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function formatDuration(iso) {
   if (!iso) return "";
   const m = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
@@ -122,22 +130,26 @@ function timeAgo(dateStr) {
 }
 
 function mapVideo(v) {
+  const isLive = v.snippet?.liveBroadcastContent === "live";
+  const concurrent = v.liveStreamingDetails?.concurrentViewers;
   return {
     id: v.id?.videoId || v.id,
     title: v.snippet.title,
     thumbnail: v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url,
-    duration: formatDuration(v.contentDetails?.duration),
+    duration: isLive ? "LIVE" : formatDuration(v.contentDetails?.duration),
     channel: v.snippet.channelTitle,
     views: v.statistics ? parseInt(v.statistics.viewCount || 0) : 0,
     url: `https://www.youtube.com/watch?v=${v.id?.videoId || v.id}`,
     uploadedAt: timeAgo(v.snippet.publishedAt),
+    live: isLive,
+    concurrentViewers: concurrent ? parseInt(concurrent) : undefined,
   };
 }
 
 async function enrichVideos(ids, accessToken) {
   if (!ids.length) return [];
   const data = await ytFetch("videos", {
-    part: "snippet,contentDetails,statistics",
+    part: "snippet,contentDetails,statistics,liveStreamingDetails",
     id: ids.join(","),
   }, accessToken);
   return data.items.map(mapVideo);
@@ -273,94 +285,128 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// Home feed — uses yt-dlp to scrape actual YouTube recommendations (0 API quota)
-// Falls back to API subscription feed if yt-dlp fails
-let homeCache = { data: null, ts: 0 };
-const HOME_CACHE_TTL = 15 * 60 * 1000; // 15 minutes
-
-async function getHomeViaYtDlp() {
-  // Write OAuth token as a Netscape cookie file for yt-dlp
-  const token = await getAccessToken();
-  if (!token) throw new Error("not logged in");
-
-  const cookieContent = `# Netscape HTTP Cookie File
-.youtube.com\tTRUE\t/\tTRUE\t0\t__Secure-3PAPISID\tplaceholder
-.youtube.com\tTRUE\t/\tFALSE\t0\taccess_token\t${token}
-`;
-  const cookiePath = path.join(__dirname, ".yt-cookies.txt");
-  fs.writeFileSync(cookiePath, cookieContent);
+// Home feed — yt-dlp scrapes YouTube homepage using cookies.txt
+// Re-export cookies via Chrome extension when they expire
+async function getHomeFeed() {
+  const cookiePath = path.join(__dirname, "cookies.txt");
+  if (!fs.existsSync(cookiePath)) throw new Error("cookies_missing");
 
   const { stdout } = await require("util").promisify(require("child_process").execFile)(
     "yt-dlp", [
+      "--cookies", cookiePath,
       "--flat-playlist", "--dump-json", "--no-warnings",
-      "--extractor-args", `youtube:player_client=web`,
-      "-I", "1:30",
+      "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
+      "-I", "1:50",
       "https://www.youtube.com/feed/recommended",
-    ], { timeout: 30000, maxBuffer: 10 * 1024 * 1024 }
+    ], { timeout: 25000, maxBuffer: 10 * 1024 * 1024 }
   );
 
-  return stdout.trim().split("\n").filter(Boolean).map((line) => {
+  const videos = stdout.trim().split("\n").filter(Boolean).map((line) => {
     const v = JSON.parse(line);
     return {
       id: v.id,
       title: v.title,
       thumbnail: v.thumbnails?.[v.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
-      duration: v.duration ? formatDuration(v.duration) : "",
+      duration: v.duration_string || (v.duration ? fmtSecs(v.duration) : ""),
       channel: v.channel || v.uploader,
       views: v.view_count || 0,
       url: `https://www.youtube.com/watch?v=${v.id}`,
     };
   });
+  if (!videos.length) throw new Error("cookies_expired");
+  return videos;
 }
 
-app.get("/api/home", async (_req, res) => {
-  const token = await getAccessToken();
-  if (!token) return res.status(401).json({ error: "not_logged_in" });
-
-  if (homeCache.data && homeCache.data.length && Date.now() - homeCache.ts < HOME_CACHE_TTL) {
-    return res.json(homeCache.data);
-  }
-
+app.get("/api/home", async (req, res) => {
   try {
-    const videos = await getHomeViaYtDlp();
-    if (videos.length) {
-      homeCache = { data: videos, ts: Date.now() };
-      return res.json(videos);
+    const videos = await getHomeFeed();
+    // Enrich with channel, views, upload date (1 API unit for up to 50 IDs)
+    const ids = videos.map(v => v.id).filter(Boolean);
+    if (ids.length) {
+      try {
+        const token = await getAccessToken();
+        const enriched = await enrichVideos(ids, token);
+        const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+        return res.json(videos.map(v => {
+          const e = enrichMap[v.id];
+          if (!e) return v;
+          return { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers };
+        }));
+      } catch {}
     }
-  } catch (err) {
-    console.error("yt-dlp home failed:", err.message);
-  }
-
-  // Fallback: single API call — most popular videos (1 unit)
-  try {
-    const data = await ytFetch("videos", {
-      part: "snippet,contentDetails,statistics",
-      chart: "mostPopular",
-      regionCode: "US",
-      maxResults: 25,
-    }, token);
-    const videos = data.items.map(mapVideo);
-    homeCache = { data: videos, ts: Date.now() };
     res.json(videos);
   } catch (err) {
-    console.error("Home API fallback error:", err.message);
-    if (homeCache.data) return res.json(homeCache.data);
+    console.error("Home feed failed:", err.message);
+    if (err.message === "cookies_missing" || err.message === "cookies_expired") {
+      return res.status(401).json({ error: "cookies_stale" });
+    }
+    res.json([]);
+  }
+});
+
+// Live streams — pull live items from home feed (subs), then youtube-sr for general
+async function fetchLiveStreams() {
+  const YouTube = require("youtube-sr").default;
+
+  // Run home feed scrape + youtube-sr in parallel
+  const [homeVideos, srResults] = await Promise.all([
+    getHomeFeed().catch(() => []),
+    YouTube.search("live", { limit: 20, type: "video" }).catch(() => []),
+  ]);
+
+  const seen = new Set();
+  const subLive = [];
+  const generalLive = [];
+
+  // Live items from home feed = subscribed channels that are live (duration is empty)
+  const homeLiveIds = homeVideos.filter(v => !v.duration).map(v => v.id);
+  if (homeLiveIds.length) {
+    try {
+      const token = await getAccessToken();
+      const enriched = await enrichVideos(homeLiveIds, token);
+      for (const v of enriched) {
+        seen.add(v.id);
+        subLive.push({ ...v, subscribed: true });
+      }
+    } catch {}
+  }
+
+  // General live from youtube-sr
+  for (const v of srResults) {
+    if (v.duration === 0 && !seen.has(v.id)) {
+      seen.add(v.id);
+      generalLive.push({
+        id: v.id,
+        title: v.title,
+        thumbnail: v.thumbnail?.url,
+        duration: "LIVE",
+        channel: v.channel?.name,
+        views: v.views,
+        url: v.url,
+        uploadedAt: "",
+        live: true,
+      });
+    }
+  }
+  return [...subLive, ...generalLive];
+}
+
+app.get("/api/live", async (_req, res) => {
+  try {
+    const data = await fetchLiveStreams();
+    res.json(data);
+  } catch (err) {
+    console.error("Live search failed:", err.message);
     res.json([]);
   }
 });
 
 // Trending — youtube-sr first (free), API fallback
-let trendingCache = { data: null, ts: 0 };
-const TRENDING_CACHE_TTL = 30 * 60 * 1000;
-
 app.get("/api/trending", async (_req, res) => {
-  if (trendingCache.data && Date.now() - trendingCache.ts < TRENDING_CACHE_TTL) {
-    return res.json(trendingCache.data);
-  }
   try {
     const YouTube = require("youtube-sr").default;
     const results = await YouTube.search("popular videos today", { limit: 20, type: "video" });
-    const videos = results.map((v) => ({
+    res.json(results.map((v) => ({
       id: v.id,
       title: v.title,
       thumbnail: v.thumbnail?.url,
@@ -370,9 +416,7 @@ app.get("/api/trending", async (_req, res) => {
       url: v.url,
       uploadedAt: v.uploadedAt || "",
       live: v.live || false,
-    }));
-    trendingCache = { data: videos, ts: Date.now() };
-    res.json(videos);
+    })));
   } catch (err) {
     console.error("youtube-sr trending failed, trying API:", err.message);
     try {
@@ -383,12 +427,9 @@ app.get("/api/trending", async (_req, res) => {
         regionCode: "US",
         maxResults: 25,
       }, token);
-      const videos = data.items.map(mapVideo);
-      trendingCache = { data: videos, ts: Date.now() };
-      res.json(videos);
+      res.json(data.items.map(mapVideo));
     } catch (e2) {
       console.error("API trending also failed:", e2.message);
-      if (trendingCache.data) return res.json(trendingCache.data);
       res.status(500).json({ error: "Failed to load trending" });
     }
   }
@@ -423,7 +464,10 @@ app.post("/api/play", async (req, res) => {
     const savedEntry = history.find((h) => h.url === url);
     const resumePos = savedEntry?.position && savedEntry?.duration && savedEntry.position < savedEntry.duration - 5 ? savedEntry.position : 0;
 
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--fs`, `--fs-screen=0`, url];
+    const cookiePath = path.join(__dirname, "cookies.txt");
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--fs`, `--fs-screen=0`];
+    if (fs.existsSync(cookiePath)) mpvArgs.push(`--ytdl-raw-options=cookies=${cookiePath}`);
+    mpvArgs.push(url);
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
 
     const child = spawn("mpv", mpvArgs, {
@@ -518,12 +562,14 @@ app.get("/api/playback", async (_req, res) => {
     const pos = await mpvCommand(["get_property", "time-pos"]);
     const dur = await mpvCommand(["get_property", "duration"]);
     const title = await mpvCommand(["get_property", "media-title"]);
+    const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
     res.json({
       playing: true,
       url: nowPlaying,
       position: pos?.data || 0,
       duration: dur?.data || 0,
       title: title?.data || "",
+      fullscreen: fs?.data || false,
     });
   } catch {
     res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0, title: "" });
@@ -641,7 +687,7 @@ app.get("/api/live-status", async (req, res) => {
     const checks = ids.split(",").slice(0, 10).map(async (id) => {
       try {
         const v = await YouTube.getVideo(`https://www.youtube.com/watch?v=${id}`);
-        if (v?.live) result[id] = true;
+        if (v?.live && !v?.duration) result[id] = true;
       } catch {}
     });
     await Promise.all(checks);
@@ -695,7 +741,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
     // Get stream URL — MP4 for VOD (precise seeking), HLS for live
     const { stdout } = await require("util").promisify(require("child_process").execFile)(
-      "yt-dlp", ["-f", "18/best[height<=720]", "--get-url", nowPlaying],
+      "yt-dlp", ["--cookies", path.join(__dirname, "cookies.txt"), "-f", "18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const streamUrl = stdout.trim().split("\n")[0];
@@ -723,6 +769,7 @@ app.get("/api/comments", async (req, res) => {
   try {
     const { stdout } = await require("util").promisify(require("child_process").execFile)(
       "yt-dlp", [
+        "--cookies", path.join(__dirname, "cookies.txt"),
         "--extractor-args", "youtube:max_comments=20",
         "--write-comments", "--skip-download", "--dump-json",
         "--no-warnings",
@@ -794,17 +841,18 @@ app.post("/api/move-monitor", async (req, res) => {
 });
 
 // Aerospace fullscreen (with dock visible) — exit mpv fullscreen first
-app.post("/api/maximize", async (_req, res) => {
+app.post("/api/maximize", async (req, res) => {
   try {
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
       await mpvCommand(["set_property", "fullscreen", false]);
       await new Promise((r) => setTimeout(r, 500));
     }
+    const force = req.body?.force === true;
     const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
     if (wid) {
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-      execSync(`aerospace fullscreen --window-id ${wid}`, { stdio: "ignore" });
+      execSync(`aerospace fullscreen ${force ? 'on ' : ''}--window-id ${wid}`, { stdio: "ignore" });
     }
     res.json({ ok: true });
   } catch {

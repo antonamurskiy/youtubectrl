@@ -296,6 +296,13 @@
     letter-spacing: 1px;
   }
 
+  .sub-badge {
+    color: #bb0000;
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+
   .duration-badge {
     position: absolute;
     bottom: 2px;
@@ -559,10 +566,12 @@
   .np-btn-row .np-btn:active { color: var(--text); }
   .np-btn-row .np-btn-stop { color: var(--text-dim); }
 
+  .np-mute-btn { color: #333 !important; background: none !important; border: none !important; flex: 0 0 auto !important; width: auto !important; padding: 0 4px; }
+
   .np-volume-row {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
     min-width: 0;
   }
@@ -570,20 +579,24 @@
   .np-volume {
     flex: 1;
     min-width: 0;
-    height: 3px;
+    height: 12px;
     -webkit-appearance: none;
     appearance: none;
-    background: #333;
+    background:
+      repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      #222;
+    background-size: 2px 2px, 2px 2px, 100% 100%;
     border-radius: 0;
     outline: none;
   }
 
   .np-volume::-webkit-slider-thumb {
     -webkit-appearance: none;
-    width: 12px;
-    height: 12px;
+    width: 20px;
+    height: 20px;
     border-radius: 0;
-    background: var(--accent);
+    background: #555;
     cursor: pointer;
   }
 
@@ -661,8 +674,12 @@
 
   .np-progress-bar {
     flex: 1;
-    height: 4px;
-    background: #333;
+    height: 12px;
+    background:
+      repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      #222;
+    background-size: 2px 2px, 2px 2px, 100% 100%;
     border-radius: 0;
     position: relative;
     cursor: pointer;
@@ -704,22 +721,24 @@
 
   .np-progress-fill {
     height: 100%;
-    background: var(--accent);
+    background:
+      repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
+      #778;
+    background-size: 2px 2px, 2px 2px, 100% 100%;
     width: 0%;
     pointer-events: none;
   }
 
   .np-progress-thumb {
     position: absolute;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 10px;
-    height: 10px;
-    border-radius: 0;
-    background: var(--accent);
-    box-shadow: 0 0 6px var(--accent-glow);
+    top: 0;
+    width: 4px;
+    height: 100%;
+    background: #aab;
     pointer-events: none;
     left: 0%;
+    transform: translateX(-50%);
   }
 
   /* ── Comments panel ── */
@@ -826,6 +845,7 @@
 
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="home">Home</button>
+    <button class="tab" data-tab="live">Live</button>
     <button class="tab" data-tab="history">History</button>
   </div>
 
@@ -845,7 +865,7 @@
     <button class="np-btn np-btn-stop" onclick="stopPlayback()"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
   </div>
   <div class="np-volume-row">
-    <button class="np-btn" onclick="toggleMute()" id="npMute"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
+    <button class="np-btn np-mute-btn" onclick="toggleMute()" id="npMute"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
     <input type="range" class="np-volume" id="npVolume" min="0" max="100" value="100" oninput="setVolume(this.value)">
   </div>
   <div class="np-top-row">
@@ -942,8 +962,8 @@
         </div>
         <div class="video-info">
           <div class="video-title">${escapeHtml(v.title)}</div>
-          ${v.channel ? `<div class="video-channel">${escapeHtml(v.channel)}</div>` : ''}
-          <div class="video-meta">${formatViews(v.views)}${v.uploadedAt ? ` · ${v.uploadedAt}` : ''}${hasProg ? ` · ${fmtTime(v.savedPosition)} watched` : ''}</div>
+          ${v.channel ? `<div class="video-channel">${v.subscribed ? '<span class="sub-badge">SUB</span> ' : ''}${escapeHtml(v.channel)}</div>` : ''}
+          <div class="video-meta">${v.concurrentViewers ? formatViews(v.concurrentViewers).replace(' views', ' watching') : formatViews(v.views)}${v.uploadedAt ? ` · ${v.uploadedAt}` : ''}${hasProg ? ` · ${fmtTime(v.savedPosition)} watched` : ''}</div>
         </div>
         <div class="play-indicator">
           <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -990,24 +1010,24 @@
 
   // ── API calls ──
 
-  async function loadHome() {
+  async function loadHome(refresh) {
     showSkeletons();
     label.innerHTML = `<span class="accent">//</span> Home`;
     try {
       const res = await fetch('/api/home');
+      if (res.status === 401) throw new Error('stale');
       if (!res.ok) throw new Error('no home');
       const data = await res.json();
       if (!data.length) throw new Error('empty');
       renderVideos(data);
     } catch {
-      // Fall back to trending if home fails or is empty
       label.innerHTML = `<span class="accent">//</span> Trending`;
-      loadTrending();
+      loadTrending(true);
     }
   }
 
-  async function loadTrending() {
-    showSkeletons();
+  async function loadTrending(skipSkeleton) {
+    if (!skipSkeleton) showSkeletons();
     try {
       const res = await fetch('/api/trending');
       const data = await res.json();
@@ -1141,7 +1161,7 @@
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="13 17 18 12 13 7"/></svg>
             </button>
           `;
-          npBar.appendChild(controls);
+          npBar.insertBefore(controls, npBar.firstChild);
 
           controls.querySelector('#npSkipBack').addEventListener('click', () => {
             fetch('/api/seek-relative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offset: -10 }) });
@@ -1244,6 +1264,7 @@
   window.watchOnPhone = async function() {
     try {
       showToast('Loading stream...');
+      mpvStateBeforePhone = lastWindowMode;
       const res = await fetch('/api/watch-on-phone', { method: 'POST' });
       const data = await res.json();
       if (data.streamUrl) {
@@ -1275,6 +1296,19 @@
           const fresh = await fetch('/api/playback').then(r => r.json());
           vid.currentTime = (fresh.position || data.seconds) + 1;
         }, { once: true });
+
+        // Keep phone synced to desktop — check every 3s, re-sync if >2s off
+        if (window._phoneSyncInterval) clearInterval(window._phoneSyncInterval);
+        window._phoneSyncInterval = setInterval(async () => {
+          try {
+            const vid = document.getElementById('phoneVideo');
+            if (!vid || vid.paused) return;
+            const fresh = await fetch('/api/playback').then(r => r.json());
+            if (!fresh.position) return;
+            const drift = Math.abs(vid.currentTime - fresh.position);
+            if (drift > 2) vid.currentTime = fresh.position + 0.5;
+          } catch {}
+        }, 3000);
       } else if (data.youtubeUrl) {
         showToast('Opening YouTube');
         setTimeout(() => { window.location.href = data.youtubeUrl; }, 500);
@@ -1285,6 +1319,8 @@
   };
 
   let mpvVideoHidden = false;
+  let mpvStateBeforePhone = null;
+  let lastWindowMode = null; // 'fullscreen' | 'maximize' | null — tracks which mode was last activated
   window.toggleMpvVideo = async function() {
     mpvVideoHidden = !mpvVideoHidden;
     await fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: mpvVideoHidden }) });
@@ -1308,12 +1344,22 @@
     const vid = document.getElementById('phoneVideo');
     if (vid) {
       const pos = vid.currentTime;
-      // Seek mpv to where phone is
       try {
         await fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: pos }) });
       } catch {}
     }
+    const savedMode = mpvStateBeforePhone;
+    // Restore video track first (closePhonePlayer does this)
     closePhonePlayer();
+    // Then restore window mode after video is back
+    if (savedMode === 'fullscreen') {
+      await new Promise(r => setTimeout(r, 300));
+      try { await fetch('/api/fullscreen', { method: 'POST' }); } catch {}
+    } else if (savedMode === 'maximize') {
+      await new Promise(r => setTimeout(r, 800));
+      try { await fetch('/api/maximize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) }); } catch {}
+    }
+    lastWindowMode = savedMode;
     showToast('Synced to computer');
   };
 
@@ -1350,10 +1396,12 @@
   };
 
   window.toggleFullscreen = async function() {
+    lastWindowMode = lastWindowMode === 'fullscreen' ? null : 'fullscreen';
     fetch('/api/fullscreen', { method: 'POST' });
   };
 
   window.toggleMaximize = async function() {
+    lastWindowMode = lastWindowMode === 'maximize' ? null : 'maximize';
     fetch('/api/maximize', { method: 'POST' });
   };
 
@@ -1485,6 +1533,23 @@
     }
   }
 
+  async function loadLive() {
+    showSkeletons();
+    label.innerHTML = `<span class="accent">//</span> Live`;
+    try {
+      const res = await fetch('/api/live');
+      const data = await res.json();
+      if (!data.length) throw new Error('empty');
+      renderVideos(data);
+    } catch {
+      grid.innerHTML = `
+        <div class="empty-state">
+          <div class="icon">!</div>
+          No live streams found.
+        </div>`;
+    }
+  }
+
   // ── Tabs ──
 
   document.getElementById('tabs').addEventListener('click', (e) => {
@@ -1498,13 +1563,14 @@
     currentQuery = '';
     nextPageToken = null;
     if (currentTab === 'history') loadHistory();
+    else if (currentTab === 'live') loadLive();
     else loadHome();
   });
 
   // ── Infinite scroll ──
 
   window.addEventListener('scroll', () => {
-    if (isLoadingMore || currentTab === 'history') return;
+    if (isLoadingMore || currentTab === 'history' || currentTab === 'live') return;
     if (window.innerHeight + window.scrollY >= document.body.offsetHeight - 400) {
       if (currentQuery && nextPageToken) {
         isLoadingMore = true;
