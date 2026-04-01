@@ -401,12 +401,9 @@ app.post("/api/play", async (req, res) => {
   }
 
   try {
-    // Kill ALL existing mpv instances
-    try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {}
+    // Kill ALL existing mpv
+    try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
     mpvProcess = null;
-
-    // Focus workspace 1 (LG monitor) before launching mpv
-    try { execSync("aerospace workspace 1", { stdio: "ignore" }); } catch {}
 
     // Remove stale socket
     try { require("fs").unlinkSync("/tmp/mpv-socket"); } catch {}
@@ -415,12 +412,13 @@ app.post("/api/play", async (req, res) => {
     const savedEntry = history.find((h) => h.url === url);
     const resumePos = savedEntry?.position && savedEntry?.duration && savedEntry.position < savedEntry.duration - 5 ? savedEntry.position : 0;
 
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, url];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--fs`, `--fs-screen=0`, url];
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
 
     const child = spawn("mpv", mpvArgs, {
       stdio: "ignore",
     });
+
     mpvProcess = child;
     nowPlaying = url;
     addToHistory(url, "");
@@ -635,15 +633,51 @@ app.post("/api/playpause", async (_req, res) => {
   }
 });
 
-// Aerospace fullscreen (maximized with dock) — exit mpv fullscreen first
+// Move mpv between monitors via AppleScript
+// Gets screen info dynamically so it works at any resolution
+function getScreenInfo() {
+  const out = execSync(`python3 -c "
+import subprocess, json
+r = subprocess.run(['system_profiler', 'SPDisplaysDataType', '-json'], capture_output=True, text=True)
+data = json.loads(r.stdout)
+screens = []
+for gpu in data.get('SPDisplaysDataType', []):
+    for d in gpu.get('spdisplays_ndrvs', []):
+        res = d.get('_spdisplays_resolution', '')
+        parts = res.split(' x ')
+        w = int(parts[0])
+        h = int(parts[1].split(' @')[0].strip())
+        main = 'yes' in d.get('spdisplays_main', '')
+        screens.append({'name': d.get('_name',''), 'w': w, 'h': h, 'main': main})
+print(json.dumps(screens))
+"`, { encoding: "utf8" });
+  return JSON.parse(out.trim());
+}
+
+// Move mpv between monitors fullscreen — fs-screen 0=LG, 1=laptop
+app.post("/api/move-monitor", async (req, res) => {
+  const { target } = req.body;
+  const screen = target === "laptop" ? 1 : 0;
+  try {
+    await mpvCommand(["set_property", "fullscreen", false]);
+    await new Promise((r) => setTimeout(r, 300));
+    await mpvCommand(["set_property", "fs-screen", screen]);
+    await new Promise((r) => setTimeout(r, 300));
+    await mpvCommand(["set_property", "fullscreen", true]);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("Move failed:", err.message);
+    res.status(500).json({ error: "Move failed" });
+  }
+});
+
+// Aerospace fullscreen (with dock visible) — exit mpv fullscreen first
 app.post("/api/maximize", async (_req, res) => {
   try {
-    // Exit mpv exclusive fullscreen if active
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
       await mpvCommand(["set_property", "fullscreen", false]);
-      // Small delay for mpv to exit fullscreen before aerospace takes over
-      await new Promise((r) => setTimeout(r, 300));
+      await new Promise((r) => setTimeout(r, 500));
     }
     const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
     if (wid) {
@@ -656,18 +690,22 @@ app.post("/api/maximize", async (_req, res) => {
   }
 });
 
-// mpv true fullscreen — exit aerospace fullscreen first
+// Toggle fullscreen on/off — resize when exiting to fit current screen
 app.post("/api/fullscreen", async (_req, res) => {
   try {
-    // Exit aerospace fullscreen if active
-    try {
-      const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-      if (wid) {
-        // Running fullscreen again exits it if already in aerospace fullscreen
-        execSync(`aerospace fullscreen --window-id ${wid} --no-outer-gaps`, { stdio: "ignore" });
-      }
-    } catch {}
-    await mpvCommand(["cycle", "fullscreen"]);
+    const fs = await mpvCommand(["get_property", "fullscreen"]);
+    if (fs?.data === true) {
+      // Exiting fullscreen — check which screen we're on and set appropriate size
+      const screen = await mpvCommand(["get_property", "fs-screen"]);
+      const isLaptop = screen?.data === 1;
+      await mpvCommand(["set_property", "fullscreen", false]);
+      await new Promise((r) => setTimeout(r, 300));
+      // Set autofit for the current screen
+      const size = isLaptop ? "640x360" : "960x540";
+      await mpvCommand(["set_property", "autofit", size]);
+    } else {
+      await mpvCommand(["set_property", "fullscreen", true]);
+    }
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Fullscreen toggle failed" });
