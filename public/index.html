@@ -1047,7 +1047,7 @@
       <div class="video-card" data-url="${v.url}" style="animation-delay: ${i * 40}ms">
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
-          ${v.live ? '<span class="live-badge">LIVE</span>' : ''}${v.duration ? `<span class="duration-badge">${v.duration}</span>` : ''}
+          ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
           ${hasProg ? `<div class="watch-progress" style="width:${pct}%"></div>` : ''}
         </div>
         <div class="video-info">
@@ -1077,7 +1077,7 @@
       <div class="video-card" data-url="${v.url}" style="animation-delay: ${(start + i) * 40}ms">
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
-          ${v.live ? '<span class="live-badge">LIVE</span>' : ''}${v.duration ? `<span class="duration-badge">${v.duration}</span>` : ''}
+          ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
         </div>
         <div class="video-info">
           <div class="video-title">${escapeHtml(v.title)}</div>
@@ -1104,19 +1104,39 @@
 
   // ── API calls ──
 
+  let homePage = 0;
+  let homeHasMore = false;
+
   async function loadHome(refresh) {
     showSkeletons();
     label.innerHTML = `<span class="accent">//</span> Home`;
+    homePage = 0;
     try {
-      const res = await fetch('/api/home');
+      const res = await fetch('/api/home?page=0');
       if (!res.ok) throw new Error('no home');
       const data = await res.json();
-      if (!data.length) throw new Error('empty');
-      renderVideos(data);
+      if (!data.videos?.length) throw new Error('empty');
+      homeHasMore = data.hasMore;
+      renderVideos(data.videos);
     } catch {
       label.innerHTML = `<span class="accent">//</span> Trending`;
       loadTrending(true);
     }
+  }
+
+  async function loadMoreHome() {
+    if (!homeHasMore || isLoadingMore) return;
+    isLoadingMore = true;
+    homePage++;
+    loadMoreEl.style.display = 'flex';
+    try {
+      const res = await fetch('/api/home?page=' + homePage);
+      const data = await res.json();
+      if (data.videos?.length) appendVideos(data.videos);
+      homeHasMore = data.hasMore;
+    } catch {}
+    loadMoreEl.style.display = 'none';
+    isLoadingMore = false;
   }
 
   async function loadTrending(skipSkeleton) {
@@ -1360,6 +1380,7 @@
   };
 
   window.moveMonitor = async function(target) {
+    showToast('Moving to ' + target);
     fetch('/api/move-monitor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
   };
 
@@ -1695,6 +1716,8 @@
       if (currentQuery && nextPageToken) {
         isLoadingMore = true;
         search(currentQuery, true);
+      } else if (currentTab === 'home' && homeHasMore) {
+        loadMoreHome();
       }
     }
   });
@@ -1746,6 +1769,17 @@
 
   // ── Init ──
   checkAuth().then(() => loadHome());
+  // Sync volume when secret menu opens
+  const secretMenu = document.getElementById('secretMenu');
+  const observer = new MutationObserver(() => {
+    if (secretMenu.classList.contains('open')) {
+      fetch('/api/volume').then(r => r.json()).then(d => {
+        const sl = document.getElementById('npVolume');
+        if (sl) sl.value = d.volume;
+      }).catch(() => {});
+    }
+  });
+  observer.observe(secretMenu, { attributes: true, attributeFilter: ['class'] });
   startPolling();
 
   // Auto-reload when files change

@@ -129,30 +129,52 @@ function timeAgo(dateStr) {
   return `${Math.floor(months / 12)}y ago`;
 }
 
+function timeUntil(dateStr) {
+  if (!dateStr) return "";
+  const diff = new Date(dateStr).getTime() - Date.now();
+  if (diff <= 0) return "now";
+  const mins = Math.floor(diff / 60000);
+  if (mins < 60) return `in ${mins}m`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `in ${hrs}h`;
+  const days = Math.floor(hrs / 24);
+  return `in ${days}d`;
+}
+
 function mapVideo(v) {
-  const isLive = v.snippet?.liveBroadcastContent === "live";
+  const broadcastContent = v.snippet?.liveBroadcastContent;
+  const isLive = broadcastContent === "live";
+  const isUpcoming = broadcastContent === "upcoming";
   const concurrent = v.liveStreamingDetails?.concurrentViewers;
+  const scheduledStart = v.liveStreamingDetails?.scheduledStartTime;
   return {
     id: v.id?.videoId || v.id,
     title: v.snippet.title,
     thumbnail: v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url,
-    duration: isLive ? "LIVE" : formatDuration(v.contentDetails?.duration),
+    duration: isLive ? "LIVE" : isUpcoming ? "SOON" : formatDuration(v.contentDetails?.duration),
     channel: v.snippet.channelTitle,
     views: v.statistics ? parseInt(v.statistics.viewCount || 0) : 0,
     url: `https://www.youtube.com/watch?v=${v.id?.videoId || v.id}`,
-    uploadedAt: timeAgo(v.snippet.publishedAt),
+    uploadedAt: isUpcoming && scheduledStart ? timeUntil(scheduledStart) : timeAgo(v.snippet.publishedAt),
     live: isLive,
+    upcoming: isUpcoming,
     concurrentViewers: concurrent ? parseInt(concurrent) : undefined,
   };
 }
 
 async function enrichVideos(ids, accessToken) {
   if (!ids.length) return [];
-  const data = await ytFetch("videos", {
-    part: "snippet,contentDetails,statistics,liveStreamingDetails",
-    id: ids.join(","),
-  }, accessToken);
-  return data.items.map(mapVideo);
+  // YouTube API max 50 IDs per call — batch
+  const results = [];
+  for (let i = 0; i < ids.length; i += 50) {
+    const batch = ids.slice(i, i + 50);
+    const data = await ytFetch("videos", {
+      part: "snippet,contentDetails,statistics,liveStreamingDetails",
+      id: batch.join(","),
+    }, accessToken);
+    results.push(...data.items.map(mapVideo));
+  }
+  return results;
 }
 
 async function getAccessToken() {
@@ -285,18 +307,10 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// Home feed — yt-dlp scrapes YouTube homepage using Firefox cookies
+// Home feed — yt-dlp scrapes recommended + subscriptions, deduped
 async function getHomeFeed() {
-  const { stdout } = await require("util").promisify(require("child_process").execFile)(
-    "yt-dlp", [
-      "--cookies-from-browser", "firefox",
-      "--flat-playlist", "--dump-json", "--no-warnings",
-      "-I", "1:50",
-      "https://www.youtube.com/feed/recommended",
-    ], { timeout: 25000, maxBuffer: 10 * 1024 * 1024 }
-  );
-
-  const videos = stdout.trim().split("\n").filter(Boolean).map((line) => {
+  const execP = require("util").promisify(require("child_process").execFile);
+  const parseVideos = (stdout) => stdout.trim().split("\n").filter(Boolean).map((line) => {
     const v = JSON.parse(line);
     return {
       id: v.id,
@@ -308,35 +322,66 @@ async function getHomeFeed() {
       url: `https://www.youtube.com/watch?v=${v.id}`,
     };
   });
+
+  const ytdlpArgs = (feed, count) => [
+    "--cookies-from-browser", "firefox",
+    "--flat-playlist", "--dump-json", "--no-warnings",
+    "-I", `1:${count}`,
+    `https://www.youtube.com/feed/${feed}`,
+  ];
+  const opts = { timeout: 25000, maxBuffer: 10 * 1024 * 1024 };
+
+  // Fetch both feeds in parallel
+  const [rec, subs] = await Promise.all([
+    execP("yt-dlp", ytdlpArgs("recommended", 50), opts).then(r => parseVideos(r.stdout)).catch(() => []),
+    execP("yt-dlp", ytdlpArgs("subscriptions", 100), opts).then(r => parseVideos(r.stdout)).catch(() => []),
+  ]);
+
+  // Merge: recommended first, then subscriptions (deduped)
+  const seen = new Set();
+  const videos = [];
+  for (const v of [...rec, ...subs]) {
+    if (!seen.has(v.id)) { seen.add(v.id); videos.push(v); }
+  }
   if (!videos.length) throw new Error("empty_feed");
   return videos;
 }
 
+// Cache raw home feed so pagination doesn't re-fetch
+let homeFeedCache = [];
+
 app.get("/api/home", async (req, res) => {
+  const page = parseInt(req.query.page) || 0;
+  const pageSize = 24;
   try {
-    const videos = await getHomeFeed();
-    // Enrich with channel, views, upload date (1 API unit for up to 50 IDs)
-    const ids = videos.map(v => v.id).filter(Boolean);
+    // Fetch fresh feed on page 0, use cache for subsequent pages
+    if (page === 0 || !homeFeedCache.length) {
+      homeFeedCache = await getHomeFeed();
+    }
+    const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
+    const hasMore = (page + 1) * pageSize < homeFeedCache.length;
+
+    // Enrich this page's videos
+    const ids = slice.map(v => v.id).filter(Boolean);
     if (ids.length) {
       try {
         const token = await getAccessToken();
         const enriched = await enrichVideos(ids, token);
         const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
-        return res.json(videos.map(v => {
+        return res.json({ videos: slice.map(v => {
           const e = enrichMap[v.id];
           const h = history.find(x => x.url === v.url);
           const merged = e ? { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
           if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
           return merged;
-        }));
+        }), hasMore });
       } catch {}
     }
-    // Even without enrichment, add progress
-    res.json(videos.map(v => {
+    res.json({ videos: slice.map(v => {
       const h = history.find(x => x.url === v.url);
       if (h?.position > 0 && h?.duration > 0) { v.savedPosition = h.position; v.savedDuration = h.duration; }
       return v;
-    }));
+    }), hasMore });
   } catch (err) {
     console.error("Home feed failed:", err.message);
     res.json([]);
@@ -462,33 +507,41 @@ app.post("/api/play", async (req, res) => {
     let reused = false;
     if (mpvProcess) {
       try {
-        // Ping IPC to check if mpv is alive
-        await mpvCommand(["get_property", "pid"]);
+        // Save current video's progress before switching (with timeout)
+        try {
+          const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej('timeout'), ms))]);
+          const [pos, dur] = await timeout(Promise.all([
+            mpvCommand(["get_property", "time-pos"]),
+            mpvCommand(["get_property", "duration"]),
+          ]), 2000);
+          if (pos?.data && dur?.data && nowPlaying) updateHistoryProgress(nowPlaying, pos.data, dur.data);
+        } catch {}
         await mpvCommand(["loadfile", url, "replace"]);
-        if (resumePos > 0) {
-          // Retry seek until video is loaded
-          const doSeek = async (attempts) => {
-            for (let i = 0; i < attempts; i++) {
-              await new Promise(r => setTimeout(r, 2000));
-              try {
-                const d = await mpvCommand(["get_property", "duration"]);
-                if (d?.data > 0) {
-                  await mpvCommand(["seek", resumePos, "absolute"]);
-                  return;
-                }
-              } catch {}
-            }
-          };
-          doSeek(5);
-        }
         nowPlaying = url;
         addToHistory(url, "");
-        reused = true;
         res.json({ ok: true });
 
-        // Restart progress interval for new URL
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-        setTimeout(async () => {
+        (async () => {
+          // Wait for video to load, seek to resume, set up progress
+          let loaded = false;
+          for (let i = 0; i < 10; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            try {
+              const d = await mpvCommand(["get_property", "duration"]);
+              if (d?.data > 0) { loaded = true; break; }
+            } catch {}
+          }
+          if (!loaded) {
+            // Remove from history if it never loaded
+            history = history.filter(h => h.url !== url);
+            saveHistory();
+            nowPlaying = null;
+            return;
+          }
+          if (resumePos > 0) {
+            try { await mpvCommand(["seek", resumePos, "absolute"]); } catch {}
+          }
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
             if (t?.data) { history[0].title = t.data; saveHistory(); }
@@ -502,7 +555,7 @@ app.post("/api/play", async (req, res) => {
               if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
             } catch {}
           }, 10000);
-        }, 3000);
+        })();
         return;
       } catch {}
     }
@@ -516,13 +569,7 @@ app.post("/api/play", async (req, res) => {
     // Calculate geometry for floating mode so mpv starts in the right place
     let geometry = "";
     if (!windowMode || windowMode === "floating") {
-      try {
-        const screens = getScreenInfo();
-        const main = screens.find(s => s.main) || screens[0];
-        const w = Math.round(main.w * 0.375);
-        const h = Math.round(w * 9 / 16);
-        geometry = `${w}x${h}+${main.w - w - 12}+38`;
-      } catch {}
+      geometry = "38%-12+38";
     }
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--keep-open`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
@@ -564,14 +611,25 @@ app.post("/api/play", async (req, res) => {
     applyWindowMode();
     addToHistory(url, "");
 
-    // Clear old progress interval and start new one
+    // Wait for video to load, then set up progress (remove from history if failed)
     if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
     setTimeout(async () => {
+      try {
+        const d = await mpvCommand(["get_property", "duration"]);
+        if (!d?.data || d.data <= 0) {
+          history = history.filter(h => h.url !== url);
+          saveHistory();
+          return;
+        }
+      } catch {
+        history = history.filter(h => h.url !== url);
+        saveHistory();
+        return;
+      }
       try {
         const t = await mpvCommand(["get_property", "media-title"]);
         if (t?.data) { history[0].title = t.data; saveHistory(); }
       } catch {}
-      // Save progress every 10 seconds
       progressInterval = setInterval(async () => {
         try {
           const [pos, dur] = await Promise.all([
@@ -581,19 +639,22 @@ app.post("/api/play", async (req, res) => {
           if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
         } catch {}
       }, 10000);
-    }, 3000);
+    }, 5000);
 
-    child.on("exit", async () => {
-      // Save final position
-      try {
-        // mpv is gone, can't query — last saved position is good enough
-      } catch {}
+    child.on("exit", async (code) => {
       if (progressInterval) clearInterval(progressInterval);
       if (mpvProcess === child) {
+        // If mpv exited within 5 seconds, it probably failed — remove from history
+        const elapsed = Date.now() - child._startTime;
+        if (elapsed < 5000 && code !== 0) {
+          history = history.filter(h => h.url !== url);
+          saveHistory();
+        }
         mpvProcess = null;
         nowPlaying = null;
       }
     });
+    child._startTime = Date.now();
 
     res.json({ ok: true });
   } catch (err) {
@@ -603,7 +664,16 @@ app.post("/api/play", async (req, res) => {
 });
 
 // Stop playback
-app.post("/api/stop", (_req, res) => {
+app.post("/api/stop", async (_req, res) => {
+  // Save final position before stopping
+  try {
+    const [pos, dur] = await Promise.all([
+      mpvCommand(["get_property", "time-pos"]),
+      mpvCommand(["get_property", "duration"]),
+    ]);
+    if (pos?.data && dur?.data && nowPlaying) updateHistoryProgress(nowPlaying, pos.data, dur.data);
+  } catch {}
+  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {}
   mpvProcess = null;
   nowPlaying = null;
@@ -664,6 +734,9 @@ app.get("/api/playback", async (_req, res) => {
         monitor = x < 0 ? "laptop" : "lg";
       } catch {}
     }
+    // Sync windowMode from actual mpv fullscreen state
+    if (fs?.data && windowMode !== "fullscreen") windowMode = "fullscreen";
+    else if (!fs?.data && windowMode === "fullscreen") windowMode = "floating";
     res.json({
       playing: true,
       url: nowPlaying,
@@ -803,10 +876,20 @@ app.get("/api/live-status", async (req, res) => {
 
 // Watch on phone — pause mpv, return YouTube URL at current timestamp
 // Volume control
-app.post("/api/volume", async (req, res) => {
+app.get("/api/volume", (_req, res) => {
+  try {
+    const vol = execSync(`osascript -e 'output volume of (get volume settings)'`, { encoding: "utf8" }).trim();
+    const muted = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim() === "true";
+    res.json({ volume: parseInt(vol), muted });
+  } catch {
+    res.json({ volume: 50, muted: false });
+  }
+});
+
+app.post("/api/volume", (req, res) => {
   const { volume } = req.body;
   try {
-    await mpvCommand(["set_property", "volume", volume]);
+    execSync(`osascript -e 'set volume output volume ${Math.round(volume)}'`, { stdio: "ignore" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Volume failed" });
@@ -814,11 +897,12 @@ app.post("/api/volume", async (req, res) => {
 });
 
 // Mute toggle
-app.post("/api/mute", async (_req, res) => {
+app.post("/api/mute", (_req, res) => {
   try {
-    await mpvCommand(["cycle", "mute"]);
-    const state = await mpvCommand(["get_property", "mute"]);
-    res.json({ ok: true, muted: !!state?.data });
+    const muteState = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim();
+    const isMuted = muteState === "true";
+    execSync(`osascript -e 'set volume output muted ${isMuted ? "false" : "true"}'`, { stdio: "ignore" });
+    res.json({ ok: true, muted: !isMuted });
   } catch {
     res.status(500).json({ error: "Mute failed" });
   }
@@ -900,7 +984,29 @@ app.post("/api/playpause", async (_req, res) => {
   try {
     await mpvCommand(["cycle", "pause"]);
     const state = await mpvCommand(["get_property", "pause"]);
-    res.json({ ok: true, paused: !!state?.data });
+    const paused = !!state?.data;
+    // Hide window when paused in floating/maximize mode, show when playing
+    if (windowMode === "floating" || windowMode === "maximize") {
+      try {
+        await mpvCommand(["set_property", "vid", paused ? "no" : "auto"]);
+        // Re-apply window mode after restoring video
+        if (!paused) {
+          await new Promise(r => setTimeout(r, 300));
+          try {
+            const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+            if (wid) {
+              if (windowMode === "maximize") {
+                execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+                execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+              } else {
+                await floatTopRight(wid);
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+    res.json({ ok: true, paused });
   } catch {
     res.status(500).json({ error: "Play/pause failed" });
   }
@@ -927,27 +1033,37 @@ print(json.dumps(screens))
   return JSON.parse(out.trim());
 }
 
-// Move mpv between monitors fullscreen
+// Move mpv between monitors — uses aerospace to move, then re-applies current window mode
 app.post("/api/move-monitor", async (req, res) => {
   const { target } = req.body;
   try {
-    // Ensure aerospace isn't in floating mode
-    try {
-      const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-      if (wid) execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
-    } catch {}
-    // Find screen index dynamically — LG is main (origin 0,0), laptop is the other
-    const screens = getScreenInfo();
-    const mainIdx = screens.findIndex(s => s.main);
-    const otherIdx = screens.findIndex(s => !s.main);
-    const screen = target === "laptop" ? (otherIdx >= 0 ? otherIdx : 1) : (mainIdx >= 0 ? mainIdx : 0);
-    await mpvCommand(["set_property", "fullscreen", false]);
-    await new Promise((r) => setTimeout(r, 300));
-    await mpvCommand(["set_property", "fs-screen", screen]);
-    await new Promise((r) => setTimeout(r, 300));
-    await mpvCommand(["set_property", "ontop", false]);
+    const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+    if (!wid) return res.status(400).json({ error: "No mpv window" });
+
+    const screens = getScreenOrigins();
+    const screenIdx = target === "laptop" ? screens.findIndex(s => s.isLaptop) : screens.findIndex(s => s.isMain);
+    const idx = screenIdx >= 0 ? screenIdx : 0;
+
+    // Always exit everything first
+    try { execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" }); } catch {}
+    await mpvCommand(["set_property", "fullscreen", false]).catch(() => {});
+    await new Promise(r => setTimeout(r, 500));
+
+    // Now set target screen and enter fullscreen there
+    await mpvCommand(["set_property", "fs-screen", idx]);
+    await new Promise(r => setTimeout(r, 100));
     await mpvCommand(["set_property", "fullscreen", true]);
-    windowMode = "fullscreen";
+    if (windowMode !== "fullscreen") {
+      await new Promise(r => setTimeout(r, 300));
+      await mpvCommand(["set_property", "fullscreen", false]);
+      await new Promise(r => setTimeout(r, 300));
+      if (windowMode === "maximize") {
+        execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+        execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+      } else {
+        try { await mpvCommand(["set_property", "ontop", true]); } catch {}
+      }
+    }
     res.json({ ok: true });
   } catch (err) {
     console.error("Move failed:", err.message);
@@ -955,19 +1071,47 @@ app.post("/api/move-monitor", async (req, res) => {
   }
 });
 
-// Float mpv window to top-right corner of current screen
-async function floatTopRight(wid) {
-  try { execSync(`aerospace layout --window-id ${wid} floating`, { stdio: "ignore" }); } catch {}
+// Get screen origins from displayplacer
+function getScreenOrigins() {
   try {
-    const screens = getScreenInfo();
-    const main = screens.find(s => s.main) || screens[0];
-    const w = Math.round(main.w * 0.375);
-    const h = Math.round(w * 9 / 16);
-    const posX = main.w - w - 12;
-    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
-    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, 38}'`, { stdio: "ignore" });
+    const out = execSync("displayplacer list", { encoding: "utf8" });
+    const screens = [];
+    const blocks = out.split("Persistent screen id:");
+    for (const block of blocks) {
+      if (!block.trim()) continue;
+      const typeMatch = block.match(/Type:\s*(.+)/);
+      const resMatch = block.match(/Resolution:\s*(\d+)x(\d+)/);
+      const originMatch = block.match(/Origin:\s*\((-?\d+),(-?\d+)\)/);
+      if (resMatch && originMatch) {
+        screens.push({
+          isMain: block.includes("main display"),
+          isLaptop: typeMatch && typeMatch[1].includes("MacBook"),
+          w: parseInt(resMatch[1]),
+          h: parseInt(resMatch[2]),
+          x: parseInt(originMatch[1]),
+          y: parseInt(originMatch[2]),
+        });
+      }
+    }
+    return screens;
+  } catch { return []; }
+}
+
+// Set mpv to floating mode (ontop, no geometry change — stays on current screen)
+async function floatTopRight(wid) {
+  try { await mpvCommand(["set_property", "ontop", true]); } catch {}
+}
+
+// Float mpv window to top-right of a specific screen (with fullscreen bounce to move it there)
+async function floatOnScreen(wid, screenIdx) {
+  try {
+    await mpvCommand(["set_property", "fs-screen", screenIdx]);
+    await mpvCommand(["set_property", "fullscreen", true]);
+    await new Promise(r => setTimeout(r, 300));
+    await mpvCommand(["set_property", "fullscreen", false]);
+    await new Promise(r => setTimeout(r, 300));
+    await mpvCommand(["set_property", "geometry", "38%-12+38"]);
   } catch {}
-  // Always on top
   try { await mpvCommand(["set_property", "ontop", true]); } catch {}
 }
 
@@ -975,7 +1119,8 @@ async function floatTopRight(wid) {
 app.post("/api/maximize", async (req, res) => {
   try {
     const fs = await mpvCommand(["get_property", "fullscreen"]);
-    if (fs?.data === true) {
+    const wasFullscreen = fs?.data === true;
+    if (wasFullscreen) {
       await mpvCommand(["set_property", "fullscreen", false]);
       await new Promise((r) => setTimeout(r, 500));
     }
@@ -983,30 +1128,36 @@ app.post("/api/maximize", async (req, res) => {
     const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
     if (!wid) return res.json({ ok: true });
 
-    if (force) {
+    if (force || wasFullscreen || windowMode !== "maximize") {
+      // Enter maximize — move to focused workspace first so it fullscreens on the right monitor
       try { await mpvCommand(["set_property", "ontop", false]); } catch {}
-      execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
+      try {
+        const focusedWs = execSync("aerospace list-workspaces --focused", { encoding: "utf8" }).trim();
+        execSync(`aerospace move-node-to-workspace --window-id ${wid} ${focusedWs}`, { stdio: "ignore" });
+      } catch {}
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
       execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
       windowMode = "maximize";
     } else {
-      // Try to enter fullscreen — if already fullscreen, exit to floating
+      // Already maximized — exit to floating with resize via AppleScript
+      execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" });
       try {
-        try { await mpvCommand(["set_property", "ontop", false]); } catch {}
-        execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
-        execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-        execSync(`aerospace fullscreen on --window-id ${wid} --fail-if-noop`, { stdio: "ignore" });
-        windowMode = "maximize";
-      } catch {
-        // Was already fullscreen — exit and float
-        execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" });
-        await new Promise((r) => setTimeout(r, 200));
-        await floatTopRight(wid);
-        windowMode = "floating";
-      }
+        const screens = getScreenOrigins();
+        const fsScreen = await mpvCommand(["get_property", "fs-screen"]).catch(() => ({ data: 0 }));
+        const screen = screens[fsScreen?.data] || screens.find(s => s.isMain) || screens[0];
+        const w = Math.round(screen.w * 0.38);
+        const h = Math.round(w * 9 / 16);
+        const posX = screen.x + screen.w - w - 12;
+        const posY = screen.y + 38;
+        execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
+        execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`, { stdio: "ignore" });
+      } catch {}
+      try { await mpvCommand(["set_property", "ontop", true]); } catch {}
+      windowMode = "floating";
     }
     res.json({ ok: true });
-  } catch {
+  } catch (err) {
+    console.error("Maximize failed:", err.message);
     res.status(500).json({ error: "Maximize failed" });
   }
 });
