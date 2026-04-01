@@ -466,18 +466,42 @@ app.post("/api/play", async (req, res) => {
         await mpvCommand(["get_property", "pid"]);
         await mpvCommand(["loadfile", url, "replace"]);
         if (resumePos > 0) {
-          setTimeout(() => mpvCommand(["seek", resumePos, "absolute"]).catch(() => {}), 2000);
+          // Retry seek until video is loaded
+          const doSeek = async (attempts) => {
+            for (let i = 0; i < attempts; i++) {
+              await new Promise(r => setTimeout(r, 2000));
+              try {
+                const d = await mpvCommand(["get_property", "duration"]);
+                if (d?.data > 0) {
+                  await mpvCommand(["seek", resumePos, "absolute"]);
+                  return;
+                }
+              } catch {}
+            }
+          };
+          doSeek(5);
         }
         nowPlaying = url;
         addToHistory(url, "");
         reused = true;
         res.json({ ok: true });
 
+        // Restart progress interval for new URL
+        if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         setTimeout(async () => {
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
             if (t?.data) { history[0].title = t.data; saveHistory(); }
           } catch {}
+          progressInterval = setInterval(async () => {
+            try {
+              const [pos, dur] = await Promise.all([
+                mpvCommand(["get_property", "time-pos"]),
+                mpvCommand(["get_property", "duration"]),
+              ]);
+              if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
+            } catch {}
+          }, 10000);
         }, 3000);
         return;
       } catch {}
@@ -500,7 +524,7 @@ app.post("/api/play", async (req, res) => {
         geometry = `${w}x${h}+${main.w - w - 12}+38`;
       } catch {}
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--keep-open`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -554,7 +578,7 @@ app.post("/api/play", async (req, res) => {
             mpvCommand(["get_property", "time-pos"]),
             mpvCommand(["get_property", "duration"]),
           ]);
-          if (pos?.data && dur?.data) updateHistoryProgress(url, pos.data, dur.data);
+          if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
         } catch {}
       }, 10000);
     }, 3000);
@@ -624,15 +648,32 @@ app.get("/api/playback", async (_req, res) => {
     const pos = await mpvCommand(["get_property", "time-pos"]);
     const dur = await mpvCommand(["get_property", "duration"]);
     const title = await mpvCommand(["get_property", "media-title"]);
+    const paused = await mpvCommand(["get_property", "pause"]).catch(() => ({ data: false }));
     const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
+    let monitor = "lg";
+    if (fs?.data) {
+      const fsScreen = await mpvCommand(["get_property", "fs-screen"]).catch(() => ({ data: 0 }));
+      const screens = getScreenInfo();
+      const mainIdx = screens.findIndex(s => s.main);
+      monitor = fsScreen?.data === mainIdx ? "lg" : "laptop";
+    } else {
+      // Floating — check window position
+      try {
+        const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
+        const x = parseInt(posStr.split(",")[0]);
+        monitor = x < 0 ? "laptop" : "lg";
+      } catch {}
+    }
     res.json({
       playing: true,
       url: nowPlaying,
       position: pos?.data || 0,
       duration: dur?.data || 0,
       title: title?.data || "",
+      paused: paused?.data || false,
       fullscreen: fs?.data || false,
       windowMode,
+      monitor,
     });
   } catch {
     res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0, title: "" });

@@ -154,28 +154,26 @@
   /* ── Search ── */
   .search-wrap {
     position: relative;
-    margin-bottom: 12px;
+    flex: 1;
+    margin: 0 12px;
   }
 
   .search-input {
     width: 100%;
-    padding: 10px 12px;
+    padding: 6px 10px;
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: none;
     border-radius: 0;
     color: var(--text);
     font-family: var(--font);
-    font-size: 13px;
+    font-size: 12px;
     outline: none;
     transition: border-color 0.1s;
   }
 
   .search-input::placeholder { color: var(--text-dim); }
 
-  .search-input:focus {
-    border-color: var(--accent2);
-    box-shadow: 0 0 8px rgba(255, 0, 255, 0.2);
-  }
+  .search-input:focus {}
 
   .search-icon {
     position: absolute;
@@ -604,6 +602,7 @@
   }
 
   .np-btn-row .np-btn:active { color: var(--text); }
+  .np-btn-row .np-btn.active { color: #2d8a4e; }
   .np-btn-row .np-btn-stop { color: var(--text-dim); }
 
   .np-mute-btn { color: #333 !important; background: none !important; border: none !important; flex: 0 0 auto !important; width: auto !important; padding: 0 4px; }
@@ -684,7 +683,8 @@
     width: 28px;
     height: 28px;
     border-radius: 0;
-    border: 1px solid var(--border);
+    border: none;
+    outline: none;
     background: none;
     color: var(--accent);
     cursor: pointer;
@@ -738,7 +738,8 @@
     width: 28px;
     height: 28px;
     border-radius: 0;
-    border: 1px solid var(--border);
+    border: none;
+    outline: none;
     background: none;
     color: var(--accent);
     cursor: pointer;
@@ -883,9 +884,14 @@
     }
 
     .video-card::before { display: none; }
+    .video-card:hover { background: var(--surface-hover); }
 
     .thumb-wrap {
       width: 100%;
+    }
+
+    .thumb-wrap:hover img {
+      transition: opacity 0.15s;
     }
 
     .video-info {
@@ -922,20 +928,19 @@
       </div>
       <button class="secret-menu-item" onclick="toggleResolution()">Toggle resolution</button>
     </div>
+    <div class="search-wrap">
+      <input
+        class="search-input"
+        id="searchInput"
+        type="text"
+        placeholder="Search"
+        autocomplete="off"
+        enterkeyhint="search"
+      >
+      <button class="search-clear" id="searchClear" aria-label="Clear">&times;</button>
+    </div>
     <button class="auth-btn" id="authBtn" onclick="handleAuth()">Sign in</button>
   </header>
-
-  <div class="search-wrap">
-    <input
-      class="search-input"
-      id="searchInput"
-      type="text"
-      placeholder="Search"
-      autocomplete="off"
-      enterkeyhint="search"
-    >
-    <button class="search-clear" id="searchClear" aria-label="Clear">&times;</button>
-  </div>
 
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="home">Home</button>
@@ -950,11 +955,11 @@
 
 <div class="now-playing" id="nowPlaying" style="display:none">
   <div class="np-btn-row">
-    <button class="np-btn" onclick="moveMonitor('laptop')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="20" x2="22" y2="20"/></svg></button>
-    <button class="np-btn" onclick="moveMonitor('lg')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
-    <button class="np-btn" onclick="toggleMaximize()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
-    <button class="np-btn" onclick="toggleFullscreen()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
-    <button class="np-btn" onclick="watchOnPhone()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></button>
+    <button class="np-btn" id="btnLaptop" onclick="moveMonitor('laptop')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="20" x2="22" y2="20"/></svg></button>
+    <button class="np-btn" id="btnLg" onclick="moveMonitor('lg')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
+    <button class="np-btn" id="btnMaximize" onclick="toggleMaximize()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+    <button class="np-btn" id="btnFullscreen" onclick="toggleFullscreen()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
+    <button class="np-btn" id="btnPhone" onclick="watchOnPhone()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12" y2="18"/></svg></button>
     <button class="np-btn" onclick="toggleComments()" id="npComments"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="np-btn np-btn-stop" onclick="stopPlayback()"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
   </div>
@@ -1235,6 +1240,22 @@
         npBar.style.flexWrap = 'wrap';
         if (data.url) nowPlayingUrl = data.url;
         if (data.title) npTitle.textContent = data.title;
+
+        // Highlight active mode buttons
+        document.querySelectorAll('#btnLaptop,#btnLg,#btnMaximize,#btnFullscreen,#btnPhone').forEach(b => b.classList.remove('active'));
+        if (data.monitor === 'laptop') document.getElementById('btnLaptop')?.classList.add('active');
+        else document.getElementById('btnLg')?.classList.add('active');
+        if (data.fullscreen) document.getElementById('btnFullscreen')?.classList.add('active');
+        if (data.windowMode === 'maximize') document.getElementById('btnMaximize')?.classList.add('active');
+        if (document.getElementById('phonePlayer')) document.getElementById('btnPhone')?.classList.add('active');
+
+        // Sync play/pause icon
+        const ppBtn = document.getElementById('npPlayPause');
+        if (ppBtn) {
+          ppBtn.innerHTML = data.paused
+            ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+        }
         const m = (data.url || '').match(/v=([\w-]+)/);
         if (m) npThumb.style.backgroundImage = `url(https://i.ytimg.com/vi/${m[1]}/default.jpg)`;
 
@@ -1362,6 +1383,11 @@
   };
 
   window.watchOnPhone = async function() {
+    // Toggle — if phone player is active, go back to computer
+    if (document.getElementById('phonePlayer')) {
+      backToComputer();
+      return;
+    }
     try {
       showToast('Loading stream...');
       try {
@@ -1371,24 +1397,19 @@
       const res = await fetch('/api/watch-on-phone', { method: 'POST' });
       const data = await res.json();
       if (data.streamUrl) {
-        // Show inline player
+        // Show sticky video at top, rest of app visible below
         const player = document.createElement('div');
         player.id = 'phonePlayer';
-        player.style.cssText = 'position:fixed;inset:0;z-index:500;background:#000;display:flex;flex-direction:column;';
+        player.style.cssText = 'position:sticky;top:0;z-index:500;background:#000;border-bottom:1px solid var(--border);';
         player.innerHTML = `
-          <div style="padding:12px 16px;display:flex;align-items:center;justify-content:space-between;">
-            <span style="color:var(--text);font-family:Outfit;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1">${escapeHtml(data.title)}</span>
-            <button onclick="closePhonePlayer()" style="background:none;border:none;color:var(--text);font-size:24px;cursor:pointer;padding:0 8px">&times;</button>
-          </div>
-          <video id="phoneVideo" style="flex:1;width:100%;background:#000" controls playsinline autoplay muted>
-            <source src="${data.streamUrl}" type="${data.streamUrl.includes('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'}">
-          </video>
-          <div style="display:flex;gap:8px;margin:8px 16px;padding-bottom:calc(16px + var(--safe-bottom))">
-            <button onclick="toggleMpvVideo()" id="mpvVideoToggle" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--border);background:none;color:var(--text-dim);font-family:Outfit;font-weight:500;font-size:13px;cursor:pointer">Show on computer</button>
-            <button onclick="backToComputer()" style="flex:1;padding:10px;border-radius:10px;border:1px solid var(--accent);background:none;color:var(--accent);font-family:Outfit;font-weight:500;font-size:13px;cursor:pointer">Back to computer</button>
+          <div style="position:relative;">
+            <video id="phoneVideo" style="width:100%;background:#000;display:block" controls playsinline autoplay muted>
+              <source src="${data.streamUrl}" type="${data.streamUrl.includes('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'}">
+            </video>
+            <button onclick="closePhonePlayer()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;line-height:1">&times;</button>
           </div>
         `;
-        document.body.appendChild(player);
+        document.querySelector('.app').prepend(player);
         // Hide mpv video on computer by default
         mpvVideoHidden = true;
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
@@ -1677,6 +1698,35 @@
       }
     }
   });
+
+  // ── Hover preview (desktop) — cycle YouTube thumbnail frames ──
+  if (window.matchMedia('(hover: hover)').matches) {
+    grid.addEventListener('mouseover', (e) => {
+      const card = e.target.closest('.video-card');
+      if (!card || card._hoverInterval) return;
+      const m = card.dataset.url?.match(/v=([\w-]+)/);
+      if (!m) return;
+      const img = card.querySelector('.thumb-wrap img');
+      if (!img) return;
+      card._origSrc = img.src;
+      let frame = 1;
+      card._hoverInterval = setInterval(() => {
+        img.src = `https://i.ytimg.com/vi/${m[1]}/${frame}.jpg`;
+        frame = (frame % 3) + 1;
+      }, 800);
+    });
+
+    grid.addEventListener('mouseout', (e) => {
+      const card = e.target.closest('.video-card');
+      if (!card || !card._hoverInterval) return;
+      // Only stop if we actually left the card (not just moved between children)
+      if (card.contains(e.relatedTarget)) return;
+      clearInterval(card._hoverInterval);
+      card._hoverInterval = null;
+      const img = card.querySelector('.thumb-wrap img');
+      if (img && card._origSrc) img.src = card._origSrc;
+    });
+  }
 
   // ── Secret menu ──
   window.toggleResolution = async function() {
