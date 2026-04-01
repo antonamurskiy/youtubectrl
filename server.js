@@ -251,6 +251,7 @@ app.get("/api/search", async (req, res) => {
       views: v.views,
       url: v.url,
       uploadedAt: v.uploadedAt || "",
+      live: v.live || false,
     })), nextPageToken: null });
   } catch (err) {
     console.error("youtube-sr search failed, trying API:", err.message);
@@ -368,6 +369,7 @@ app.get("/api/trending", async (_req, res) => {
       views: v.views,
       url: v.url,
       uploadedAt: v.uploadedAt || "",
+      live: v.live || false,
     }));
     trendingCache = { data: videos, ts: Date.now() };
     res.json(videos);
@@ -397,6 +399,7 @@ const { spawn, execSync } = require("child_process");
 
 let mpvProcess = null;
 let nowPlaying = null;
+let progressInterval = null;
 
 app.get("/api/now-playing", (_req, res) => {
   res.json({ url: nowPlaying });
@@ -431,8 +434,8 @@ app.post("/api/play", async (req, res) => {
     nowPlaying = url;
     addToHistory(url, "");
 
-    // Update history title + save progress periodically
-    let progressInterval = null;
+    // Clear old progress interval and start new one
+    if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
     setTimeout(async () => {
       try {
         const t = await mpvCommand(["get_property", "media-title"]);
@@ -512,11 +515,9 @@ app.get("/api/playback", async (_req, res) => {
     return res.json({ playing: false });
   }
   try {
-    const [pos, dur, title] = await Promise.all([
-      mpvCommand(["get_property", "time-pos"]),
-      mpvCommand(["get_property", "duration"]),
-      mpvCommand(["get_property", "media-title"]),
-    ]);
+    const pos = await mpvCommand(["get_property", "time-pos"]);
+    const dur = await mpvCommand(["get_property", "duration"]);
+    const title = await mpvCommand(["get_property", "media-title"]);
     res.json({
       playing: true,
       url: nowPlaying,
@@ -628,6 +629,26 @@ app.get("/api/history", async (_req, res) => {
       savedDuration: h.duration || 0,
     };
   }));
+});
+
+// Check live status for a video
+app.get("/api/live-status", async (req, res) => {
+  const { ids } = req.query;
+  if (!ids) return res.json({});
+  try {
+    const YouTube = require("youtube-sr").default;
+    const result = {};
+    const checks = ids.split(",").slice(0, 10).map(async (id) => {
+      try {
+        const v = await YouTube.getVideo(`https://www.youtube.com/watch?v=${id}`);
+        if (v?.live) result[id] = true;
+      } catch {}
+    });
+    await Promise.all(checks);
+    res.json(result);
+  } catch {
+    res.json({});
+  }
 });
 
 // Watch on phone — pause mpv, return YouTube URL at current timestamp
