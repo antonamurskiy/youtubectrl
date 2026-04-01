@@ -68,7 +68,15 @@ function saveTokens() {
 }
 
 app.use(express.json());
-app.use(express.static(path.join(__dirname, "public")));
+
+// Track file modification time for live reload
+let lastModified = Date.now();
+fs.watch(path.join(__dirname, "public"), { recursive: true }, () => { lastModified = Date.now(); });
+fs.watch(path.join(__dirname, "server.js"), () => { lastModified = Date.now(); });
+app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
+
+app.use(express.static(path.join(__dirname, "public"), { etag: false, lastModified: false }));
+app.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
 // ── YouTube API helpers ──
 
@@ -620,6 +628,99 @@ app.get("/api/history", async (_req, res) => {
       savedDuration: h.duration || 0,
     };
   }));
+});
+
+// Watch on phone — pause mpv, return YouTube URL at current timestamp
+// Volume control
+app.post("/api/volume", async (req, res) => {
+  const { volume } = req.body;
+  try {
+    await mpvCommand(["set_property", "volume", volume]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Volume failed" });
+  }
+});
+
+// Mute toggle
+app.post("/api/mute", async (_req, res) => {
+  try {
+    await mpvCommand(["cycle", "mute"]);
+    const state = await mpvCommand(["get_property", "mute"]);
+    res.json({ ok: true, muted: !!state?.data });
+  } catch {
+    res.status(500).json({ error: "Mute failed" });
+  }
+});
+
+// Toggle mpv video visibility (audio-only mode)
+app.post("/api/mpv-video", async (req, res) => {
+  const { hidden } = req.body;
+  try {
+    await mpvCommand(["set_property", "vid", hidden ? "no" : "auto"]);
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Failed" });
+  }
+});
+
+// Watch on phone — get direct stream URL
+app.post("/api/watch-on-phone", async (_req, res) => {
+  if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
+  try {
+    const pos = await mpvCommand(["get_property", "time-pos"]);
+    const seconds = Math.floor(pos?.data || 0);
+    const m = nowPlaying.match(/v=([\w-]+)/);
+    const videoId = m ? m[1] : "";
+    // Get stream URL — MP4 for VOD (precise seeking), HLS for live
+    const { stdout } = await require("util").promisify(require("child_process").execFile)(
+      "yt-dlp", ["-f", "18/best[height<=720]", "--get-url", nowPlaying],
+      { timeout: 15000 }
+    );
+    const streamUrl = stdout.trim().split("\n")[0];
+    const title = await mpvCommand(["get_property", "media-title"]);
+    res.json({ streamUrl, seconds, videoId, title: title?.data || "" });
+  } catch (err) {
+    console.error("Watch on phone error:", err.message);
+    // Fallback to YouTube URL
+    try {
+      const m = nowPlaying.match(/v=([\w-]+)/);
+      const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
+      const s = Math.floor(pos?.data || 0);
+      res.json({ youtubeUrl: `https://youtu.be/${m?.[1]}?t=${s}`, seconds: s });
+    } catch {
+      res.status(500).json({ error: "Failed" });
+    }
+  }
+});
+
+// Comments — uses yt-dlp (no quota)
+app.get("/api/comments", async (req, res) => {
+  const { videoId } = req.query;
+  if (!videoId) return res.json([]);
+
+  try {
+    const { stdout } = await require("util").promisify(require("child_process").execFile)(
+      "yt-dlp", [
+        "--extractor-args", "youtube:max_comments=20",
+        "--write-comments", "--skip-download", "--dump-json",
+        "--no-warnings",
+        `https://www.youtube.com/watch?v=${videoId}`,
+      ],
+      { timeout: 20000, maxBuffer: 5 * 1024 * 1024 }
+    );
+    const data = JSON.parse(stdout);
+    const comments = (data.comments || []).map((c) => ({
+      author: c.author || "Unknown",
+      text: c.text || "",
+      likes: c.like_count || 0,
+      publishedAt: c.timestamp ? timeAgo(new Date(c.timestamp * 1000).toISOString()) : "",
+    }));
+    res.json(comments);
+  } catch (err) {
+    console.error("Comments error:", err.message);
+    res.json([]);
+  }
 });
 
 // Play/pause
