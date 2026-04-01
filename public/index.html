@@ -95,6 +95,39 @@
     -webkit-text-fill-color: unset;
   }
 
+  .logo-text { cursor: pointer; }
+
+  .secret-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    z-index: 100;
+    min-width: 180px;
+  }
+
+  .secret-menu.open { display: block; }
+
+  .secret-menu-item {
+    display: block;
+    width: 100%;
+    padding: 10px 12px;
+    background: none;
+    border: none;
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--font);
+    font-size: 11px;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .secret-menu-item:last-child { border-bottom: none; }
+  .secret-menu-item:active { background: var(--surface-hover); }
+
   .header-status {
     margin-left: auto;
     font-size: 10px;
@@ -379,11 +412,20 @@
   }
 
   /* ── Toast ── */
-  .toast {
+  .toast-stack {
     position: fixed;
-    bottom: calc(var(--safe-bottom) + 24px);
+    bottom: 0;
     left: 50%;
-    transform: translateX(-50%) translateY(80px);
+    transform: translateX(-50%);
+    z-index: 1000;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 4px;
+    align-items: center;
+    pointer-events: none;
+  }
+
+  .toast {
     background: #000;
     color: var(--accent);
     font-family: var(--font);
@@ -392,8 +434,8 @@
     padding: 8px 16px;
     border: 1px solid var(--accent);
     border-radius: 0;
-    z-index: 1000;
     opacity: 0;
+    transform: translateY(20px);
     transition: transform 0.2s ease, opacity 0.2s;
     display: flex;
     align-items: center;
@@ -404,11 +446,9 @@
   }
 
   .toast.show {
-    transform: translateX(-50%) translateY(0);
+    transform: translateY(0);
     opacity: 1;
   }
-
-  .toast svg { width: 14px; height: 14px; flex-shrink: 0; stroke: var(--accent); }
 
   /* ── Loading / empty states ── */
   .loading {
@@ -826,8 +866,15 @@
 <body>
 
 <div class="app">
-  <header class="header">
-    <span class="logo-text">ytctrl</span>
+  <header class="header" style="position:relative">
+    <span class="logo-text" onclick="document.getElementById('secretMenu').classList.toggle('open')">ytctrl</span>
+    <div class="secret-menu" id="secretMenu">
+      <div class="secret-menu-item" style="display:flex;align-items:center;gap:8px;">
+        <button id="npMute" onclick="toggleMute()" style="background:none;border:none;color:#555;padding:0;display:flex;align-items:center;cursor:pointer;flex:0 0 auto"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
+        <input type="range" class="np-volume" id="npVolume" min="0" max="100" value="100" oninput="setVolume(this.value)" style="flex:1">
+      </div>
+      <button class="secret-menu-item" onclick="toggleResolution()">Toggle resolution</button>
+    </div>
     <button class="auth-btn" id="authBtn" onclick="handleAuth()">Sign in</button>
   </header>
 
@@ -864,10 +911,6 @@
     <button class="np-btn" onclick="toggleComments()" id="npComments"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
     <button class="np-btn np-btn-stop" onclick="stopPlayback()"><svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg></button>
   </div>
-  <div class="np-volume-row">
-    <button class="np-btn np-mute-btn" onclick="toggleMute()" id="npMute"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
-    <input type="range" class="np-volume" id="npVolume" min="0" max="100" value="100" oninput="setVolume(this.value)">
-  </div>
   <div class="np-top-row">
     <div class="np-thumb" id="npThumb" onclick="togglePlayPause()"></div>
     <div class="np-info" onclick="togglePlayPause()">
@@ -888,20 +931,14 @@
   <div class="comments-list" id="commentsList"></div>
 </div>
 
-<div class="toast" id="toast">
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter">
-    <polyline points="20 6 9 17 4 12"/>
-  </svg>
-  <span id="toastText">Playing on computer</span>
-</div>
+<div class="toast-stack" id="toastStack"></div>
 
 <script>
   const grid = document.getElementById('videoGrid');
   const input = document.getElementById('searchInput');
   const clearBtn = document.getElementById('searchClear');
   const label = document.getElementById('sectionLabel');
-  const toast = document.getElementById('toast');
-  const toastText = document.getElementById('toastText');
+  const toastStack = document.getElementById('toastStack');
 
   const authBtn = document.getElementById('authBtn');
   const npBar = document.getElementById('nowPlaying');
@@ -911,6 +948,7 @@
 
   let searchTimeout = null;
   let currentlyPlaying = null;
+  let nowPlayingUrl = null;
   let isLoggedIn = false;
   let pollInterval = null;
   let currentTab = 'home';
@@ -971,9 +1009,13 @@
       </div>
     `}).join('');
 
-    // Attach tap handlers
+    // Attach tap handlers + highlight playing
     grid.querySelectorAll('.video-card').forEach(card => {
       card.addEventListener('click', () => playVideo(card));
+      if (nowPlayingUrl && card.dataset.url === nowPlayingUrl) {
+        card.classList.add('playing');
+        currentlyPlaying = card;
+      }
     });
   }
 
@@ -1015,7 +1057,6 @@
     label.innerHTML = `<span class="accent">//</span> Home`;
     try {
       const res = await fetch('/api/home');
-      if (res.status === 401) throw new Error('stale');
       if (!res.ok) throw new Error('no home');
       const data = await res.json();
       if (!data.length) throw new Error('empty');
@@ -1073,6 +1114,7 @@
     if (currentlyPlaying) currentlyPlaying.classList.remove('playing');
     card.classList.add('playing');
     currentlyPlaying = card;
+    nowPlayingUrl = url;
 
     // Show toast
     showToast('Playing on computer');
@@ -1091,10 +1133,18 @@
   }
 
   function showToast(msg) {
-    toastText.textContent = msg;
-    toast.classList.add('show');
-    clearTimeout(showToast._t);
-    showToast._t = setTimeout(() => toast.classList.remove('show'), 2200);
+    const np = document.getElementById('nowPlaying');
+    const offset = np && np.style.display !== 'none' ? np.offsetHeight : 0;
+    toastStack.style.bottom = (offset + 8) + 'px';
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = msg;
+    toastStack.appendChild(el);
+    requestAnimationFrame(() => el.classList.add('show'));
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 200);
+    }, 1500);
   }
 
   // ── Now Playing ──
@@ -1136,6 +1186,7 @@
       if (data.playing && data.duration > 0) {
         npBar.style.display = 'flex';
         npBar.style.flexWrap = 'wrap';
+        if (data.url) nowPlayingUrl = data.url;
         if (data.title) npTitle.textContent = data.title;
         const m = (data.url || '').match(/v=([\w-]+)/);
         if (m) npThumb.style.backgroundImage = `url(https://i.ytimg.com/vi/${m[1]}/default.jpg)`;
@@ -1165,9 +1216,11 @@
 
           controls.querySelector('#npSkipBack').addEventListener('click', () => {
             fetch('/api/seek-relative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offset: -10 }) });
+            showToast('-10s');
           });
           controls.querySelector('#npSkipFwd').addEventListener('click', () => {
             fetch('/api/seek-relative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offset: 10 }) });
+            showToast('+10s');
           });
 
           const bar = controls.querySelector('#npProgressBar');
@@ -1264,7 +1317,10 @@
   window.watchOnPhone = async function() {
     try {
       showToast('Loading stream...');
-      mpvStateBeforePhone = lastWindowMode;
+      try {
+        const pb = await fetch('/api/playback').then(r => r.json());
+        mpvStateBeforePhone = pb.windowMode;
+      } catch { mpvStateBeforePhone = null; }
       const res = await fetch('/api/watch-on-phone', { method: 'POST' });
       const data = await res.json();
       if (data.streamUrl) {
@@ -1320,7 +1376,6 @@
 
   let mpvVideoHidden = false;
   let mpvStateBeforePhone = null;
-  let lastWindowMode = null; // 'fullscreen' | 'maximize' | null — tracks which mode was last activated
   window.toggleMpvVideo = async function() {
     mpvVideoHidden = !mpvVideoHidden;
     await fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: mpvVideoHidden }) });
@@ -1359,7 +1414,6 @@
       await new Promise(r => setTimeout(r, 800));
       try { await fetch('/api/maximize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ force: true }) }); } catch {}
     }
-    lastWindowMode = savedMode;
     showToast('Synced to computer');
   };
 
@@ -1396,12 +1450,10 @@
   };
 
   window.toggleFullscreen = async function() {
-    lastWindowMode = lastWindowMode === 'fullscreen' ? null : 'fullscreen';
     fetch('/api/fullscreen', { method: 'POST' });
   };
 
   window.toggleMaximize = async function() {
-    lastWindowMode = lastWindowMode === 'maximize' ? null : 'maximize';
     fetch('/api/maximize', { method: 'POST' });
   };
 
@@ -1576,6 +1628,22 @@
         isLoadingMore = true;
         search(currentQuery, true);
       }
+    }
+  });
+
+  // ── Secret menu ──
+  window.toggleResolution = async function() {
+    document.getElementById('secretMenu').classList.remove('open');
+    try {
+      await fetch('/api/toggle-resolution', { method: 'POST' });
+      showToast('Resolution toggled');
+    } catch { showToast('Failed'); }
+  };
+
+  document.addEventListener('click', (e) => {
+    const menu = document.getElementById('secretMenu');
+    if (menu.classList.contains('open') && !e.target.closest('.logo-text') && !e.target.closest('.secret-menu')) {
+      menu.classList.remove('open');
     }
   });
 

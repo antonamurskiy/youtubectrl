@@ -285,17 +285,12 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
-// Home feed — yt-dlp scrapes YouTube homepage using cookies.txt
-// Re-export cookies via Chrome extension when they expire
+// Home feed — yt-dlp scrapes YouTube homepage using Firefox cookies
 async function getHomeFeed() {
-  const cookiePath = path.join(__dirname, "cookies.txt");
-  if (!fs.existsSync(cookiePath)) throw new Error("cookies_missing");
-
   const { stdout } = await require("util").promisify(require("child_process").execFile)(
     "yt-dlp", [
-      "--cookies", cookiePath,
+      "--cookies-from-browser", "firefox",
       "--flat-playlist", "--dump-json", "--no-warnings",
-      "--user-agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36",
       "-I", "1:50",
       "https://www.youtube.com/feed/recommended",
     ], { timeout: 25000, maxBuffer: 10 * 1024 * 1024 }
@@ -313,7 +308,7 @@ async function getHomeFeed() {
       url: `https://www.youtube.com/watch?v=${v.id}`,
     };
   });
-  if (!videos.length) throw new Error("cookies_expired");
+  if (!videos.length) throw new Error("empty_feed");
   return videos;
 }
 
@@ -337,9 +332,6 @@ app.get("/api/home", async (req, res) => {
     res.json(videos);
   } catch (err) {
     console.error("Home feed failed:", err.message);
-    if (err.message === "cookies_missing" || err.message === "cookies_expired") {
-      return res.status(401).json({ error: "cookies_stale" });
-    }
     res.json([]);
   }
 });
@@ -440,6 +432,7 @@ const { spawn, execSync } = require("child_process");
 
 let mpvProcess = null;
 let nowPlaying = null;
+let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let progressInterval = null;
 
 app.get("/api/now-playing", (_req, res) => {
@@ -453,20 +446,38 @@ app.post("/api/play", async (req, res) => {
   }
 
   try {
-    // Kill ALL existing mpv
-    try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
-    mpvProcess = null;
-
-    // Remove stale socket
-    try { require("fs").unlinkSync("/tmp/mpv-socket"); } catch {}
-
-    // Check if we have a saved position for this video
     const savedEntry = history.find((h) => h.url === url);
     const resumePos = savedEntry?.position && savedEntry?.duration && savedEntry.position < savedEntry.duration - 5 ? savedEntry.position : 0;
 
-    const cookiePath = path.join(__dirname, "cookies.txt");
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--fs`, `--fs-screen=0`];
-    if (fs.existsSync(cookiePath)) mpvArgs.push(`--ytdl-raw-options=cookies=${cookiePath}`);
+    // If mpv is already running, load new video in existing player
+    if (mpvProcess && !mpvProcess.killed) {
+      try {
+        await mpvCommand(["loadfile", url, "replace"]);
+        if (resumePos > 0) {
+          setTimeout(() => mpvCommand(["seek", resumePos, "absolute"]).catch(() => {}), 2000);
+        }
+        nowPlaying = url;
+        addToHistory(url, "");
+        res.json({ ok: true });
+
+        setTimeout(async () => {
+          try {
+            const t = await mpvCommand(["get_property", "media-title"]);
+            if (t?.data) { history[0].title = t.data; saveHistory(); }
+          } catch {}
+        }, 3000);
+        return;
+      } catch {
+        // IPC failed — fall through to spawn new instance
+      }
+    }
+
+    // No existing player — spawn new one
+    try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+    mpvProcess = null;
+    try { require("fs").unlinkSync("/tmp/mpv-socket"); } catch {}
+
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`];
     mpvArgs.push(url);
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
 
@@ -476,6 +487,26 @@ app.post("/api/play", async (req, res) => {
 
     mpvProcess = child;
     nowPlaying = url;
+    if (!windowMode) windowMode = "floating";
+
+    // Apply current window mode after mpv window appears
+    const targetMode = windowMode;
+    setTimeout(async () => {
+      try {
+        if (targetMode === "fullscreen") {
+          await mpvCommand(["set_property", "fullscreen", true]);
+        } else if (targetMode === "maximize") {
+          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+          if (wid) {
+            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+            execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+          }
+        } else {
+          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+          if (wid) await floatTopRight(wid);
+        }
+      } catch {}
+    }, 1500);
     addToHistory(url, "");
 
     // Clear old progress interval and start new one
@@ -570,6 +601,7 @@ app.get("/api/playback", async (_req, res) => {
       duration: dur?.data || 0,
       title: title?.data || "",
       fullscreen: fs?.data || false,
+      windowMode,
     });
   } catch {
     res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0, title: "" });
@@ -741,7 +773,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
     // Get stream URL — MP4 for VOD (precise seeking), HLS for live
     const { stdout } = await require("util").promisify(require("child_process").execFile)(
-      "yt-dlp", ["--cookies", path.join(__dirname, "cookies.txt"), "-f", "18/best[height<=720]", "--get-url", nowPlaying],
+      "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const streamUrl = stdout.trim().split("\n")[0];
@@ -769,7 +801,7 @@ app.get("/api/comments", async (req, res) => {
   try {
     const { stdout } = await require("util").promisify(require("child_process").execFile)(
       "yt-dlp", [
-        "--cookies", path.join(__dirname, "cookies.txt"),
+        "--cookies-from-browser", "firefox",
         "--extractor-args", "youtube:max_comments=20",
         "--write-comments", "--skip-download", "--dump-json",
         "--no-warnings",
@@ -828,17 +860,37 @@ app.post("/api/move-monitor", async (req, res) => {
   const { target } = req.body;
   const screen = target === "laptop" ? 1 : 0;
   try {
+    // Ensure aerospace isn't in floating mode
+    try {
+      const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+      if (wid) execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
+    } catch {}
     await mpvCommand(["set_property", "fullscreen", false]);
     await new Promise((r) => setTimeout(r, 300));
     await mpvCommand(["set_property", "fs-screen", screen]);
     await new Promise((r) => setTimeout(r, 300));
     await mpvCommand(["set_property", "fullscreen", true]);
+    windowMode = "fullscreen";
     res.json({ ok: true });
   } catch (err) {
     console.error("Move failed:", err.message);
     res.status(500).json({ error: "Move failed" });
   }
 });
+
+// Float mpv window to top-right corner
+async function floatTopRight(wid) {
+  execSync(`aerospace layout --window-id ${wid} floating`, { stdio: "ignore" });
+  const screen = await mpvCommand(["get_property", "fs-screen"]);
+  const isLaptop = screen?.data === 1;
+  const w = isLaptop ? 640 : 960;
+  const h = isLaptop ? 360 : 540;
+  try {
+    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
+    const screenW = parseInt(execSync(`osascript -e 'tell application "Finder" to get bounds of window of desktop' 2>/dev/null || echo "0 0 2560 1440"`, { encoding: "utf8" }).trim().split(", ")[2] || "2560");
+    execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${screenW - w - 12}, 12}'`, { stdio: "ignore" });
+  } catch {}
+}
 
 // Aerospace fullscreen (with dock visible) — exit mpv fullscreen first
 app.post("/api/maximize", async (req, res) => {
@@ -850,9 +902,27 @@ app.post("/api/maximize", async (req, res) => {
     }
     const force = req.body?.force === true;
     const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-    if (wid) {
+    if (!wid) return res.json({ ok: true });
+
+    if (force) {
+      execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-      execSync(`aerospace fullscreen ${force ? 'on ' : ''}--window-id ${wid}`, { stdio: "ignore" });
+      execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+      windowMode = "maximize";
+    } else {
+      // Try to enter fullscreen — if already fullscreen, exit to floating
+      try {
+        execSync(`aerospace layout --window-id ${wid} tiling`, { stdio: "ignore" });
+        execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+        execSync(`aerospace fullscreen on --window-id ${wid} --fail-if-noop`, { stdio: "ignore" });
+        windowMode = "maximize";
+      } catch {
+        // Was already fullscreen — exit and float
+        execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" });
+        await new Promise((r) => setTimeout(r, 200));
+        await floatTopRight(wid);
+        windowMode = "floating";
+      }
     }
     res.json({ ok: true });
   } catch {
@@ -865,20 +935,29 @@ app.post("/api/fullscreen", async (_req, res) => {
   try {
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
-      // Exiting fullscreen — check which screen we're on and set appropriate size
-      const screen = await mpvCommand(["get_property", "fs-screen"]);
-      const isLaptop = screen?.data === 1;
+      // Exiting fullscreen — float in top-right corner
       await mpvCommand(["set_property", "fullscreen", false]);
-      await new Promise((r) => setTimeout(r, 300));
-      // Set autofit for the current screen
-      const size = isLaptop ? "640x360" : "960x540";
-      await mpvCommand(["set_property", "autofit", size]);
+      await new Promise((r) => setTimeout(r, 400));
+      const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+      if (wid) await floatTopRight(wid);
+      windowMode = "floating";
     } else {
       await mpvCommand(["set_property", "fullscreen", true]);
+      windowMode = "fullscreen";
     }
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Fullscreen toggle failed" });
+  }
+});
+
+// Toggle display resolution (1280x720 <-> 2560x1440)
+app.post("/api/toggle-resolution", async (_req, res) => {
+  try {
+    execSync(`${require("os").homedir()}/.config/aerospace/scripts/toggle-resolution.sh`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch {
+    res.status(500).json({ error: "Resolution toggle failed" });
   }
 });
 
