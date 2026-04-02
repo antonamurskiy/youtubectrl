@@ -175,7 +175,7 @@
 
   .search-input::placeholder { color: var(--text-dim); }
 
-  .search-input:focus {}
+  .search-input:focus { border-color: var(--accent2); }
 
   .search-icon {
     position: absolute;
@@ -585,7 +585,7 @@
     margin: 0 auto;
     z-index: 100;
     gap: 4px;
-    overflow: hidden;
+    overflow: visible;
   }
 
   .np-top-row {
@@ -811,6 +811,43 @@
   @keyframes pulse-red {
     0%, 100% { background: #bb0000; }
     50% { background: #ff2222; }
+  }
+
+  .seek-preview {
+    position: absolute;
+    bottom: 100%;
+    transform: translateX(-50%);
+    pointer-events: none;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    margin-bottom: 8px;
+    z-index: 100;
+  }
+  .seek-preview.visible { display: flex; }
+  .seek-preview-thumb {
+    width: 160px;
+    height: 90px;
+    background: #111;
+    border: 1px solid var(--border);
+    overflow: hidden;
+    margin-bottom: 2px;
+  }
+  .seek-preview-thumb img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .seek-preview-time {
+    background: #000;
+    color: #fff;
+    font-family: var(--font);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border: 1px solid var(--border);
+    white-space: nowrap;
   }
 
   /* ── Comments panel ── */
@@ -1074,13 +1111,16 @@
       return;
     }
 
+    // Clear hover intervals before replacing DOM
+    grid.querySelectorAll('.video-card').forEach(c => { if (c._hoverInterval) clearInterval(c._hoverInterval); });
+
     grid.innerHTML = videos.map((v, i) => {
       const hasProg = v.savedPosition > 0 && v.savedDuration > 0;
       const pct = hasProg ? Math.min(100, (v.savedPosition / v.savedDuration) * 100) : 0;
       return `
       <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" >
         <div class="thumb-wrap">
-          <img src="${v.thumbnail}" alt="" loading="lazy">
+          <img src="${v.thumbnail}" alt="${escapeHtml(v.title || '')}" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
           ${hasProg ? `<div class="watch-progress" style="width:${pct}%"></div>` : ''}
         </div>
@@ -1109,7 +1149,7 @@
     const html = videos.map((v, i) => `
       <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" >
         <div class="thumb-wrap">
-          <img src="${v.thumbnail}" alt="" loading="lazy">
+          <img src="${v.thumbnail}" alt="${escapeHtml(v.title || '')}" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
         </div>
         <div class="video-info">
@@ -1308,6 +1348,7 @@
     if (window._scrubDragging && window._scrubSendSeek) {
       window._scrubDragging = false;
       window._scrubSendSeek(e.changedTouches[0].clientX);
+      if (window._scrubHidePreview) window._scrubHidePreview();
       setTimeout(() => { isSeeking = false; }, 500);
     }
   });
@@ -1377,6 +1418,10 @@
             <div class="np-progress-bar" id="npProgressBar">
               <div class="np-progress-fill" id="npFill"></div>
               <div class="np-progress-thumb" id="npThumbDot"></div>
+              <div class="seek-preview" id="seekPreview">
+                <div class="seek-preview-thumb" id="seekPreviewThumb"></div>
+                <div class="seek-preview-time" id="seekPreviewTime">0:00</div>
+              </div>
             </div>
             <span class="np-time" id="npTimeDur">0:00</span>
             <button class="np-skip-btn" id="npSkipFwd">
@@ -1396,19 +1441,98 @@
 
           const bar = controls.querySelector('#npProgressBar');
           let seekTimer = null;
+          // storyboard data stored in window._storyboardData by poll
+
           function updateBarVisual(clientX) {
             const rect = bar.getBoundingClientRect();
             const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
             const fill = document.getElementById('npFill');
             const thumb = document.getElementById('npThumbDot');
-            const posEl = document.getElementById('npTimePos');
             const dur = parseFloat(bar.dataset.duration || 0);
             if (fill) fill.style.width = (pct * 100) + '%';
             if (thumb) thumb.style.left = (pct * 100) + '%';
-            if (posEl && dur) {
-              posEl.textContent = fmtTime(pct * dur);
+
+            // Show seek preview bubble
+            const preview = document.getElementById('seekPreview');
+            const previewTime = document.getElementById('seekPreviewTime');
+            const previewThumb = document.getElementById('seekPreviewThumb');
+            if (preview) {
+              preview.classList.add('visible');
+              // Clamp position so bubble doesn't go off-screen
+              const barW = rect.width;
+              const bubbleW = 160;
+              const minPct = (bubbleW / 2) / barW;
+              const maxPct = 1 - minPct;
+              const clampedPct = Math.max(minPct, Math.min(maxPct, pct));
+              preview.style.left = (clampedPct * 100) + '%';
+              if (previewTime && dur) {
+                previewTime.textContent = fmtTime(pct * dur);
+              }
+              // Show storyboard thumbnail if available
+              if (previewThumb) {
+                previewThumb.innerHTML = '';
+                previewThumb.style.display = '';
+                const sb = window._storyboardData;
+                if (sb && sb.url && dur > 0) {
+                  const seekTime = pct * dur;
+                  const frameIdx = Math.floor(seekTime / sb.interval);
+                  const perPage = sb.cols * sb.rows;
+                  const page = Math.floor(frameIdx / perPage);
+                  const localIdx = frameIdx % perPage;
+                  const col = localIdx % sb.cols;
+                  const row = Math.floor(localIdx / sb.cols);
+                  const imgUrl = sb.url.replace('$M', String(page));
+                  const bgX = sb.cols > 1 ? (col / (sb.cols - 1)) * 100 : 0;
+                  const bgY = sb.rows > 1 ? (row / (sb.rows - 1)) * 100 : 0;
+                  previewThumb.style.cssText = `width:160px;height:90px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
+                } else {
+                  previewThumb.style.display = 'none';
+                }
+              }
             }
             return pct;
+          }
+
+          function showSeekPreviewAt(clientX, barEl) {
+            const rect = barEl.getBoundingClientRect();
+            const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+            const dur = parseFloat(barEl.dataset.duration || 0);
+            const preview = document.getElementById('seekPreview');
+            const previewTime = document.getElementById('seekPreviewTime');
+            const previewThumb = document.getElementById('seekPreviewThumb');
+            if (!preview) return;
+            preview.classList.add('visible');
+            const barW = rect.width;
+            const bubbleW = 160;
+            const minPct = (bubbleW / 2) / barW;
+            const maxPct = 1 - minPct;
+            preview.style.left = (Math.max(minPct, Math.min(maxPct, pct)) * 100) + '%';
+            if (previewTime && dur) previewTime.textContent = fmtTime(pct * dur);
+            if (previewThumb) {
+              previewThumb.innerHTML = '';
+              const sb = window._storyboardData;
+              if (sb && sb.url && dur > 0) {
+                previewThumb.style.display = '';
+                const seekTime = pct * dur;
+                const frameIdx = Math.floor(seekTime / sb.interval);
+                const perPage = sb.cols * sb.rows;
+                const page = Math.floor(frameIdx / perPage);
+                const localIdx = frameIdx % perPage;
+                const col = localIdx % sb.cols;
+                const row = Math.floor(localIdx / sb.cols);
+                const imgUrl = sb.url.replace('$M', String(page));
+                const bgX = sb.cols > 1 ? (col / (sb.cols - 1)) * 100 : 0;
+                const bgY = sb.rows > 1 ? (row / (sb.rows - 1)) * 100 : 0;
+                previewThumb.style.cssText = `width:160px;height:90px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
+              } else {
+                previewThumb.style.display = 'none';
+              }
+            }
+          }
+
+          function hideSeekPreview() {
+            const preview = document.getElementById('seekPreview');
+            if (preview) preview.classList.remove('visible');
           }
           function sendSeek(clientX) {
             const pct = updateBarVisual(clientX);
@@ -1425,7 +1549,19 @@
             }
           }
           bar.addEventListener('click', (e) => { sendSeek(e.clientX); });
-          bar.addEventListener('touchstart', (e) => { e.preventDefault(); window._scrubDragging = true; isSeeking = true; window._scrubSendSeek = sendSeek; window._scrubUpdateBar = updateBarVisual; updateBarVisual(e.touches[0].clientX); });
+          // Desktop: show preview on hover (without moving the scrubber)
+          bar.addEventListener('mousemove', (e) => {
+            if (!isSeeking) showSeekPreviewAt(e.clientX, bar);
+          });
+          bar.addEventListener('mouseleave', () => { hideSeekPreview(); });
+          // Mobile: show preview during drag
+          bar.addEventListener('touchstart', (e) => {
+            e.preventDefault(); window._scrubDragging = true; isSeeking = true;
+            window._scrubSendSeek = sendSeek;
+            window._scrubUpdateBar = updateBarVisual;
+            window._scrubHidePreview = hideSeekPreview;
+            updateBarVisual(e.touches[0].clientX);
+          });
         }
 
         if (!isSeeking) {
@@ -1443,6 +1579,22 @@
             if (posEl) posEl.textContent = fmtTime(data.position);
           }
           if (barEl) barEl.dataset.duration = data.duration;
+          // Store videoId for storyboard preview
+          const vm = (data.url || '').match(/v=([\w-]+)/);
+          if (barEl && vm) {
+            if (barEl.dataset.videoId !== vm[1]) {
+              barEl.dataset.videoId = vm[1];
+              // Fetch storyboard for this video (non-blocking)
+              if (!data.isLive) {
+                fetch('/api/storyboard?videoId=' + vm[1]).then(r => r.json()).then(sb => {
+                  if (sb.url) window._storyboardData = sb;
+                  else window._storyboardData = null;
+                }).catch(() => { window._storyboardData = null; });
+              } else {
+                window._storyboardData = null;
+              }
+            }
+          }
         }
         const durEl = document.getElementById('npTimeDur');
         if (durEl) {
@@ -1552,8 +1704,9 @@
             if (!vid || vid.paused) return;
             const fresh = await fetch('/api/playback').then(r => r.json());
             if (!fresh.position) return;
+            if (!fresh.position) return;
             const drift = Math.abs(vid.currentTime - fresh.position);
-            if (drift > 2) vid.currentTime = fresh.position + 0.5;
+            if (drift > 2 && isFinite(fresh.position)) vid.currentTime = fresh.position + 0.5;
           } catch {}
         }, 3000);
       } else if (data.youtubeUrl) {
@@ -1612,6 +1765,7 @@
   window.toggleComments = async function() {
     const existing = document.getElementById('chatEmbed');
     if (existing) {
+      if (existing._chatPollTimer) existing._chatPollTimer();
       existing.remove();
       commentsOpen = false;
       return;
@@ -1636,8 +1790,9 @@
         document.querySelector('.app').prepend(embed);
         let chatToken = null;
         const seenIds = new Set();
+        let chatPollTimer = null;
         const pollChat = async () => {
-          // Cap seenIds to prevent unbounded growth
+          if (document.hidden || !document.getElementById('chatEmbed')) return;
           if (seenIds.size > 2000) { const arr = [...seenIds]; seenIds.clear(); arr.slice(-1000).forEach(id => seenIds.add(id)); }
           try {
             const url = '/api/livechat?videoId=' + m[1] + (chatToken ? '&pageToken=' + chatToken : '');
@@ -1656,16 +1811,17 @@
                 div.innerHTML = `<span style="color:${msg.isOwner ? '#2d8a4e' : msg.isMod ? '#5555ff' : '#777'};font-family:var(--font);font-size:10px;font-weight:700">${escapeHtml(msg.author)}</span><span style="color:var(--text);font-family:var(--font);font-size:11px;margin-left:6px">${escapeHtml(msg.text)}</span>`;
                 list.appendChild(div);
               }
-              // Cap DOM nodes to prevent memory growth
               while (list.children.length > 500) list.removeChild(list.firstChild);
               if (wasAtBottom) list.scrollTop = list.scrollHeight;
             }
             chatToken = data.nextPageToken;
             if (document.getElementById('chatEmbed')) {
-              setTimeout(pollChat, data.pollingMs || 5000);
+              chatPollTimer = setTimeout(pollChat, data.pollingMs || 5000);
             }
           } catch {}
         };
+        // Store timer ref for cleanup
+        embed._chatPollTimer = () => { if (chatPollTimer) clearTimeout(chatPollTimer); };
         pollChat();
         return;
       } else {
@@ -1920,11 +2076,23 @@
     const left = Math.min(rect.left + 16, window.innerWidth - 200);
     menu.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:300;`;
     const url = card.dataset.url;
-    menu.innerHTML = `
-      ${channelId ? `<button class="secret-menu-item" onclick="showChannelVideos('${channelId}', '${channel.replace(/'/g, "\\'")}')">More from ${escapeHtml(channel)}</button>` : ''}
-      <button class="secret-menu-item" onclick="copyText('${url}')">Copy link</button>
-      <button class="secret-menu-item" onclick="document.getElementById('cardMenu')?.remove()">Cancel</button>
-    `;
+    if (channelId) {
+      const chBtn = document.createElement('button');
+      chBtn.className = 'secret-menu-item';
+      chBtn.textContent = 'More from ' + (channel || 'channel');
+      chBtn.addEventListener('click', () => showChannelVideos(channelId, channel));
+      menu.appendChild(chBtn);
+    }
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'secret-menu-item';
+    copyBtn.textContent = 'Copy link';
+    copyBtn.addEventListener('click', () => copyText(url));
+    menu.appendChild(copyBtn);
+    const cancelBtn = document.createElement('button');
+    cancelBtn.className = 'secret-menu-item';
+    cancelBtn.textContent = 'Cancel';
+    cancelBtn.addEventListener('click', () => menu.remove());
+    menu.appendChild(cancelBtn);
     document.body.appendChild(menu);
 
     // Close on outside click

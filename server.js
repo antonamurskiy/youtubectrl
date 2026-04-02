@@ -3,6 +3,11 @@ const express = require("express");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { promisify } = require("util");
+const { execFile, execSync, spawn } = require("child_process");
+const execFileP = promisify(execFile);
+const net = require("net");
+const YouTube = require("youtube-sr").default;
 
 const app = express();
 const PORT = 3000;
@@ -16,14 +21,22 @@ const HISTORY_FILE = path.join(__dirname, ".history.json");
 
 // Persistent history
 let history = [];
+let historyMap = new Map(); // url -> entry for O(1) lookup
 try {
   if (fs.existsSync(HISTORY_FILE)) {
     history = JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
+    for (const h of history) historyMap.set(h.url, h);
   }
-} catch {}
+} catch (err) { console.error("Failed to load history:", err.message); }
 
+let _saveHistoryTimer = null;
 function saveHistory() {
-  fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+  // Debounce writes to avoid blocking event loop on rapid updates
+  if (_saveHistoryTimer) return;
+  _saveHistoryTimer = setTimeout(() => {
+    _saveHistoryTimer = null;
+    fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), () => {});
+  }, 500);
 }
 
 function markWatchedOnYouTube(url) {
@@ -32,23 +45,28 @@ function markWatchedOnYouTube(url) {
   ], { timeout: 15000 }, () => {});
 }
 
+function rebuildHistoryMap() {
+  historyMap.clear();
+  for (const h of history) historyMap.set(h.url, h);
+}
+
 function addToHistory(url, title) {
-  // Update existing or add new
-  const existing = history.find((h) => h.url === url);
+  const existing = historyMap.get(url);
   if (existing) {
     existing.timestamp = Date.now();
     if (title) existing.title = title;
-    // Move to top
     history = [existing, ...history.filter((h) => h.url !== url)];
   } else {
-    history.unshift({ url, title, timestamp: Date.now(), position: 0, duration: 0 });
+    const entry = { url, title, timestamp: Date.now(), position: 0, duration: 0 };
+    history.unshift(entry);
   }
   history = history.slice(0, 100);
+  rebuildHistoryMap();
   saveHistory();
 }
 
 function updateHistoryProgress(url, position, duration) {
-  const entry = history.find((h) => h.url === url);
+  const entry = historyMap.get(url);
   if (entry) {
     entry.position = position;
     entry.duration = duration;
@@ -67,9 +85,9 @@ try {
 
 function saveTokens() {
   if (tokens) {
-    fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2));
+    fs.writeFile(TOKENS_FILE, JSON.stringify(tokens, null, 2), () => {});
   } else {
-    try { fs.unlinkSync(TOKENS_FILE); } catch {}
+    fs.unlink(TOKENS_FILE, () => {});
   }
 }
 
@@ -94,7 +112,7 @@ async function ytFetch(endpoint, params, accessToken) {
   }
   const headers = {};
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  const res = await fetch(url, { headers });
+  const res = await fetch(url, { headers, signal: AbortSignal.timeout(10000) });
   if (!res.ok) {
     const err = await res.text();
     throw new Error(`YouTube API ${res.status}: ${err}`);
@@ -171,15 +189,19 @@ function mapVideo(v) {
 
 async function enrichVideos(ids, accessToken) {
   if (!ids.length) return [];
-  // YouTube API max 50 IDs per call — batch
+  // YouTube API max 50 IDs per call — batch, return partial on failure
   const results = [];
   for (let i = 0; i < ids.length; i += 50) {
     const batch = ids.slice(i, i + 50);
-    const data = await ytFetch("videos", {
-      part: "snippet,contentDetails,statistics,liveStreamingDetails",
-      id: batch.join(","),
-    }, accessToken);
-    results.push(...data.items.map(mapVideo));
+    try {
+      const data = await ytFetch("videos", {
+        part: "snippet,contentDetails,statistics,liveStreamingDetails",
+        id: batch.join(","),
+      }, accessToken);
+      results.push(...data.items.map(mapVideo));
+    } catch (err) {
+      console.error(`enrichVideos batch ${i / 50 + 1} failed:`, err.message);
+    }
   }
   return results;
 }
@@ -281,8 +303,7 @@ app.get("/api/channel-videos", async (req, res) => {
   const { channelId } = req.query;
   if (!channelId) return res.json([]);
   try {
-    const execP = require("util").promisify(require("child_process").execFile);
-    const { stdout } = await execP("yt-dlp", [
+    const { stdout } = await execFileP("yt-dlp", [
       "--cookies-from-browser", "firefox",
       "--flat-playlist", "--dump-json", "--no-warnings",
       "-I", "1:15",
@@ -308,7 +329,7 @@ app.get("/api/channel-videos", async (req, res) => {
         const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
         return res.json(videos.map(v => {
           const e = enrichMap[v.id];
-          const h = history.find(x => x.url === v.url);
+          const h = historyMap.get(v.url);
           const merged = e ? { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, channelId: e.channelId } : v;
           if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
           return merged;
@@ -327,7 +348,7 @@ app.get("/api/search", async (req, res) => {
   if (!query) return res.json({ videos: [], nextPageToken: null });
 
   try {
-    const YouTube = require("youtube-sr").default;
+
     const results = await YouTube.search(query, { limit: 20, type: "video" });
     res.json({ videos: results.map((v) => ({
       id: v.id,
@@ -362,7 +383,6 @@ app.get("/api/search", async (req, res) => {
 
 // Home feed — yt-dlp scrapes recommended + subscriptions, deduped
 async function getHomeFeed() {
-  const execP = require("util").promisify(require("child_process").execFile);
   const parseVideos = (stdout) => stdout.trim().split("\n").filter(Boolean).map((line) => {
     const v = JSON.parse(line);
     return {
@@ -386,8 +406,8 @@ async function getHomeFeed() {
 
   // Fetch both feeds in parallel
   const [rec, subs] = await Promise.all([
-    execP("yt-dlp", ytdlpArgs("recommended", 50), opts).then(r => parseVideos(r.stdout)).catch(() => []),
-    execP("yt-dlp", ytdlpArgs("subscriptions", 100), opts).then(r => parseVideos(r.stdout)).catch(() => []),
+    execFileP("yt-dlp", ytdlpArgs("recommended", 50), opts).then(r => parseVideos(r.stdout)).catch(() => []),
+    execFileP("yt-dlp", ytdlpArgs("subscriptions", 100), opts).then(r => parseVideos(r.stdout)).catch(() => []),
   ]);
 
   // Merge: interleave recommended and subscriptions (deduped)
@@ -431,7 +451,7 @@ app.get("/api/home", async (req, res) => {
         const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
         return res.json({ videos: slice.map(v => {
           const e = enrichMap[v.id];
-          const h = history.find(x => x.url === v.url);
+          const h = historyMap.get(v.url);
           const merged = e ? { ...v, channel: e.channel || v.channel, channelId: e.channelId, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
           if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
           return merged;
@@ -439,7 +459,7 @@ app.get("/api/home", async (req, res) => {
       } catch {}
     }
     res.json({ videos: slice.map(v => {
-      const h = history.find(x => x.url === v.url);
+      const h = historyMap.get(v.url);
       if (h?.position > 0 && h?.duration > 0) { v.savedPosition = h.position; v.savedDuration = h.duration; }
       return v;
     }), hasMore });
@@ -451,7 +471,6 @@ app.get("/api/home", async (req, res) => {
 
 // Live streams — pull live items from home feed (subs), then youtube-sr for general
 async function fetchLiveStreams() {
-  const YouTube = require("youtube-sr").default;
 
   // Run home feed scrape + youtube-sr in parallel
   const [homeVideos, srResults] = await Promise.all([
@@ -509,7 +528,7 @@ app.get("/api/live", async (_req, res) => {
 // Trending — youtube-sr first (free), API fallback
 app.get("/api/trending", async (_req, res) => {
   try {
-    const YouTube = require("youtube-sr").default;
+
     const results = await YouTube.search("popular videos today", { limit: 20, type: "video" });
     res.json(results.map((v) => ({
       id: v.id,
@@ -541,7 +560,6 @@ app.get("/api/trending", async (_req, res) => {
 });
 
 // Play on computer via mpv
-const { spawn, execSync } = require("child_process");
 
 let mpvProcess = null;
 let vlcProcess = null;
@@ -605,7 +623,7 @@ app.post("/api/play", async (req, res) => {
       killVlc();
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // Get HLS URL via yt-dlp
-      const { stdout } = await require("util").promisify(require("child_process").execFile)(
+      const { stdout } = await execFileP(
         "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "95/94/93/96", "--get-url", url],
         { timeout: 15000 }
       );
@@ -618,7 +636,7 @@ app.post("/api/play", async (req, res) => {
       return res.json({ ok: true, player: "vlc" });
     }
 
-    const savedEntry = history.find((h) => h.url === url);
+    const savedEntry = historyMap.get(url);
     const pos = savedEntry?.position || 0;
     const dur = savedEntry?.duration || 0;
     const resumePos = pos > 0 && dur > 0 && pos < dur * 0.95 && pos < dur - 10 ? pos : 0;
@@ -684,6 +702,7 @@ app.post("/api/play", async (req, res) => {
             if (t?.data) { history[0].title = t.data; saveHistory(); }
           } catch {}
           markWatchedOnYouTube(url);
+          if (progressInterval) clearInterval(progressInterval);
           progressInterval = setInterval(async () => {
             try {
               const [pos, dur] = await Promise.all([
@@ -725,7 +744,6 @@ app.post("/api/play", async (req, res) => {
     mpvProcess = child;
     activePlayer = "mpv";
     nowPlaying = url;
-    dvrOffset = 0;
     if (!windowMode) windowMode = "floating";
 
     // Apply current window mode after mpv window appears
@@ -774,6 +792,7 @@ app.post("/api/play", async (req, res) => {
         if (t?.data) { history[0].title = t.data; saveHistory(); }
       } catch {}
       markWatchedOnYouTube(url);
+      if (progressInterval) clearInterval(progressInterval);
       progressInterval = setInterval(async () => {
         try {
           const [pos, dur] = await Promise.all([
@@ -834,7 +853,6 @@ app.post("/api/stop", async (_req, res) => {
 });
 
 // IPC helper for mpv
-const net = require("net");
 function mpvCommand(cmd) {
   return new Promise((resolve, reject) => {
     const client = net.createConnection("/tmp/mpv-socket", () => {
@@ -1059,7 +1077,7 @@ app.get("/api/live-status", async (req, res) => {
   const { ids } = req.query;
   if (!ids) return res.json({});
   try {
-    const YouTube = require("youtube-sr").default;
+
     const result = {};
     const checks = ids.split(",").slice(0, 10).map(async (id) => {
       try {
@@ -1087,9 +1105,10 @@ app.get("/api/volume", (_req, res) => {
 });
 
 app.post("/api/volume", (req, res) => {
-  const { volume } = req.body;
+  const vol = parseInt(req.body.volume);
+  if (isNaN(vol) || vol < 0 || vol > 100) return res.status(400).json({ error: "Invalid volume" });
   try {
-    execSync(`osascript -e 'set volume output volume ${Math.round(volume)}'`, { stdio: "ignore" });
+    execSync(`osascript -e 'set volume output volume ${vol}'`, { stdio: "ignore" });
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Volume failed" });
@@ -1128,7 +1147,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
     // Get stream URL — MP4 for VOD (precise seeking), HLS for live
-    const { stdout } = await require("util").promisify(require("child_process").execFile)(
+    const { stdout } = await execFileP(
       "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
@@ -1179,12 +1198,46 @@ app.get("/api/livechat", async (req, res) => {
   }
 });
 
+// Storyboard (seek preview thumbnails) — parsed from yt-dlp
+let _storyboardCache = {}; // videoId -> { url, cols, rows, interval }
+app.get("/api/storyboard", async (req, res) => {
+  const { videoId } = req.query;
+  if (!videoId) return res.json({});
+  if (_storyboardCache[videoId]) return res.json(_storyboardCache[videoId]);
+  try {
+    const { stdout } = await execFileP("yt-dlp", [
+      "--cookies-from-browser", "firefox", "-j", "--no-download", "--no-warnings",
+      `https://www.youtube.com/watch?v=${videoId}`,
+    ], { timeout: 15000 });
+    const info = JSON.parse(stdout);
+    // yt-dlp provides storyboard in formats as sb0, sb1, sb2, etc.
+    // Or in the 'storyboards' field. Look for the highest quality storyboard format.
+    const sbFormat = (info.formats || [])
+      .filter(f => f.format_id?.startsWith("sb") && f.columns && f.rows)
+      .sort((a, b) => (b.width || 0) - (a.width || 0))[0];
+    if (sbFormat) {
+      const result = {
+        url: (sbFormat.url || sbFormat.fragment_base_url || "").replace(/M\d+\.jpg/, "M$M.jpg"),
+        cols: sbFormat.columns,
+        rows: sbFormat.rows,
+        interval: sbFormat.fragments?.[0]?.duration || 2,
+      };
+      _storyboardCache[videoId] = result;
+      return res.json(result);
+    }
+    res.json({});
+  } catch (err) {
+    console.error("Storyboard error:", err.message);
+    res.json({});
+  }
+});
+
 app.get("/api/comments", async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.json([]);
 
   try {
-    const { stdout } = await require("util").promisify(require("child_process").execFile)(
+    const { stdout } = await execFileP(
       "yt-dlp", [
         "--cookies-from-browser", "firefox",
         "--extractor-args", "youtube:max_comments=20",
@@ -1246,7 +1299,10 @@ app.post("/api/playpause", async (_req, res) => {
 
 // Move mpv between monitors via AppleScript
 // Gets screen info dynamically so it works at any resolution
+let _screenInfoCache = null;
+let _screenInfoAt = 0;
 function getScreenInfo() {
+  if (_screenInfoCache && Date.now() - _screenInfoAt < 3000) return _screenInfoCache;
   const out = execSync(`python3 -c "
 import subprocess, json
 r = subprocess.run(['system_profiler', 'SPDisplaysDataType', '-json'], capture_output=True, text=True)
@@ -1262,7 +1318,9 @@ for gpu in data.get('SPDisplaysDataType', []):
         screens.append({'name': d.get('_name',''), 'w': w, 'h': h, 'main': main})
 print(json.dumps(screens))
 "`, { encoding: "utf8" });
-  return JSON.parse(out.trim());
+  _screenInfoCache = JSON.parse(out.trim());
+  _screenInfoAt = Date.now();
+  return _screenInfoCache;
 }
 
 // Move mpv between monitors — uses aerospace to move, then re-applies current window mode
@@ -1316,7 +1374,10 @@ app.post("/api/move-monitor", async (req, res) => {
 });
 
 // Get screen origins from displayplacer
+let _screenOriginsCache = null;
+let _screenOriginsAt = 0;
 function getScreenOrigins() {
+  if (_screenOriginsCache && Date.now() - _screenOriginsAt < 3000) return _screenOriginsCache;
   try {
     const out = execSync("displayplacer list", { encoding: "utf8" });
     const screens = [];
@@ -1337,6 +1398,8 @@ function getScreenOrigins() {
         });
       }
     }
+    _screenOriginsCache = screens;
+    _screenOriginsAt = Date.now();
     return screens;
   } catch { return []; }
 }
