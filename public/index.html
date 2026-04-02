@@ -60,9 +60,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-bottom: 12px;
     padding: 8px 0;
     border-bottom: 1px solid var(--border);
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 50;
   }
 
   .logo {
@@ -210,23 +213,17 @@
   /* ── Tabs ── */
   .tabs {
     display: flex;
-    gap: 0;
-    margin-bottom: 12px;
-    overflow: hidden;
-    border: 1px solid var(--border);
+    gap: 4px;
   }
 
   .tab {
-    flex: 1;
-    padding: 8px;
-    border: none;
-    background: #000;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    background: none;
     color: var(--text-dim);
     font-family: var(--font);
     font-weight: 400;
-    font-size: 12px;
-    text-transform: none;
-    letter-spacing: 0;
+    font-size: 10px;
     cursor: pointer;
   }
 
@@ -568,8 +565,9 @@
     bottom: 0;
     left: 0;
     right: 0;
+    max-width: 480px;
+    margin: 0 auto;
     z-index: 100;
-    animation: slide-up 0.2s ease;
     gap: 4px;
     overflow: hidden;
   }
@@ -870,6 +868,8 @@
       padding: 16px 24px calc(var(--safe-bottom) + 120px);
     }
 
+    .now-playing { max-width: 1200px; }
+
     .video-grid {
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -904,10 +904,6 @@
     }
 
     .now-playing {
-      max-width: 1200px;
-      margin: 0 auto;
-      left: 0;
-      right: 0;
     }
 
     .comments-panel {
@@ -928,6 +924,11 @@
       </div>
       <button class="secret-menu-item" onclick="toggleResolution()">Toggle resolution</button>
     </div>
+    <div class="tabs" id="tabs">
+      <button class="tab active" data-tab="home">Home</button>
+      <button class="tab" data-tab="live">Live</button>
+      <button class="tab" data-tab="history">History</button>
+    </div>
     <div class="search-wrap">
       <input
         class="search-input"
@@ -942,18 +943,12 @@
     <button class="auth-btn" id="authBtn" onclick="handleAuth()">Sign in</button>
   </header>
 
-  <div class="tabs" id="tabs">
-    <button class="tab active" data-tab="home">Home</button>
-    <button class="tab" data-tab="live">Live</button>
-    <button class="tab" data-tab="history">History</button>
-  </div>
-
   <div id="sectionLabel" class="section-label" style="display:none"><span class="accent">//</span> Trending</div>
   <div id="videoGrid" class="video-grid"></div>
   <div class="loading" id="loadMore" style="display:none"><div class="spinner"></div></div>
 </div>
 
-<div class="now-playing" id="nowPlaying" style="display:none">
+  <div class="now-playing" id="nowPlaying" style="display:none">
   <div class="np-btn-row">
     <button class="np-btn" id="btnLaptop" onclick="moveMonitor('laptop')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="2" y1="20" x2="22" y2="20"/></svg></button>
     <button class="np-btn" id="btnLg" onclick="moveMonitor('lg')"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>
@@ -973,14 +968,6 @@
       <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
     </button>
   </div>
-</div>
-
-<div class="comments-panel" id="commentsPanel" style="display:none">
-  <div class="comments-header">
-    <span>Comments</span>
-    <button class="comments-close" onclick="toggleComments()">&times;</button>
-  </div>
-  <div class="comments-list" id="commentsList"></div>
 </div>
 
 <div class="toast-stack" id="toastStack"></div>
@@ -1112,7 +1099,7 @@
     label.innerHTML = `<span class="accent">//</span> Home`;
     homePage = 0;
     try {
-      const res = await fetch('/api/home?page=0');
+      const res = await fetch('/api/home?page=0' + (refresh ? '&refresh=1' : ''));
       if (!res.ok) throw new Error('no home');
       const data = await res.json();
       if (!data.videos?.length) throw new Error('empty');
@@ -1508,34 +1495,83 @@
 
   let commentsOpen = false;
   window.toggleComments = async function() {
-    const panel = document.getElementById('commentsPanel');
-    const list = document.getElementById('commentsList');
-    if (commentsOpen) {
-      panel.style.display = 'none';
+    const existing = document.getElementById('chatEmbed');
+    if (existing) {
+      existing.remove();
       commentsOpen = false;
       return;
     }
     commentsOpen = true;
-    panel.style.display = 'flex';
-    list.innerHTML = '<div class="comments-loading"><div class="spinner"></div>Loading comments...</div>';
     try {
       const pb = await fetch('/api/playback').then(r => r.json());
-      if (!pb.url) { list.innerHTML = '<div class="comments-loading">Nothing playing</div>'; return; }
+      if (!pb.url) return;
       const m = pb.url.match(/v=([\w-]+)/);
       if (!m) return;
-      const res = await fetch('/api/comments?videoId=' + m[1]);
-      const data = await res.json();
-      if (!data.length) { list.innerHTML = '<div class="comments-loading">No comments</div>'; return; }
-      list.innerHTML = data.map(c => `
-        <div class="comment">
-          <div class="comment-author">${escapeHtml(c.author)}</div>
-          <div class="comment-text">${escapeHtml(c.text)}</div>
-          <div class="comment-meta">${c.likes ? c.likes + ' likes' : ''} ${c.publishedAt || ''}</div>
-        </div>
-      `).join('');
-    } catch {
-      list.innerHTML = '<div class="comments-loading">Failed to load comments</div>';
-    }
+
+      const embed = document.createElement('div');
+      embed.id = 'chatEmbed';
+      embed.style.cssText = 'position:sticky;top:0;z-index:500;background:#000;border-bottom:1px solid var(--border);';
+
+      if (pb.isLive) {
+        embed.innerHTML = `
+          <div style="position:relative;">
+            <button onclick="toggleComments()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;line-height:1;z-index:1">&times;</button>
+            <div id="liveChatList" style="height:300px;overflow-y:auto;padding:8px 0;"></div>
+          </div>`;
+        document.querySelector('.app').prepend(embed);
+        let chatToken = null;
+        const seenIds = new Set();
+        const pollChat = async () => {
+          try {
+            const url = '/api/livechat?videoId=' + m[1] + (chatToken ? '&pageToken=' + chatToken : '');
+            const r = await fetch(url);
+            const data = await r.json();
+            const list = document.getElementById('liveChatList');
+            if (!list) return;
+            if (data.messages?.length) {
+              const wasAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 50;
+              for (const msg of data.messages) {
+                const id = msg.time + msg.author;
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+                const div = document.createElement('div');
+                div.style.cssText = 'padding:3px 12px;';
+                div.innerHTML = `<span style="color:${msg.isOwner ? '#2d8a4e' : msg.isMod ? '#5555ff' : '#777'};font-family:var(--font);font-size:10px;font-weight:700">${escapeHtml(msg.author)}</span><span style="color:var(--text);font-family:var(--font);font-size:11px;margin-left:6px">${escapeHtml(msg.text)}</span>`;
+                list.appendChild(div);
+              }
+              if (wasAtBottom) list.scrollTop = list.scrollHeight;
+            }
+            chatToken = data.nextPageToken;
+            if (document.getElementById('chatEmbed')) {
+              setTimeout(pollChat, data.pollingMs || 5000);
+            }
+          } catch {}
+        };
+        pollChat();
+        return;
+      } else {
+        embed.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-family:var(--font);font-size:11px"><div class="spinner"></div> Loading comments...</div>';
+        document.querySelector('.app').prepend(embed);
+        const res = await fetch('/api/comments?videoId=' + m[1]);
+        const data = await res.json();
+        if (!data.length) {
+          embed.innerHTML = `<div style="position:relative;padding:12px;color:var(--text-dim);font-family:var(--font);font-size:11px">No comments<button onclick="toggleComments()" style="position:absolute;top:4px;right:4px;background:none;border:none;color:var(--text-dim);font-size:18px;cursor:pointer">&times;</button></div>`;
+          return;
+        }
+        embed.innerHTML = `
+          <div style="position:relative;max-height:400px;overflow-y:auto;">
+            <button onclick="toggleComments()" style="position:sticky;top:0;right:0;float:right;background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;line-height:1;z-index:1">&times;</button>
+            ${data.map(c => `
+              <div style="padding:8px 12px;border-bottom:1px solid var(--border);">
+                <div style="color:var(--accent);font-family:var(--font);font-size:10px;font-weight:700">${escapeHtml(c.author)}</div>
+                <div style="color:var(--text);font-family:var(--font);font-size:11px;margin-top:2px">${escapeHtml(c.text)}</div>
+              </div>
+            `).join('')}
+          </div>`;
+        return;
+      }
+      document.querySelector('.app').prepend(embed);
+    } catch {}
   };
 
   window.toggleFullscreen = async function() {
@@ -1696,6 +1732,7 @@
   document.getElementById('tabs').addEventListener('click', (e) => {
     const tab = e.target.closest('.tab');
     if (!tab) return;
+    const isRetap = tab.dataset.tab === currentTab;
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     tab.classList.add('active');
     currentTab = tab.dataset.tab;
@@ -1705,7 +1742,8 @@
     nextPageToken = null;
     if (currentTab === 'history') loadHistory();
     else if (currentTab === 'live') loadLive();
-    else loadHome();
+    else loadHome(isRetap);
+    if (isRetap) window.scrollTo(0, 0);
   });
 
   // ── Infinite scroll ──
@@ -1752,6 +1790,14 @@
   }
 
   // ── Secret menu ──
+  window.refreshFeed = function() {
+    document.getElementById('secretMenu').classList.remove('open');
+    if (currentTab === 'home') loadHome(true);
+    else if (currentTab === 'live') loadLive();
+    else if (currentTab === 'history') loadHistory();
+    showToast('Refreshing...');
+  };
+
   window.toggleResolution = async function() {
     document.getElementById('secretMenu').classList.remove('open');
     try {
@@ -1766,6 +1812,7 @@
       menu.classList.remove('open');
     }
   });
+
 
   // ── Init ──
   checkAuth().then(() => loadHome());

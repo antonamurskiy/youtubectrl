@@ -355,7 +355,7 @@ app.get("/api/home", async (req, res) => {
   const pageSize = 24;
   try {
     // Fetch fresh feed on page 0, use cache for subsequent pages
-    if (page === 0 || !homeFeedCache.length) {
+    if (page === 0 || !homeFeedCache.length || req.query.refresh) {
       homeFeedCache = await getHomeFeed();
     }
     const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
@@ -722,6 +722,8 @@ app.get("/api/playback", async (_req, res) => {
     const dur = await mpvCommand(["get_property", "duration"]);
     const title = await mpvCommand(["get_property", "media-title"]);
     const paused = await mpvCommand(["get_property", "pause"]).catch(() => ({ data: false }));
+    const fileFormat = await mpvCommand(["get_property", "file-format"]).catch(() => ({ data: "" }));
+    const isLive = (fileFormat?.data || "").includes("hls");
     const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
     let monitor = "lg";
     if (fs?.data) {
@@ -748,6 +750,7 @@ app.get("/api/playback", async (_req, res) => {
       title: title?.data || "",
       paused: paused?.data || false,
       fullscreen: fs?.data || false,
+      isLive,
       windowMode,
       monitor,
     });
@@ -953,6 +956,35 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 });
 
 // Comments — uses yt-dlp (no quota)
+// Live chat — fetches messages via YouTube API
+app.get("/api/livechat", async (req, res) => {
+  const { videoId, pageToken } = req.query;
+  if (!videoId) return res.json({ messages: [] });
+  try {
+    const token = await getAccessToken();
+    // Get live chat ID from video
+    const vidData = await ytFetch("videos", { part: "liveStreamingDetails", id: videoId }, token);
+    const chatId = vidData.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+    if (!chatId) return res.json({ messages: [], error: "No active chat" });
+
+    // Fetch chat messages
+    const params = { part: "snippet,authorDetails", liveChatId: chatId, maxResults: 200 };
+    if (pageToken) params.pageToken = pageToken;
+    const chatData = await ytFetch("liveChat/messages", params, token);
+    const messages = (chatData.items || []).map(m => ({
+      author: m.authorDetails?.displayName || "",
+      text: m.snippet?.displayMessage || "",
+      isMod: m.authorDetails?.isChatModerator || false,
+      isOwner: m.authorDetails?.isChatOwner || false,
+      time: m.snippet?.publishedAt,
+    }));
+    res.json({ messages, nextPageToken: chatData.nextPageToken, pollingMs: chatData.pollingIntervalMillis || 5000 });
+  } catch (err) {
+    console.error("Live chat error:", err.message);
+    res.json({ messages: [], error: err.message });
+  }
+});
+
 app.get("/api/comments", async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.json([]);
@@ -988,24 +1020,18 @@ app.post("/api/playpause", async (_req, res) => {
     await mpvCommand(["cycle", "pause"]);
     const state = await mpvCommand(["get_property", "pause"]);
     const paused = !!state?.data;
-    // Hide window when paused in floating/maximize mode, show when playing
+    // Hide/show window when pausing in floating/maximize mode
     if (windowMode === "floating" || windowMode === "maximize") {
       try {
-        await mpvCommand(["set_property", "vid", paused ? "no" : "auto"]);
-        // Re-apply window mode after restoring video
-        if (!paused) {
-          await new Promise(r => setTimeout(r, 300));
-          try {
-            const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-            if (wid) {
-              if (windowMode === "maximize") {
-                execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-                execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
-              } else {
-                await floatTopRight(wid);
-              }
-            }
-          } catch {}
+        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        if (paused) {
+          execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+        } else {
+          execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+          if (wid && windowMode === "maximize") {
+            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+            execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+          }
         }
       } catch {}
     }
