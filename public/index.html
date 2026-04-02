@@ -540,11 +540,6 @@
   @keyframes shimmer { to { background-position: -200% 0; } }
 
   /* ── Card entrance ── */
-  .video-card { animation: card-in 0.15s ease both; }
-
-  @keyframes card-in {
-    from { opacity: 0; }
-  }
 
   /* ── Auth button ── */
   .auth-btn {
@@ -1024,6 +1019,13 @@
   const label = document.getElementById('sectionLabel');
   const toastStack = document.getElementById('toastStack');
 
+  // Event delegation for video card clicks (one handler for all cards)
+  grid.addEventListener('click', (e) => {
+    if (document.getElementById('cardMenu')) return;
+    const card = e.target.closest('.video-card');
+    if (card) playVideo(card);
+  });
+
   const authBtn = document.getElementById('authBtn');
   const npBar = document.getElementById('nowPlaying');
   const npThumb = document.getElementById('npThumb');
@@ -1076,7 +1078,7 @@
       const hasProg = v.savedPosition > 0 && v.savedDuration > 0;
       const pct = hasProg ? Math.min(100, (v.savedPosition / v.savedDuration) * 100) : 0;
       return `
-      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" style="animation-delay: ${i * 40}ms">
+      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" >
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
@@ -1093,9 +1095,8 @@
       </div>
     `}).join('');
 
-    // Attach tap handlers + highlight playing
+    // Highlight currently playing
     grid.querySelectorAll('.video-card').forEach(card => {
-      card.addEventListener('click', () => { if (!document.getElementById('cardMenu')) playVideo(card); });
       if (nowPlayingUrl && card.dataset.url === nowPlayingUrl) {
         card.classList.add('playing');
         currentlyPlaying = card;
@@ -1106,7 +1107,7 @@
   function appendVideos(videos) {
     const start = grid.querySelectorAll('.video-card').length;
     const html = videos.map((v, i) => `
-      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" style="animation-delay: ${(start + i) * 40}ms">
+      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" >
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
@@ -1122,10 +1123,20 @@
       </div>
     `).join('');
     grid.insertAdjacentHTML('beforeend', html);
-    grid.querySelectorAll('.video-card:not([data-bound])').forEach(card => {
-      card.dataset.bound = '1';
-      card.addEventListener('click', () => playVideo(card));
-    });
+  }
+
+  window.copyText = function(text) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(text).then(() => showToast('Copied')).catch(() => copyFallback(text));
+    } else copyFallback(text);
+    document.getElementById('cardMenu')?.remove();
+  };
+  function copyFallback(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.cssText = 'position:fixed;left:-9999px';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); ta.remove();
+    showToast('Copied');
   }
 
   function escapeHtml(str) {
@@ -1276,8 +1287,30 @@
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   }
 
+  // Pause all polling when tab is hidden
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      stopPolling();
+      if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+    } else if (nowPlayingUrl) {
+      startPolling();
+    }
+  });
+
   let controlsBuilt = false;
   let isSeeking = false;
+
+  // Global scrub drag handlers (added once, not per poll)
+  document.addEventListener('touchmove', (e) => {
+    if (window._scrubDragging && window._scrubUpdateBar) { e.preventDefault(); window._scrubUpdateBar(e.touches[0].clientX); }
+  }, { passive: false });
+  document.addEventListener('touchend', (e) => {
+    if (window._scrubDragging && window._scrubSendSeek) {
+      window._scrubDragging = false;
+      window._scrubSendSeek(e.changedTouches[0].clientX);
+      setTimeout(() => { isSeeking = false; }, 500);
+    }
+  });
 
   function updateFabPosition() {
     const np = document.getElementById('nowPlaying');
@@ -1392,10 +1425,7 @@
             }
           }
           bar.addEventListener('click', (e) => { sendSeek(e.clientX); });
-          let dragging = false;
-          bar.addEventListener('touchstart', (e) => { e.preventDefault(); dragging = true; isSeeking = true; updateBarVisual(e.touches[0].clientX); });
-          document.addEventListener('touchmove', (e) => { if (dragging) { e.preventDefault(); updateBarVisual(e.touches[0].clientX); } }, { passive: false });
-          document.addEventListener('touchend', (e) => { if (dragging) { dragging = false; sendSeek(e.changedTouches[0].clientX); setTimeout(() => { isSeeking = false; }, 500); } });
+          bar.addEventListener('touchstart', (e) => { e.preventDefault(); window._scrubDragging = true; isSeeking = true; window._scrubSendSeek = sendSeek; window._scrubUpdateBar = updateBarVisual; updateBarVisual(e.touches[0].clientX); });
         }
 
         if (!isSeeking) {
@@ -1417,16 +1447,17 @@
         const durEl = document.getElementById('npTimeDur');
         if (durEl) {
           if (data.isLive) {
-            durEl.innerHTML = '<span id="goLiveBtn" style="color:#e33;cursor:pointer;font-weight:700">LIVE</span>';
-            const goLive = document.getElementById('goLiveBtn');
-            if (goLive && !goLive._bound) {
-              goLive._bound = true;
-              goLive.addEventListener('click', () => {
-                fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: data.duration }) });
+            if (!durEl._liveBtn) {
+              durEl.innerHTML = '<span style="color:#e33;cursor:pointer;font-weight:700">LIVE</span>';
+              durEl._liveBtn = true;
+              durEl.addEventListener('click', () => {
+                const d = parseFloat(document.getElementById('npProgressBar')?.dataset.duration || 0);
+                if (d > 0) fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: d }) });
                 showToast('Going live');
               });
             }
           } else {
+            durEl._liveBtn = false;
             durEl.textContent = fmtTime(data.duration);
           }
         }
@@ -1606,6 +1637,8 @@
         let chatToken = null;
         const seenIds = new Set();
         const pollChat = async () => {
+          // Cap seenIds to prevent unbounded growth
+          if (seenIds.size > 2000) { const arr = [...seenIds]; seenIds.clear(); arr.slice(-1000).forEach(id => seenIds.add(id)); }
           try {
             const url = '/api/livechat?videoId=' + m[1] + (chatToken ? '&pageToken=' + chatToken : '');
             const r = await fetch(url);
@@ -1623,6 +1656,8 @@
                 div.innerHTML = `<span style="color:${msg.isOwner ? '#2d8a4e' : msg.isMod ? '#5555ff' : '#777'};font-family:var(--font);font-size:10px;font-weight:700">${escapeHtml(msg.author)}</span><span style="color:var(--text);font-family:var(--font);font-size:11px;margin-left:6px">${escapeHtml(msg.text)}</span>`;
                 list.appendChild(div);
               }
+              // Cap DOM nodes to prevent memory growth
+              while (list.children.length > 500) list.removeChild(list.firstChild);
               if (wasAtBottom) list.scrollTop = list.scrollHeight;
             }
             chatToken = data.nextPageToken;
@@ -1887,7 +1922,7 @@
     const url = card.dataset.url;
     menu.innerHTML = `
       ${channelId ? `<button class="secret-menu-item" onclick="showChannelVideos('${channelId}', '${channel.replace(/'/g, "\\'")}')">More from ${escapeHtml(channel)}</button>` : ''}
-      <button class="secret-menu-item" onclick="navigator.clipboard.writeText('${url}');showToast('Copied');document.getElementById('cardMenu')?.remove()">Copy link</button>
+      <button class="secret-menu-item" onclick="copyText('${url}')">Copy link</button>
       <button class="secret-menu-item" onclick="document.getElementById('cardMenu')?.remove()">Cancel</button>
     `;
     document.body.appendChild(menu);
@@ -2079,16 +2114,17 @@
   checkAuth().then(() => loadHome());
   startPolling();
 
-  // Auto-reload when files change
+  // Auto-reload when files change (only when tab visible)
   let _reloadVer = 0;
   setInterval(async () => {
+    if (document.hidden) return;
     try {
       const r = await fetch('/api/version');
       const d = await r.json();
       if (_reloadVer && d.ts !== _reloadVer) location.reload();
       _reloadVer = d.ts;
     } catch {}
-  }, 3000);
+  }, 5000);
 </script>
 </body>
 </html>
