@@ -102,13 +102,12 @@
 
   .secret-menu {
     display: none;
-    position: absolute;
-    top: 100%;
-    left: 0;
-    margin-top: 4px;
+    position: fixed;
+    top: 90px;
+    right: 16px;
     background: var(--bg);
     border: 1px solid var(--border);
-    z-index: 100;
+    z-index: 102;
     min-width: 180px;
   }
 
@@ -265,6 +264,7 @@
     overflow: hidden;
     -webkit-user-select: none;
     user-select: none;
+    -webkit-touch-callout: none;
   }
 
   .video-card::before {
@@ -407,6 +407,27 @@
   }
 
   /* ── Toast ── */
+  .fab {
+    position: fixed;
+    right: 16px;
+    width: 48px;
+    height: 48px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 101;
+  }
+
+  .fab:active { background: var(--surface-hover); color: var(--text); }
+  .fab { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+
+  .fab-top { top: 56px; }
+  .fab-bottom { bottom: 16px; transition: bottom 0.15s; }
+
   .toast-stack {
     position: fixed;
     bottom: 0;
@@ -637,6 +658,14 @@
     cursor: pointer;
   }
 
+  .np-volume-vertical {
+    writing-mode: vertical-lr;
+    direction: rtl;
+    width: 20px;
+    height: 200px;
+    flex: none;
+  }
+
   @keyframes slide-up {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
@@ -696,14 +725,14 @@
     width: 100%;
     margin-top: 4px;
     position: relative;
-    height: 20px;
+    height: 44px;
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
   .np-time {
-    font-size: 10px;
+    font-size: 11px;
     font-family: var(--font);
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
@@ -712,7 +741,7 @@
 
   .np-progress-bar {
     flex: 1;
-    height: 12px;
+    height: 20px;
     background:
       repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
       repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
@@ -729,12 +758,12 @@
   .np-progress-bar::before {
     content: '';
     position: absolute;
-    inset: -8px 0;
+    inset: -12px 0;
   }
 
   .np-skip-btn {
-    width: 28px;
-    height: 28px;
+    width: 44px;
+    height: 44px;
     border-radius: 0;
     border: none;
     outline: none;
@@ -778,6 +807,15 @@
     pointer-events: none;
     left: 0%;
     transform: translateX(-50%);
+  }
+
+  .np-progress-thumb.playing {
+    animation: pulse-red 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-red {
+    0%, 100% { background: #bb0000; }
+    50% { background: #ff2222; }
   }
 
   /* ── Comments panel ── */
@@ -918,10 +956,11 @@
   <header class="header" style="position:relative">
     <span class="logo-text" onclick="document.getElementById('secretMenu').classList.toggle('open')">ytctrl</span>
     <div class="secret-menu" id="secretMenu">
-      <div class="secret-menu-item" style="display:flex;align-items:center;gap:8px;">
-        <button id="npMute" onclick="toggleMute()" style="background:none;border:none;color:#555;padding:0;display:flex;align-items:center;cursor:pointer;flex:0 0 auto"><svg viewBox="0 0 24 24" width="10" height="10" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg></button>
-        <input type="range" class="np-volume" id="npVolume" min="0" max="100" value="100" oninput="setVolume(this.value)" style="flex:1">
+      <div class="secret-menu-item" id="volArea" style="position:relative;height:200px;padding:0;cursor:pointer;touch-action:none;">
+        <div id="volFill" style="position:absolute;bottom:0;left:0;right:0;background:#333;pointer-events:none;"></div>
+        <div id="volLabel" style="position:absolute;bottom:8px;left:0;right:0;text-align:center;font-family:var(--font);font-size:10px;color:var(--text-dim);pointer-events:none;"></div>
       </div>
+      <button class="secret-menu-item" id="npMute" onclick="toggleMute()"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter" style="vertical-align:middle"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07"/></svg> Mute</button>
       <button class="secret-menu-item" onclick="toggleResolution()">Toggle resolution</button>
     </div>
     <div class="tabs" id="tabs">
@@ -940,7 +979,6 @@
       >
       <button class="search-clear" id="searchClear" aria-label="Clear">&times;</button>
     </div>
-    <button class="auth-btn" id="authBtn" onclick="handleAuth()">Sign in</button>
   </header>
 
   <div id="sectionLabel" class="section-label" style="display:none"><span class="accent">//</span> Trending</div>
@@ -971,6 +1009,13 @@
 </div>
 
 <div class="toast-stack" id="toastStack"></div>
+
+<button class="fab fab-top" onclick="document.getElementById('secretMenu').classList.toggle('open')">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+</button>
+<button class="fab fab-bottom" id="fabRefresh" onclick="refreshFeed()">
+  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.13-9.36L23 10"/></svg>
+</button>
 
 <script>
   const grid = document.getElementById('videoGrid');
@@ -1031,7 +1076,7 @@
       const hasProg = v.savedPosition > 0 && v.savedDuration > 0;
       const pct = hasProg ? Math.min(100, (v.savedPosition / v.savedDuration) * 100) : 0;
       return `
-      <div class="video-card" data-url="${v.url}" style="animation-delay: ${i * 40}ms">
+      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" style="animation-delay: ${i * 40}ms">
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
@@ -1050,7 +1095,7 @@
 
     // Attach tap handlers + highlight playing
     grid.querySelectorAll('.video-card').forEach(card => {
-      card.addEventListener('click', () => playVideo(card));
+      card.addEventListener('click', () => { if (!document.getElementById('cardMenu')) playVideo(card); });
       if (nowPlayingUrl && card.dataset.url === nowPlayingUrl) {
         card.classList.add('playing');
         currentlyPlaying = card;
@@ -1061,7 +1106,7 @@
   function appendVideos(videos) {
     const start = grid.querySelectorAll('.video-card').length;
     const html = videos.map((v, i) => `
-      <div class="video-card" data-url="${v.url}" style="animation-delay: ${(start + i) * 40}ms">
+      <div class="video-card" data-url="${v.url}" data-channel="${escapeHtml(v.channel || '')}" data-channel-id="${v.channelId || ''}" style="animation-delay: ${(start + i) * 40}ms">
         <div class="thumb-wrap">
           <img src="${v.thumbnail}" alt="" loading="lazy">
           ${v.live ? '<span class="live-badge">LIVE</span>' : v.upcoming ? '<span class="live-badge" style="background:#555">SOON</span>' : ''}${v.duration && !v.upcoming ? `<span class="duration-badge">${v.duration}</span>` : ''}
@@ -1175,6 +1220,9 @@
     currentlyPlaying = card;
     nowPlayingUrl = url;
 
+    // Detect if live from badge
+    const isLive = !!card.querySelector('.live-badge');
+
     // Show toast
     showToast('Playing on computer');
 
@@ -1182,7 +1230,7 @@
       const res = await fetch('/api/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
+        body: JSON.stringify({ url, isLive })
       });
       if (!res.ok) showToast('Failed to play');
       else startPolling();
@@ -1231,8 +1279,16 @@
   let controlsBuilt = false;
   let isSeeking = false;
 
+  function updateFabPosition() {
+    const np = document.getElementById('nowPlaying');
+    const offset = np && np.style.display !== 'none' ? np.offsetHeight : 0;
+    const fab = document.querySelector('.fab-bottom');
+    if (fab) fab.style.bottom = (offset + 16) + 'px';
+  }
+
   function hideNowPlaying() {
     npBar.style.display = 'none';
+    updateFabPosition();
     controlsBuilt = false;
     const c = npBar.querySelector('.np-controls');
     if (c) c.remove();
@@ -1244,6 +1300,7 @@
       const data = await res.json();
       if (data.playing && data.duration > 0) {
         npBar.style.display = 'flex';
+        setTimeout(updateFabPosition, 50);
         npBar.style.flexWrap = 'wrap';
         if (data.url) nowPlayingUrl = data.url;
         if (data.title) npTitle.textContent = data.title;
@@ -1262,6 +1319,12 @@
           ppBtn.innerHTML = data.paused
             ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
             : '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+        }
+        const thumbDot = document.getElementById('npThumbDot');
+        if (thumbDot) {
+          thumbDot.classList.toggle('playing', !data.paused);
+          if (data.paused) thumbDot.style.background = '#aab';
+          else thumbDot.style.background = '';
         }
         const m = (data.url || '').match(/v=([\w-]+)/);
         if (m) npThumb.style.backgroundImage = `url(https://i.ytimg.com/vi/${m[1]}/default.jpg)`;
@@ -1309,7 +1372,9 @@
             const dur = parseFloat(bar.dataset.duration || 0);
             if (fill) fill.style.width = (pct * 100) + '%';
             if (thumb) thumb.style.left = (pct * 100) + '%';
-            if (posEl && dur) posEl.textContent = fmtTime(pct * dur);
+            if (posEl && dur) {
+              posEl.textContent = fmtTime(pct * dur);
+            }
             return pct;
           }
           function sendSeek(clientX) {
@@ -1334,19 +1399,38 @@
         }
 
         if (!isSeeking) {
-          const pct = (data.position / data.duration) * 100;
+          const barEl = document.getElementById('npProgressBar');
           const fill = document.getElementById('npFill');
           const thumb = document.getElementById('npThumbDot');
           const posEl = document.getElementById('npTimePos');
-          const barEl = document.getElementById('npProgressBar');
+          const pct = data.duration > 0 ? (data.position / data.duration) * 100 : 0;
           if (fill) fill.style.width = pct + '%';
           if (thumb) thumb.style.left = pct + '%';
-          if (posEl) posEl.textContent = fmtTime(data.position);
+          if (data.isLive) {
+            const behind = data.duration - data.position;
+            if (posEl) posEl.textContent = behind < 5 ? 'LIVE' : '-' + fmtTime(behind);
+          } else {
+            if (posEl) posEl.textContent = fmtTime(data.position);
+          }
           if (barEl) barEl.dataset.duration = data.duration;
         }
         const durEl = document.getElementById('npTimeDur');
+        if (durEl) {
+          if (data.isLive) {
+            durEl.innerHTML = '<span id="goLiveBtn" style="color:#e33;cursor:pointer;font-weight:700">LIVE</span>';
+            const goLive = document.getElementById('goLiveBtn');
+            if (goLive && !goLive._bound) {
+              goLive._bound = true;
+              goLive.addEventListener('click', () => {
+                fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: data.duration }) });
+                showToast('Going live');
+              });
+            }
+          } else {
+            durEl.textContent = fmtTime(data.duration);
+          }
+        }
         const barEl2 = document.getElementById('npProgressBar');
-        if (durEl) durEl.textContent = fmtTime(data.duration);
         if (barEl2) barEl2.dataset.duration = data.duration;
       } else if (!data.playing) {
         hideNowPlaying();
@@ -1371,12 +1455,12 @@
     fetch('/api/move-monitor', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target }) });
   };
 
-  let _volTimer = null;
+  let _volLast = 0;
   window.setVolume = function(val) {
-    clearTimeout(_volTimer);
-    _volTimer = setTimeout(() => {
-      fetch('/api/volume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ volume: parseInt(val) }) });
-    }, 100);
+    const now = Date.now();
+    if (now - _volLast < 250) return;
+    _volLast = now;
+    fetch('/api/volume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ volume: parseInt(val) }) });
   };
 
   window.toggleMute = async function() {
@@ -1760,6 +1844,77 @@
     }
   });
 
+  // ── Long press context menu ──
+  let _lpTimer = null;
+  let _lpCard = null;
+
+  grid.addEventListener('touchstart', (e) => {
+    const card = e.target.closest('.video-card');
+    if (!card) return;
+    _lpCard = card;
+    _lpTimer = setTimeout(() => {
+      e.preventDefault();
+      showCardMenu(card);
+      _lpCard = null;
+    }, 500);
+  }, { passive: false });
+
+  grid.addEventListener('touchmove', () => { clearTimeout(_lpTimer); _lpCard = null; });
+  grid.addEventListener('touchend', () => { clearTimeout(_lpTimer); });
+
+  // Desktop: right-click
+  grid.addEventListener('contextmenu', (e) => {
+    const card = e.target.closest('.video-card');
+    if (!card) return;
+    e.preventDefault();
+    showCardMenu(card);
+  });
+
+  function showCardMenu(card, touchEvent) {
+    // Remove existing
+    const old = document.getElementById('cardMenu');
+    if (old) old.remove();
+
+    const channel = card.dataset.channel;
+    const channelId = card.dataset.channelId;
+    const rect = card.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.id = 'cardMenu';
+    menu.className = 'secret-menu open';
+    const top = Math.min(rect.bottom, window.innerHeight - 100);
+    const left = Math.min(rect.left + 16, window.innerWidth - 200);
+    menu.style.cssText = `position:fixed;top:${top}px;left:${left}px;z-index:300;`;
+    const url = card.dataset.url;
+    menu.innerHTML = `
+      ${channelId ? `<button class="secret-menu-item" onclick="showChannelVideos('${channelId}', '${channel.replace(/'/g, "\\'")}')">More from ${escapeHtml(channel)}</button>` : ''}
+      <button class="secret-menu-item" onclick="navigator.clipboard.writeText('${url}');showToast('Copied');document.getElementById('cardMenu')?.remove()">Copy link</button>
+      <button class="secret-menu-item" onclick="document.getElementById('cardMenu')?.remove()">Cancel</button>
+    `;
+    document.body.appendChild(menu);
+
+    // Close on outside click
+    setTimeout(() => {
+      const close = (e) => {
+        if (!e.target.closest('#cardMenu')) { menu.remove(); document.removeEventListener('click', close); }
+      };
+      document.addEventListener('click', close);
+    }, 100);
+  }
+
+  window.showChannelVideos = async function(channelId, channelName) {
+    document.getElementById('cardMenu')?.remove();
+    showSkeletons();
+    label.innerHTML = `<span class="accent">//</span> ${escapeHtml(channelName || 'Channel')}`;
+    try {
+      const res = await fetch('/api/channel-videos?channelId=' + encodeURIComponent(channelId));
+      const data = await res.json();
+      if (data.length) renderVideos(data);
+      else grid.innerHTML = '<div class="empty-state"><div class="icon">:/</div>No videos found</div>';
+    } catch {
+      grid.innerHTML = '<div class="empty-state"><div class="icon">!</div>Failed to load</div>';
+    }
+  };
+
   // ── Hover preview (desktop) — cycle YouTube thumbnail frames ──
   if (window.matchMedia('(hover: hover)').matches) {
     grid.addEventListener('mouseover', (e) => {
@@ -1789,6 +1944,112 @@
     });
   }
 
+  // ── Refresh fab long-press menu ──
+  const fabRefresh = document.getElementById('fabRefresh');
+  let _fabTimer = null;
+  let _fabTriggered = false;
+
+  fabRefresh.addEventListener('touchstart', () => {
+    _fabTriggered = false;
+    _fabTimer = setTimeout(() => {
+      _fabTriggered = true;
+      showFabMenu();
+    }, 500);
+  }, { passive: true });
+  fabRefresh.addEventListener('touchmove', () => clearTimeout(_fabTimer));
+  fabRefresh.addEventListener('touchend', (e) => {
+    clearTimeout(_fabTimer);
+    if (_fabTriggered) e.preventDefault();
+  });
+  fabRefresh.addEventListener('click', (e) => {
+    if (_fabTriggered) { e.stopPropagation(); _fabTriggered = false; }
+  }, true);
+
+  function showFabMenu() {
+    const old = document.getElementById('fabMenu');
+    if (old) { old.remove(); return; }
+    const rect = fabRefresh.getBoundingClientRect();
+    const menu = document.createElement('div');
+    menu.id = 'fabMenu';
+    menu.style.cssText = `position:fixed;bottom:${window.innerHeight - rect.top + 4}px;right:16px;z-index:300;background:var(--bg);border:1px solid var(--border);min-width:160px;`;
+    menu.innerHTML = `
+      <button class="secret-menu-item" onclick="switchTab('home')">Home</button>
+      <button class="secret-menu-item" onclick="switchTab('live')">Live</button>
+      <button class="secret-menu-item" onclick="switchTab('history')">History</button>
+    `;
+    document.body.appendChild(menu);
+    setTimeout(() => {
+      const close = (e) => {
+        if (!e.target.closest('#fabMenu')) { menu.remove(); document.removeEventListener('click', close); }
+      };
+      document.addEventListener('click', close);
+    }, 100);
+  }
+
+  window.switchTab = function(tab) {
+    document.getElementById('fabMenu')?.remove();
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.tab[data-tab="${tab}"]`)?.classList.add('active');
+    currentTab = tab;
+    input.value = '';
+    clearBtn.classList.remove('visible');
+    currentQuery = '';
+    nextPageToken = null;
+    if (tab === 'history') loadHistory();
+    else if (tab === 'live') loadLive();
+    else loadHome(true);
+    window.scrollTo(0, 0);
+  };
+
+  // ── Volume area ──
+  const volArea = document.getElementById('volArea');
+  const volFill = document.getElementById('volFill');
+  const volLabel = document.getElementById('volLabel');
+  let _volCurrent = 50;
+
+  function updateVolVisual(vol) {
+    _volCurrent = vol;
+    volFill.style.height = vol + '%';
+    volLabel.textContent = Math.round(vol) + '%';
+  }
+
+  function volFromY(e) {
+    const rect = volArea.getBoundingClientRect();
+    const y = (e.touches ? e.touches[0].clientY : e.clientY) - rect.top;
+    return Math.round(Math.max(0, Math.min(100, (1 - y / rect.height) * 100)));
+  }
+
+  volArea.addEventListener('mousedown', (e) => {
+    const vol = volFromY(e);
+    updateVolVisual(vol);
+    setVolume(vol);
+    const onMove = (e) => { const v = volFromY(e); updateVolVisual(v); setVolume(v); };
+    const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  volArea.addEventListener('touchstart', (e) => {
+    const vol = volFromY(e);
+    updateVolVisual(vol);
+    setVolume(vol);
+  }, { passive: true });
+
+  volArea.addEventListener('touchmove', (e) => {
+    const vol = volFromY(e);
+    updateVolVisual(vol);
+    setVolume(vol);
+  }, { passive: true });
+
+  // Sync visual on menu open
+  const secretMenuEl = document.getElementById('secretMenu');
+  const volObserver = new MutationObserver(() => {
+    if (secretMenuEl.classList.contains('open')) {
+      fetch('/api/volume').then(r => r.json()).then(d => updateVolVisual(d.volume)).catch(() => {});
+    }
+  });
+  volObserver.observe(secretMenuEl, { attributes: true, attributeFilter: ['class'] });
+
   // ── Secret menu ──
   window.refreshFeed = function() {
     document.getElementById('secretMenu').classList.remove('open');
@@ -1808,7 +2069,7 @@
 
   document.addEventListener('click', (e) => {
     const menu = document.getElementById('secretMenu');
-    if (menu.classList.contains('open') && !e.target.closest('.logo-text') && !e.target.closest('.secret-menu')) {
+    if (menu.classList.contains('open') && !e.target.closest('.logo-text') && !e.target.closest('.secret-menu') && !e.target.closest('.fab-top')) {
       menu.classList.remove('open');
     }
   });
@@ -1816,17 +2077,6 @@
 
   // ── Init ──
   checkAuth().then(() => loadHome());
-  // Sync volume when secret menu opens
-  const secretMenu = document.getElementById('secretMenu');
-  const observer = new MutationObserver(() => {
-    if (secretMenu.classList.contains('open')) {
-      fetch('/api/volume').then(r => r.json()).then(d => {
-        const sl = document.getElementById('npVolume');
-        if (sl) sl.value = d.volume;
-      }).catch(() => {});
-    }
-  });
-  observer.observe(secretMenu, { attributes: true, attributeFilter: ['class'] });
   startPolling();
 
   // Auto-reload when files change

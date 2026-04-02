@@ -26,6 +26,12 @@ function saveHistory() {
   fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
 }
 
+function markWatchedOnYouTube(url) {
+  require("child_process").execFile("yt-dlp", [
+    "--mark-watched", "--simulate", "--cookies-from-browser", "firefox", "--no-warnings", url,
+  ], { timeout: 15000 }, () => {});
+}
+
 function addToHistory(url, title) {
   // Update existing or add new
   const existing = history.find((h) => h.url === url);
@@ -153,6 +159,7 @@ function mapVideo(v) {
     thumbnail: v.snippet.thumbnails?.high?.url || v.snippet.thumbnails?.medium?.url,
     duration: isLive ? "LIVE" : isUpcoming ? "SOON" : formatDuration(v.contentDetails?.duration),
     channel: v.snippet.channelTitle,
+    channelId: v.snippet.channelId,
     views: v.statistics ? parseInt(v.statistics.viewCount || 0) : 0,
     url: `https://www.youtube.com/watch?v=${v.id?.videoId || v.id}`,
     uploadedAt: isUpcoming && scheduledStart ? timeUntil(scheduledStart) : timeAgo(v.snippet.publishedAt),
@@ -269,6 +276,52 @@ app.post("/api/auth/logout", (_req, res) => {
 // ── API routes ──
 
 // Search uses youtube-sr (free, no quota) by default
+// Recent videos from a channel via yt-dlp
+app.get("/api/channel-videos", async (req, res) => {
+  const { channelId } = req.query;
+  if (!channelId) return res.json([]);
+  try {
+    const execP = require("util").promisify(require("child_process").execFile);
+    const { stdout } = await execP("yt-dlp", [
+      "--cookies-from-browser", "firefox",
+      "--flat-playlist", "--dump-json", "--no-warnings",
+      "-I", "1:15",
+      `https://www.youtube.com/channel/${channelId}/videos`,
+    ], { timeout: 15000, maxBuffer: 10 * 1024 * 1024 });
+    const videos = stdout.trim().split("\n").filter(Boolean).map(line => {
+      const v = JSON.parse(line);
+      return {
+        id: v.id,
+        title: v.title,
+        thumbnail: v.thumbnails?.[v.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+        duration: v.duration_string || (v.duration ? fmtSecs(v.duration) : ""),
+        channel: v.channel || v.uploader,
+        url: `https://www.youtube.com/watch?v=${v.id}`,
+      };
+    });
+    // Enrich
+    const ids = videos.map(v => v.id).filter(Boolean);
+    if (ids.length) {
+      try {
+        const token = await getAccessToken();
+        const enriched = await enrichVideos(ids, token);
+        const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+        return res.json(videos.map(v => {
+          const e = enrichMap[v.id];
+          const h = history.find(x => x.url === v.url);
+          const merged = e ? { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, channelId: e.channelId } : v;
+          if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
+          return merged;
+        }));
+      } catch {}
+    }
+    res.json(videos);
+  } catch (err) {
+    console.error("Channel videos error:", err.message);
+    res.json([]);
+  }
+});
+
 app.get("/api/search", async (req, res) => {
   const query = req.query.q;
   if (!query) return res.json({ videos: [], nextPageToken: null });
@@ -337,11 +390,19 @@ async function getHomeFeed() {
     execP("yt-dlp", ytdlpArgs("subscriptions", 100), opts).then(r => parseVideos(r.stdout)).catch(() => []),
   ]);
 
-  // Merge: recommended first, then subscriptions (deduped)
+  // Merge: interleave recommended and subscriptions (deduped)
   const seen = new Set();
   const videos = [];
-  for (const v of [...rec, ...subs]) {
-    if (!seen.has(v.id)) { seen.add(v.id); videos.push(v); }
+  let ri = 0, si = 0;
+  while (ri < rec.length || si < subs.length) {
+    // Alternate: 2 recommended, 1 subscription
+    for (let n = 0; n < 2 && ri < rec.length; ri++) {
+      if (!seen.has(rec[ri].id)) { seen.add(rec[ri].id); videos.push(rec[ri]); n++; }
+    }
+    if (si < subs.length) {
+      if (!seen.has(subs[si].id)) { seen.add(subs[si].id); videos.push(subs[si]); }
+      si++;
+    }
   }
   if (!videos.length) throw new Error("empty_feed");
   return videos;
@@ -355,7 +416,7 @@ app.get("/api/home", async (req, res) => {
   const pageSize = 24;
   try {
     // Fetch fresh feed on page 0, use cache for subsequent pages
-    if (page === 0 || !homeFeedCache.length || req.query.refresh) {
+    if (page === 0) {
       homeFeedCache = await getHomeFeed();
     }
     const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
@@ -371,7 +432,7 @@ app.get("/api/home", async (req, res) => {
         return res.json({ videos: slice.map(v => {
           const e = enrichMap[v.id];
           const h = history.find(x => x.url === v.url);
-          const merged = e ? { ...v, channel: e.channel || v.channel, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
+          const merged = e ? { ...v, channel: e.channel || v.channel, channelId: e.channelId, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
           if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
           return merged;
         }), hasMore });
@@ -483,30 +544,92 @@ app.get("/api/trending", async (_req, res) => {
 const { spawn, execSync } = require("child_process");
 
 let mpvProcess = null;
+let vlcProcess = null;
 let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let progressInterval = null;
+let activePlayer = null; // 'mpv' | 'vlc' | null
+
+const VLC_PORT = 9090;
+const VLC_PASS = "vlcpass";
+async function vlcCommand(path) {
+  const r = await fetch(`http://127.0.0.1:${VLC_PORT}/requests/${path}`, {
+    headers: { Authorization: "Basic " + Buffer.from(":" + VLC_PASS).toString("base64") },
+  });
+  return r.json();
+}
+async function vlcStatus() { return vlcCommand("status.json"); }
+async function vlcSeek(val) { return vlcCommand(`status.json?command=seek&val=${val}`); }
+async function vlcPause() { return vlcCommand("status.json?command=pl_pause"); }
+async function vlcPlay() { return vlcCommand("status.json?command=pl_play"); }
+async function vlcVolume(val) { return vlcCommand(`status.json?command=volume&val=${Math.round(val * 2.56)}`); }
+
+function killVlc() {
+  if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
+  try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
+}
+
+function spawnVlc(hlsUrl) {
+  killVlc();
+  vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
+    "--extraintf", "http",
+    "--http-host", "127.0.0.1", "--http-port", String(VLC_PORT), "--http-password", VLC_PASS,
+    "--no-video-title-show",
+    "--network-caching", "5000",
+    "--live-caching", "5000",
+    hlsUrl,
+  ], { stdio: "ignore" });
+  vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
+  activePlayer = "vlc";
+}
 
 app.get("/api/now-playing", (_req, res) => {
   res.json({ url: nowPlaying });
 });
 
+let playLock = false;
 app.post("/api/play", async (req, res) => {
-  const { url } = req.body;
+  if (playLock) return res.json({ ok: true, queued: true });
+  playLock = true;
+  const { url, isLive } = req.body;
   if (!url || !url.startsWith("https://www.youtube.com/")) {
+    playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
   }
 
   try {
+    // If live, use VLC for DVR support
+    if (isLive) {
+      // Kill any existing players
+      if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
+      killVlc();
+      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+      // Get HLS URL via yt-dlp
+      const { stdout } = await require("util").promisify(require("child_process").execFile)(
+        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "95/94/93/96", "--get-url", url],
+        { timeout: 15000 }
+      );
+      const hlsUrl = stdout.trim();
+      spawnVlc(hlsUrl);
+      nowPlaying = url;
+      addToHistory(url, "");
+      markWatchedOnYouTube(url);
+      playLock = false;
+      return res.json({ ok: true, player: "vlc" });
+    }
+
     const savedEntry = history.find((h) => h.url === url);
     const pos = savedEntry?.position || 0;
     const dur = savedEntry?.duration || 0;
     const resumePos = pos > 0 && dur > 0 && pos < dur * 0.95 && pos < dur - 10 ? pos : 0;
+    // Kill VLC if switching from live to VOD
+    killVlc();
 
     // If mpv is already running, load new video in existing player
-    let reused = false;
     if (mpvProcess) {
       try {
+        // Verify mpv is actually responsive
+        await mpvCommand(["get_property", "pid"]);
         // Save current video's progress before switching (with timeout)
         try {
           const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej('timeout'), ms))]);
@@ -517,16 +640,20 @@ app.post("/api/play", async (req, res) => {
           if (pos?.data && dur?.data && nowPlaying) updateHistoryProgress(nowPlaying, pos.data, dur.data);
         } catch {}
         await mpvCommand(["loadfile", url, "replace"]);
+        await mpvCommand(["set_property", "pause", false]).catch(() => {});
+        // Unhide if it was hidden from pause
+        try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
         nowPlaying = url;
         addToHistory(url, "");
+        playLock = false;
         res.json({ ok: true });
 
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         (async () => {
           // Wait for video to load, seek to resume, set up progress
           let loaded = false;
-          for (let i = 0; i < 10; i++) {
-            await new Promise(r => setTimeout(r, 2000));
+          for (let i = 0; i < 20; i++) {
+            await new Promise(r => setTimeout(r, 500));
             try {
               const d = await mpvCommand(["get_property", "duration"]);
               if (d?.data > 0) { loaded = true; break; }
@@ -542,10 +669,21 @@ app.post("/api/play", async (req, res) => {
           if (resumePos > 0) {
             try { await mpvCommand(["seek", resumePos, "absolute"]); } catch {}
           }
+          // Re-apply window mode in case loadfile disrupted it
+          if (windowMode === "maximize") {
+            try {
+              const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+              if (wid) {
+                execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+                execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+              }
+            } catch {}
+          }
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
             if (t?.data) { history[0].title = t.data; saveHistory(); }
           } catch {}
+          markWatchedOnYouTube(url);
           progressInterval = setInterval(async () => {
             try {
               const [pos, dur] = await Promise.all([
@@ -571,7 +709,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--keep-open`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -585,7 +723,9 @@ app.post("/api/play", async (req, res) => {
     });
 
     mpvProcess = child;
+    activePlayer = "mpv";
     nowPlaying = url;
+    dvrOffset = 0;
     if (!windowMode) windowMode = "floating";
 
     // Apply current window mode after mpv window appears
@@ -633,6 +773,7 @@ app.post("/api/play", async (req, res) => {
         const t = await mpvCommand(["get_property", "media-title"]);
         if (t?.data) { history[0].title = t.data; saveHistory(); }
       } catch {}
+      markWatchedOnYouTube(url);
       progressInterval = setInterval(async () => {
         try {
           const [pos, dur] = await Promise.all([
@@ -659,8 +800,10 @@ app.post("/api/play", async (req, res) => {
     });
     child._startTime = Date.now();
 
+    playLock = false;
     res.json({ ok: true });
   } catch (err) {
+    playLock = false;
     console.error("Play error:", err);
     res.status(500).json({ error: "Failed to play video" });
   }
@@ -669,6 +812,12 @@ app.post("/api/play", async (req, res) => {
 // Stop playback
 app.post("/api/stop", async (_req, res) => {
   // Save final position before stopping
+  if (activePlayer === "vlc") {
+    killVlc();
+    activePlayer = null;
+    nowPlaying = null;
+    return res.json({ ok: true });
+  }
   try {
     const [pos, dur] = await Promise.all([
       mpvCommand(["get_property", "time-pos"]),
@@ -680,6 +829,7 @@ app.post("/api/stop", async (_req, res) => {
   try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {}
   mpvProcess = null;
   nowPlaying = null;
+  activePlayer = null;
   res.json({ ok: true });
 });
 
@@ -714,6 +864,27 @@ function mpvCommand(cmd) {
 
 // Get playback position
 app.get("/api/playback", async (_req, res) => {
+  // VLC playback
+  if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
+    try {
+      const s = await vlcStatus();
+      return res.json({
+        playing: true,
+        url: nowPlaying,
+        position: s.time || 0,
+        duration: s.length || 0,
+        title: s.information?.category?.meta?.filename || "",
+        paused: s.state === "paused",
+        fullscreen: false,
+        isLive: true,
+        windowMode: "floating",
+        monitor: "lg",
+        player: "vlc",
+      });
+    } catch {
+      return res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0 });
+    }
+  }
   if (!mpvProcess || !nowPlaying) {
     return res.json({ playing: false });
   }
@@ -764,18 +935,28 @@ app.post("/api/seek", async (req, res) => {
   const { position } = req.body;
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
+    if (activePlayer === "vlc") {
+      await vlcSeek(Math.floor(position));
+      return res.json({ ok: true });
+    }
     await mpvCommand(["seek", position, "absolute"]);
     res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Seek failed" });
+  } catch (err) {
+    res.status(500).json({ error: "Seek failed: " + err.message });
   }
 });
+
 
 // Seek relative (skip forward/back)
 app.post("/api/seek-relative", async (req, res) => {
   const { offset } = req.body;
   if (typeof offset !== "number") return res.status(400).json({ error: "Invalid offset" });
   try {
+    if (activePlayer === "vlc") {
+      const s = await vlcStatus();
+      await vlcSeek(Math.max(0, (s.time || 0) + offset));
+      return res.json({ ok: true });
+    }
     await mpvCommand(["seek", offset, "relative"]);
     res.json({ ok: true });
   } catch {
@@ -843,8 +1024,8 @@ app.get("/api/history", async (_req, res) => {
     }
   }
 
-  // Fall back to local history
-  res.json(history.map((h) => {
+  // Fall back to local history, enriched with API data
+  const localVideos = history.map((h) => {
     const m = h.url.match(/v=([\w-]+)/);
     return {
       id: m ? m[1] : "",
@@ -857,7 +1038,20 @@ app.get("/api/history", async (_req, res) => {
       savedPosition: h.position || 0,
       savedDuration: h.duration || 0,
     };
-  }));
+  });
+  try {
+    const ids = localVideos.map(v => v.id).filter(Boolean);
+    if (ids.length) {
+      const enriched = await enrichVideos(ids, token);
+      const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+      return res.json(localVideos.map(v => {
+        const e = enrichMap[v.id];
+        if (!e) return v;
+        return { ...v, channel: e.channel || v.channel, channelId: e.channelId, duration: e.duration || v.duration, views: e.views || v.views, uploadedAt: e.uploadedAt || "" };
+      }));
+    }
+  } catch {}
+  res.json(localVideos);
 });
 
 // Check live status for a video
@@ -1016,6 +1210,15 @@ app.get("/api/comments", async (req, res) => {
 
 // Play/pause
 app.post("/api/playpause", async (_req, res) => {
+  if (activePlayer === "vlc") {
+    try {
+      await vlcPause(); // toggles pause
+      const s = await vlcStatus();
+      return res.json({ ok: true, paused: s.state === "paused" });
+    } catch {
+      return res.status(500).json({ error: "VLC play/pause failed" });
+    }
+  }
   try {
     await mpvCommand(["cycle", "pause"]);
     const state = await mpvCommand(["get_property", "pause"]);
