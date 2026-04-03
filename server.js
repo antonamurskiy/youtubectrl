@@ -611,11 +611,22 @@ function vlcAerospace(cmd) {
   return wid;
 }
 
-function vlcFloatTopRight() {
+async function vlcFloatTopRight() {
   try {
-    const wid = vlcAerospace("layout floating");
-    if (!wid) return;
-    execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+    vlcAerospace("layout floating");
+    await new Promise(r => setTimeout(r, 150));
+    const screens = getScreenOrigins();
+    const screen = screens.find(s => s.isMain) || screens[0];
+    if (!screen) return;
+    const w = Math.round(screen.w * 0.38);
+    const h = Math.round(w * 9 / 16);
+    execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
+    // Read actual size (VLC may clamp to minimum)
+    const sizeStr = execSync(`osascript -e 'tell application "System Events" to get size of first window of process "VLC"'`, { encoding: "utf8" }).trim();
+    const actualW = parseInt(sizeStr.split(",")[0]);
+    const x = screen.x + screen.w - actualW;
+    const y = screen.y;
+    execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set position of first window to {${x}, ${y}}'`, { stdio: "ignore" });
   } catch {}
 }
 
@@ -624,7 +635,7 @@ function spawnVlc(hlsUrl) {
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
     "--extraintf", "cli",
     "--rc-host", `127.0.0.1:${VLC_RC_PORT}`,
-    "--no-video-title-show",
+    "--no-video-title-show", "--no-fullscreen",
     "--network-caching", "5000",
     "--live-caching", "5000",
     hlsUrl,
@@ -651,7 +662,28 @@ function spawnVlc(hlsUrl) {
       setTimeout(() => hideQueue(attempts + 1), 1000);
     }
   };
-  setTimeout(hideQueue, 3000);
+  // Wait for VLC window, then position + hide queue
+  const initVlc = (attempts = 0) => {
+    if (attempts > 15) return;
+    try {
+      execSync(`osascript -e 'tell application "System Events" to get size of first window of process "VLC"'`, { encoding: "utf8" });
+      // Force exit fullscreen if VLC restored to it
+      try {
+        const isFs = execSync(`osascript -e 'tell application "System Events" to get value of attribute "AXFullScreen" of first window of process "VLC"'`, { encoding: "utf8" }).trim();
+        if (isFs === "true") {
+          execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set value of attribute "AXFullScreen" of first window to false'`, { stdio: "ignore" });
+          setTimeout(() => initVlc(0), 1200);
+          return;
+        }
+      } catch {}
+      hideQueue();
+      vlcFloatTopRight();
+      windowMode = "floating";
+    } catch {
+      setTimeout(() => initVlc(attempts + 1), 200);
+    }
+  };
+  setTimeout(initVlc, 500);
 }
 
 app.get("/api/now-playing", (_req, res) => {
@@ -959,7 +991,7 @@ app.get("/api/playback", async (_req, res) => {
         duration: s.length || 0,
         title: s.information?.category?.meta?.filename || "",
         paused: s.state === "paused",
-        fullscreen: s.fullscreen === true || windowMode === "fullscreen",
+        fullscreen: windowMode === "fullscreen",
         isLive: true,
         windowMode: windowMode || "floating",
         monitor,
@@ -1549,7 +1581,7 @@ app.post("/api/maximize", async (req, res) => {
       }
       if (windowMode === "maximize") {
         vlcAerospace("fullscreen off");
-        vlcAerospace("layout floating");
+        await vlcFloatTopRight();
         windowMode = "floating";
       } else {
         vlcAerospace("layout tiling");
@@ -1616,11 +1648,15 @@ app.post("/api/fullscreen", async (_req, res) => {
         vlcAerospace("fullscreen off");
       }
       await vlcCommand("fullscreen");
-      await new Promise(r => setTimeout(r, 300));
-      const s = await vlcStatus();
-      windowMode = s.fullscreen ? "fullscreen" : "floating";
-      if (s.fullscreen) {
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const isFs = execSync(`osascript -e 'tell application "System Events" to get value of attribute "AXFullScreen" of first window of process "VLC"'`, { encoding: "utf8" }).trim();
+        windowMode = isFs === "true" ? "fullscreen" : "floating";
+      } catch { windowMode = windowMode === "fullscreen" ? "floating" : "fullscreen"; }
+      if (windowMode === "fullscreen") {
         try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
+      } else {
+        await vlcFloatTopRight();
       }
       res.json({ ok: true });
       return;
