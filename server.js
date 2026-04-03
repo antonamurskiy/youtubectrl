@@ -68,6 +68,8 @@ function addToHistory(url, title) {
 function updateHistoryProgress(url, position, duration) {
   const entry = historyMap.get(url);
   if (entry) {
+    // Sanity: don't save if position jumps massively from current (cross-video contamination)
+    if (entry.duration > 0 && position > entry.duration * 1.1) return;
     entry.position = position;
     entry.duration = duration;
     saveHistory();
@@ -760,22 +762,26 @@ app.post("/api/play", async (req, res) => {
         try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
         nowPlaying = url;
         addToHistory(url, "");
+        // Reset position for this video to prevent stale data from corrupting resume
+        const entry = historyMap.get(url);
+        if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
         playLock = false;
         res.json({ ok: true });
         const expectedUrl = url;
+        const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
         (async () => {
-          // Wait for NEW video to load (check path changes from old video)
+          // Wait for NEW video to load (duration changes from old video's)
           let loaded = false;
-          for (let i = 0; i < 20; i++) {
+          for (let i = 0; i < 30; i++) {
             await new Promise(r => setTimeout(r, 500));
+            if (nowPlaying !== expectedUrl) return; // another video was started
             try {
-              const [d, p] = await Promise.all([
-                mpvCommand(["get_property", "duration"]),
-                mpvCommand(["get_property", "path"]),
-              ]);
-              // Only consider loaded when path matches new URL and has duration
-              if (d?.data > 0 && p?.data && p.data !== nowPlaying) { loaded = true; break; }
-              if (d?.data > 0 && i > 5) { loaded = true; break; } // fallback after 2.5s
+              const d = await mpvCommand(["get_property", "duration"]);
+              const t = await mpvCommand(["get_property", "time-pos"]);
+              // New video loaded when: duration changed AND time-pos is near start
+              if (d?.data > 0 && d.data !== oldDuration) { loaded = true; break; }
+              // Or time-pos reset to near 0 (new video started)
+              if (d?.data > 0 && t?.data < 5 && i > 2) { loaded = true; break; }
             } catch {}
           }
           if (!loaded) {
@@ -785,9 +791,19 @@ app.post("/api/play", async (req, res) => {
             nowPlaying = null;
             return;
           }
-          if (resumePos > 0) {
-            try { await mpvCommand(["seek", resumePos, "absolute"]); } catch {}
-          }
+          // Always seek — to resume position or to start (mpv carries over old position)
+          try {
+            if (resumePos > 0) {
+              const actualDur = await mpvCommand(["get_property", "duration"]);
+              if (actualDur?.data && resumePos < actualDur.data * 0.95) {
+                await mpvCommand(["seek", resumePos, "absolute"]);
+              } else {
+                await mpvCommand(["seek", 0, "absolute"]);
+              }
+            } else {
+              await mpvCommand(["seek", 0, "absolute"]);
+            }
+          } catch {}
           // Re-apply window mode in case loadfile disrupted it
           if (windowMode === "maximize") {
             try {
