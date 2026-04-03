@@ -568,19 +568,35 @@ let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let progressInterval = null;
 let activePlayer = null; // 'mpv' | 'vlc' | null
 
-const VLC_PORT = 9090;
-const VLC_PASS = "vlcpass";
-async function vlcCommand(path) {
-  const r = await fetch(`http://127.0.0.1:${VLC_PORT}/requests/${path}`, {
-    headers: { Authorization: "Basic " + Buffer.from(":" + VLC_PASS).toString("base64") },
+const VLC_RC_PORT = 9091;
+function vlcRC(cmd) {
+  return new Promise((resolve, reject) => {
+    const client = net.createConnection(VLC_RC_PORT, "127.0.0.1", () => {
+      client.write(cmd + "\n");
+    });
+    let buf = "";
+    client.on("data", (chunk) => {
+      buf += chunk;
+      if (buf.includes("\n")) {
+        client.destroy();
+        resolve(buf.trim());
+      }
+    });
+    client.on("error", reject);
+    setTimeout(() => { client.destroy(); resolve(buf.trim()); }, 1000);
   });
-  return r.json();
 }
-async function vlcStatus() { return vlcCommand("status.json"); }
-async function vlcSeek(val) { return vlcCommand(`status.json?command=seek&val=${val}`); }
-async function vlcPause() { return vlcCommand("status.json?command=pl_pause"); }
-async function vlcPlay() { return vlcCommand("status.json?command=pl_play"); }
-async function vlcVolume(val) { return vlcCommand(`status.json?command=volume&val=${Math.round(val * 2.56)}`); }
+async function vlcStatus() {
+  const [time, length, playing] = await Promise.all([
+    vlcRC("get_time").then(s => parseInt(s) || 0),
+    vlcRC("get_length").then(s => parseInt(s) || 0),
+    vlcRC("is_playing").then(s => s.trim() === "1"),
+  ]);
+  return { time, length, state: playing ? "playing" : "paused", fullscreen: false };
+}
+async function vlcSeek(val) { return vlcRC(`seek ${val}`); }
+async function vlcPause() { return vlcRC("pause"); }
+async function vlcCommand(cmd) { return vlcRC(cmd); }
 
 function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
@@ -590,8 +606,8 @@ function killVlc() {
 function vlcAerospace(cmd) {
   const wid = execSync("aerospace list-windows --all | grep VLC | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
   if (!wid) return null;
-  execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-  execSync(`aerospace ${cmd} --window-id ${wid}`, { stdio: "ignore" });
+  try { execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" }); } catch {}
+  try { execSync(`aerospace ${cmd} --window-id ${wid}`, { stdio: "ignore" }); } catch {}
   return wid;
 }
 
@@ -606,8 +622,8 @@ function vlcFloatTopRight() {
 function spawnVlc(hlsUrl) {
   killVlc();
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
-    "--extraintf", "http",
-    "--http-host", "127.0.0.1", "--http-port", String(VLC_PORT), "--http-password", VLC_PASS,
+    "--extraintf", "cli",
+    "--rc-host", `127.0.0.1:${VLC_RC_PORT}`,
     "--no-video-title-show",
     "--network-caching", "5000",
     "--live-caching", "5000",
@@ -616,6 +632,15 @@ function spawnVlc(hlsUrl) {
   vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
   activePlayer = "vlc";
   windowMode = null;
+  // After VLC opens, close the play queue sidebar via keyboard shortcut
+  setTimeout(() => {
+    try {
+      // Cmd+Shift+P toggles play queue in VLC 4
+      execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
+        click menu item "Play Queue..." of menu "Window" of menu bar 1
+      end tell'`, { stdio: "ignore" });
+    } catch {}
+  }, 4000);
 }
 
 app.get("/api/now-playing", (_req, res) => {
@@ -635,9 +660,8 @@ app.post("/api/play", async (req, res) => {
   try {
     // If live, use VLC for DVR support
     if (isLive) {
-      // Kill any existing players
+      // Kill mpv if switching from VOD to live
       if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
-      killVlc();
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // Get HLS URL via yt-dlp
       const { stdout } = await execFileP(
@@ -645,7 +669,15 @@ app.post("/api/play", async (req, res) => {
         { timeout: 15000 }
       );
       const hlsUrl = stdout.trim();
-      spawnVlc(hlsUrl);
+      if (activePlayer === "vlc" && vlcProcess) {
+        // Switch stream without restarting VLC — write URL to temp file and load it
+        fs.writeFileSync("/tmp/vlc-next.m3u", hlsUrl);
+        await vlcRC("clear");
+        await vlcRC("add /tmp/vlc-next.m3u");
+      } else {
+        killVlc();
+        spawnVlc(hlsUrl);
+      }
       nowPlaying = url;
       addToHistory(url, "");
       markWatchedOnYouTube(url);
@@ -1165,25 +1197,34 @@ app.post("/api/mpv-video", async (req, res) => {
 app.post("/api/watch-on-phone", async (_req, res) => {
   if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
   try {
-    const pos = await mpvCommand(["get_property", "time-pos"]);
-    const seconds = Math.floor(pos?.data || 0);
+    let seconds = 0;
+    if (activePlayer === "vlc") {
+      const s = await vlcStatus();
+      seconds = s.time || 0;
+    } else {
+      const pos = await mpvCommand(["get_property", "time-pos"]);
+      seconds = Math.floor(pos?.data || 0);
+    }
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
-    // Get stream URL — MP4 for VOD (precise seeking), HLS for live
     const { stdout } = await execFileP(
       "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const streamUrl = stdout.trim().split("\n")[0];
-    const title = await mpvCommand(["get_property", "media-title"]);
-    res.json({ streamUrl, seconds, videoId, title: title?.data || "" });
+    res.json({ streamUrl, seconds, videoId, title: "" });
   } catch (err) {
     console.error("Watch on phone error:", err.message);
-    // Fallback to YouTube URL
     try {
       const m = nowPlaying.match(/v=([\w-]+)/);
-      const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
-      const s = Math.floor(pos?.data || 0);
+      let s = 0;
+      if (activePlayer === "vlc") {
+        const st = await vlcStatus().catch(() => ({ time: 0 }));
+        s = st.time || 0;
+      } else {
+        const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
+        s = Math.floor(pos?.data || 0);
+      }
       res.json({ youtubeUrl: `https://youtu.be/${m?.[1]}?t=${s}`, seconds: s });
     } catch {
       res.status(500).json({ error: "Failed" });
@@ -1288,9 +1329,20 @@ app.get("/api/comments", async (req, res) => {
 app.post("/api/playpause", async (_req, res) => {
   if (activePlayer === "vlc") {
     try {
-      await vlcPause(); // toggles pause
+      await vlcPause();
       const s = await vlcStatus();
-      return res.json({ ok: true, paused: s.state === "paused" });
+      const paused = s.state === "paused";
+      if (windowMode === "floating" || windowMode === "maximize") {
+        try {
+          if (paused) {
+            execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to false'`, { stdio: "ignore" });
+          } else {
+            execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to true'`, { stdio: "ignore" });
+            execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" });
+          }
+        } catch {}
+      }
+      return res.json({ ok: true, paused });
     } catch {
       return res.status(500).json({ error: "VLC play/pause failed" });
     }
@@ -1360,7 +1412,7 @@ app.post("/api/move-monitor", async (req, res) => {
       const targetWs = target === "laptop" ? "8" : "1";
       const savedMode = windowMode;
       if (windowMode === "fullscreen") {
-        await vlcCommand("status.json?command=fullscreen");
+        await vlcCommand("fullscreen");
         await new Promise(r => setTimeout(r, 500));
       }
       vlcAerospace("fullscreen off");
@@ -1368,28 +1420,12 @@ app.post("/api/move-monitor", async (req, res) => {
       execSync(`aerospace workspace ${targetWs}`, { stdio: "ignore" });
       await new Promise(r => setTimeout(r, 300));
       if (savedMode === "fullscreen") {
-        await vlcCommand("status.json?command=fullscreen");
+        await vlcCommand("fullscreen");
         try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
         windowMode = "fullscreen";
       } else if (savedMode === "maximize") {
-        try {
-          const screens = getScreenOrigins();
-          const tgtScreen = target === "laptop" ? screens.find(s => s.isLaptop) : screens.find(s => s.isMain);
-          const screen = tgtScreen || screens[0];
-          if (screen) {
-            const menuH = 30, dockH = 66;
-            const usableH = screen.h - menuH - dockH;
-            const videoH = usableH - 64;
-            const w = Math.min(screen.w, Math.round(videoH * 16 / 9));
-            const h = usableH;
-            const x = screen.x + Math.round((screen.w - w) / 2);
-            const y = screen.y + menuH;
-            execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
-              set size of first window to {${w}, ${h}}
-              set position of first window to {${x}, ${y}}
-            end tell'`, { stdio: "ignore" });
-          }
-        } catch {}
+        vlcAerospace("layout tiling");
+        vlcAerospace("fullscreen --no-outer-gaps on");
         windowMode = "maximize";
       } else {
         windowMode = "floating";
@@ -1497,32 +1533,16 @@ app.post("/api/maximize", async (req, res) => {
   try {
     if (activePlayer === "vlc") {
       if (windowMode === "fullscreen") {
-        await vlcCommand("status.json?command=fullscreen");
+        await vlcCommand("fullscreen");
         await new Promise(r => setTimeout(r, 500));
       }
       if (windowMode === "maximize") {
-        vlcFloatTopRight();
+        vlcAerospace("fullscreen off");
+        vlcAerospace("layout floating");
         windowMode = "floating";
       } else {
-        // Fill screen above dock — narrower to respect VLC's aspect ratio
-        try {
-          const screens = getScreenOrigins();
-          const screen = screens.find(s => s.isMain) || screens[0];
-          if (screen) {
-            const menuH = 30, dockH = 66;
-            const usableH = screen.h - menuH - dockH;
-            const videoH = usableH - 64; // VLC chrome
-            const w = Math.min(screen.w, Math.round(videoH * 16 / 9));
-            const h = usableH;
-            const x = screen.x + Math.round((screen.w - w) / 2);
-            const y = screen.y + menuH;
-            execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
-              set size of first window to {${w}, ${h}}
-              set position of first window to {${x}, ${y}}
-            end tell'`, { stdio: "ignore" });
-          }
-        } catch {}
-        execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" });
+        vlcAerospace("layout tiling");
+        vlcAerospace("fullscreen --no-outer-gaps on");
         windowMode = "maximize";
       }
       res.json({ ok: true });
@@ -1584,7 +1604,7 @@ app.post("/api/fullscreen", async (_req, res) => {
       if (windowMode === "maximize") {
         vlcAerospace("fullscreen off");
       }
-      await vlcCommand("status.json?command=fullscreen");
+      await vlcCommand("fullscreen");
       await new Promise(r => setTimeout(r, 300));
       const s = await vlcStatus();
       windowMode = s.fullscreen ? "fullscreen" : "floating";
