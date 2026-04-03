@@ -587,6 +587,22 @@ function killVlc() {
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
 }
 
+function vlcAerospace(cmd) {
+  const wid = execSync("aerospace list-windows --all | grep VLC | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+  if (!wid) return null;
+  execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+  execSync(`aerospace ${cmd} --window-id ${wid}`, { stdio: "ignore" });
+  return wid;
+}
+
+function vlcFloatTopRight() {
+  try {
+    const wid = vlcAerospace("layout floating");
+    if (!wid) return;
+    execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+  } catch {}
+}
+
 function spawnVlc(hlsUrl) {
   killVlc();
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
@@ -599,6 +615,7 @@ function spawnVlc(hlsUrl) {
   ], { stdio: "ignore" });
   vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
   activePlayer = "vlc";
+  windowMode = null;
 }
 
 app.get("/api/now-playing", (_req, res) => {
@@ -693,7 +710,7 @@ app.post("/api/play", async (req, res) => {
               const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
               if (wid) {
                 execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-                execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+                execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
               }
             } catch {}
           }
@@ -763,7 +780,7 @@ app.post("/api/play", async (req, res) => {
           await mpvCommand(["set_property", "fullscreen", true]);
         } else if (targetMode === "maximize") {
           execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-          execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+          execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
         } else {
           await floatTopRight(wid);
         }
@@ -886,6 +903,12 @@ app.get("/api/playback", async (_req, res) => {
   if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
     try {
       const s = await vlcStatus();
+      let monitor = "lg";
+      try {
+        const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "VLC"'`, { encoding: "utf8" }).trim();
+        const x = parseInt(posStr.split(",")[0]);
+        monitor = x < 0 ? "laptop" : "lg";
+      } catch {}
       return res.json({
         playing: true,
         url: nowPlaying,
@@ -893,10 +916,10 @@ app.get("/api/playback", async (_req, res) => {
         duration: s.length || 0,
         title: s.information?.category?.meta?.filename || "",
         paused: s.state === "paused",
-        fullscreen: false,
+        fullscreen: s.fullscreen === true || windowMode === "fullscreen",
         isLive: true,
-        windowMode: "floating",
-        monitor: "lg",
+        windowMode: windowMode || "floating",
+        monitor,
         player: "vlc",
       });
     } catch {
@@ -1286,7 +1309,7 @@ app.post("/api/playpause", async (_req, res) => {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
           if (wid && windowMode === "maximize") {
             execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-            execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+            execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
           }
         }
       } catch {}
@@ -1329,8 +1352,52 @@ app.post("/api/move-monitor", async (req, res) => {
   windowLock = true;
   const { target } = req.body;
   try {
-    const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-    if (!wid) return res.status(400).json({ error: "No mpv window" });
+    const appName = activePlayer === "vlc" ? "VLC" : "mpv";
+    const wid = execSync(`aerospace list-windows --all | grep ${appName} | awk -F'|' '{print $1}' | tr -d ' ' | head -1`, { encoding: "utf8" }).trim();
+    if (!wid) return res.status(400).json({ error: `No ${appName} window` });
+
+    if (activePlayer === "vlc") {
+      const targetWs = target === "laptop" ? "8" : "1";
+      const savedMode = windowMode;
+      if (windowMode === "fullscreen") {
+        await vlcCommand("status.json?command=fullscreen");
+        await new Promise(r => setTimeout(r, 500));
+      }
+      vlcAerospace("fullscreen off");
+      execSync(`aerospace move-node-to-workspace --window-id ${wid} ${targetWs}`, { stdio: "ignore" });
+      execSync(`aerospace workspace ${targetWs}`, { stdio: "ignore" });
+      await new Promise(r => setTimeout(r, 300));
+      if (savedMode === "fullscreen") {
+        await vlcCommand("status.json?command=fullscreen");
+        try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
+        windowMode = "fullscreen";
+      } else if (savedMode === "maximize") {
+        try {
+          const screens = getScreenOrigins();
+          const tgtScreen = target === "laptop" ? screens.find(s => s.isLaptop) : screens.find(s => s.isMain);
+          const screen = tgtScreen || screens[0];
+          if (screen) {
+            const menuH = 30, dockH = 66;
+            const usableH = screen.h - menuH - dockH;
+            const videoH = usableH - 64;
+            const w = Math.min(screen.w, Math.round(videoH * 16 / 9));
+            const h = usableH;
+            const x = screen.x + Math.round((screen.w - w) / 2);
+            const y = screen.y + menuH;
+            execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
+              set size of first window to {${w}, ${h}}
+              set position of first window to {${x}, ${y}}
+            end tell'`, { stdio: "ignore" });
+          }
+        } catch {}
+        windowMode = "maximize";
+      } else {
+        windowMode = "floating";
+      }
+      res.json({ ok: true });
+      windowLock = false;
+      return;
+    }
 
     const screens = getScreenOrigins();
     const screenIdx = target === "laptop" ? screens.findIndex(s => s.isLaptop) : screens.findIndex(s => s.isMain);
@@ -1359,7 +1426,7 @@ app.post("/api/move-monitor", async (req, res) => {
       await new Promise(r => setTimeout(r, 300));
       if (windowMode === "maximize") {
         execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-        execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+        execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
       } else {
         try { await mpvCommand(["set_property", "ontop", true]); } catch {}
       }
@@ -1428,6 +1495,40 @@ app.post("/api/maximize", async (req, res) => {
   if (windowLock) return res.json({ ok: true });
   windowLock = true;
   try {
+    if (activePlayer === "vlc") {
+      if (windowMode === "fullscreen") {
+        await vlcCommand("status.json?command=fullscreen");
+        await new Promise(r => setTimeout(r, 500));
+      }
+      if (windowMode === "maximize") {
+        vlcFloatTopRight();
+        windowMode = "floating";
+      } else {
+        // Fill screen above dock — narrower to respect VLC's aspect ratio
+        try {
+          const screens = getScreenOrigins();
+          const screen = screens.find(s => s.isMain) || screens[0];
+          if (screen) {
+            const menuH = 30, dockH = 66;
+            const usableH = screen.h - menuH - dockH;
+            const videoH = usableH - 64; // VLC chrome
+            const w = Math.min(screen.w, Math.round(videoH * 16 / 9));
+            const h = usableH;
+            const x = screen.x + Math.round((screen.w - w) / 2);
+            const y = screen.y + menuH;
+            execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
+              set size of first window to {${w}, ${h}}
+              set position of first window to {${x}, ${y}}
+            end tell'`, { stdio: "ignore" });
+          }
+        } catch {}
+        execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" });
+        windowMode = "maximize";
+      }
+      res.json({ ok: true });
+      windowLock = false;
+      return;
+    }
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     const wasFullscreen = fs?.data === true;
     if (wasFullscreen) {
@@ -1446,7 +1547,7 @@ app.post("/api/maximize", async (req, res) => {
         execSync(`aerospace move-node-to-workspace --window-id ${wid} ${focusedWs}`, { stdio: "ignore" });
       } catch {}
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-      execSync(`aerospace fullscreen on --window-id ${wid}`, { stdio: "ignore" });
+      execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
       windowMode = "maximize";
     } else {
       // Already maximized — exit to floating with resize via AppleScript
@@ -1479,9 +1580,22 @@ app.post("/api/fullscreen", async (_req, res) => {
   if (windowLock) return res.json({ ok: true });
   windowLock = true;
   try {
+    if (activePlayer === "vlc") {
+      if (windowMode === "maximize") {
+        vlcAerospace("fullscreen off");
+      }
+      await vlcCommand("status.json?command=fullscreen");
+      await new Promise(r => setTimeout(r, 300));
+      const s = await vlcStatus();
+      windowMode = s.fullscreen ? "fullscreen" : "floating";
+      if (s.fullscreen) {
+        try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
+      }
+      res.json({ ok: true });
+      return;
+    }
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
-      // Exiting fullscreen — float in top-right corner
       await mpvCommand(["set_property", "fullscreen", false]);
       await new Promise((r) => setTimeout(r, 400));
       const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();

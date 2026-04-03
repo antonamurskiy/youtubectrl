@@ -573,8 +573,8 @@
   .now-playing {
     display: flex;
     flex-direction: column;
-    padding: 8px 10px;
-    padding-bottom: calc(6px + var(--safe-bottom));
+    padding: 10px 12px;
+    padding-bottom: calc(8px + var(--safe-bottom));
     background: #000;
     border-top: 1px solid var(--accent);
     position: fixed;
@@ -599,13 +599,14 @@
     flex-direction: row;
     align-items: center;
     width: 100%;
+    border-top: 1px solid var(--border);
     border-bottom: 1px solid var(--border);
-    padding-bottom: 4px;
+    padding: 4px 0;
   }
 
   .np-btn-row .np-btn {
     flex: 1 1 0;
-    height: 28px;
+    height: 36px;
     border: none;
     background: none;
     color: var(--text-dim);
@@ -632,7 +633,7 @@
   .np-volume {
     flex: 1;
     min-width: 0;
-    height: 12px;
+    height: 18px;
     -webkit-appearance: none;
     appearance: none;
     background:
@@ -702,8 +703,8 @@
   }
 
   .np-stop {
-    width: 28px;
-    height: 28px;
+    width: 40px;
+    height: 40px;
     border-radius: 0;
     border: none;
     outline: none;
@@ -720,14 +721,14 @@
     width: 100%;
     margin-top: 4px;
     position: relative;
-    height: 44px;
+    height: 48px;
     display: flex;
     align-items: center;
     gap: 6px;
   }
 
   .np-time {
-    font-size: 11px;
+    font-size: 13px;
     font-family: var(--font);
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
@@ -736,7 +737,7 @@
 
   .np-progress-bar {
     flex: 1;
-    height: 20px;
+    height: 28px;
     background:
       repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
       repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
@@ -757,8 +758,8 @@
   }
 
   .np-skip-btn {
-    width: 44px;
-    height: 44px;
+    width: 36px;
+    height: 36px;
     border-radius: 0;
     border: none;
     outline: none;
@@ -776,10 +777,21 @@
 
   .np-controls {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
     width: 100%;
-    margin-top: 2px;
+  }
+  .np-controls .np-progress-bar {
+    flex: none;
+    width: 100%;
+    order: -1;
+    margin-bottom: 2px;
+  }
+  .np-controls .np-sub-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    gap: 4px;
   }
 
   .np-progress-fill {
@@ -796,7 +808,7 @@
   .np-progress-thumb {
     position: absolute;
     top: 0;
-    width: 4px;
+    width: 6px;
     height: 100%;
     background: #aab;
     pointer-events: none;
@@ -807,6 +819,20 @@
   .np-progress-thumb.playing {
     animation: pulse-red 2s ease-in-out infinite;
   }
+
+  .np-current-pos {
+    position: absolute;
+    top: 0;
+    width: 2px;
+    height: 100%;
+    background: #fff;
+    pointer-events: none;
+    left: 0%;
+    transform: translateX(-50%);
+    opacity: 0;
+    transition: opacity 1.5s ease;
+  }
+  .np-current-pos.visible { opacity: 0.6; transition: none; }
 
   @keyframes pulse-red {
     0%, 100% { background: #bb0000; }
@@ -826,8 +852,8 @@
   }
   .seek-preview.visible { display: flex; }
   .seek-preview-thumb {
-    width: 160px;
-    height: 90px;
+    width: 200px;
+    height: 112px;
     background: #111;
     border: 1px solid var(--border);
     overflow: hidden;
@@ -843,9 +869,9 @@
     background: #000;
     color: #fff;
     font-family: var(--font);
-    font-size: 11px;
+    font-size: 14px;
     font-weight: 700;
-    padding: 2px 6px;
+    padding: 4px 8px;
     border: 1px solid var(--border);
     white-space: nowrap;
   }
@@ -1035,7 +1061,7 @@
       <div class="np-title" id="npTitle"></div>
     </div>
     <button class="np-stop" id="npPlayPause" onclick="togglePlayPause()">
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
+      <svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>
     </button>
   </div>
 </div>
@@ -1349,6 +1375,8 @@
       window._scrubDragging = false;
       window._scrubSendSeek(e.changedTouches[0].clientX);
       if (window._scrubHidePreview) window._scrubHidePreview();
+      const curPos = document.getElementById('npCurrentPos');
+      if (curPos) setTimeout(() => curPos.classList.remove('visible'), 2000);
       setTimeout(() => { isSeeking = false; }, 500);
     }
   });
@@ -1391,8 +1419,8 @@
         const ppBtn = document.getElementById('npPlayPause');
         if (ppBtn) {
           ppBtn.innerHTML = data.paused
-            ? '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
-            : '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+            ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
+            : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
         }
         const thumbDot = document.getElementById('npThumbDot');
         if (thumbDot) {
@@ -1411,22 +1439,26 @@
           const controls = document.createElement('div');
           controls.className = 'np-controls';
           controls.innerHTML = `
-            <button class="np-skip-btn" id="npSkipBack">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="11 17 6 12 11 7"/></svg>
-            </button>
-            <span class="np-time" id="npTimePos">0:00</span>
             <div class="np-progress-bar" id="npProgressBar">
               <div class="np-progress-fill" id="npFill"></div>
               <div class="np-progress-thumb" id="npThumbDot"></div>
+              <div class="np-current-pos" id="npCurrentPos"></div>
               <div class="seek-preview" id="seekPreview">
                 <div class="seek-preview-thumb" id="seekPreviewThumb"></div>
                 <div class="seek-preview-time" id="seekPreviewTime">0:00</div>
               </div>
             </div>
-            <span class="np-time" id="npTimeDur">0:00</span>
-            <button class="np-skip-btn" id="npSkipFwd">
-              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="13 17 18 12 13 7"/></svg>
-            </button>
+            <div class="np-sub-row">
+              <button class="np-skip-btn" id="npSkipBack">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="11 17 6 12 11 7"/></svg>
+              </button>
+              <span class="np-time" id="npTimePos">0:00</span>
+              <span style="flex:1"></span>
+              <span class="np-time" id="npTimeDur">0:00</span>
+              <button class="np-skip-btn" id="npSkipFwd">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="square" stroke-linejoin="miter"><polyline points="13 17 18 12 13 7"/></svg>
+              </button>
+            </div>
           `;
           npBar.insertBefore(controls, npBar.firstChild);
 
@@ -1460,7 +1492,7 @@
               preview.classList.add('visible');
               // Clamp position so bubble doesn't go off-screen
               const barW = rect.width;
-              const bubbleW = 160;
+              const bubbleW = 200;
               const minPct = (bubbleW / 2) / barW;
               const maxPct = 1 - minPct;
               const clampedPct = Math.max(minPct, Math.min(maxPct, pct));
@@ -1484,7 +1516,7 @@
                   const imgUrl = sb.url.replace('$M', String(page));
                   const bgX = sb.cols > 1 ? (col / (sb.cols - 1)) * 100 : 0;
                   const bgY = sb.rows > 1 ? (row / (sb.rows - 1)) * 100 : 0;
-                  previewThumb.style.cssText = `width:160px;height:90px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
+                  previewThumb.style.cssText = `width:200px;height:112px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
                 } else {
                   previewThumb.style.display = 'none';
                 }
@@ -1503,7 +1535,7 @@
             if (!preview) return;
             preview.classList.add('visible');
             const barW = rect.width;
-            const bubbleW = 160;
+            const bubbleW = 200;
             const minPct = (bubbleW / 2) / barW;
             const maxPct = 1 - minPct;
             preview.style.left = (Math.max(minPct, Math.min(maxPct, pct)) * 100) + '%';
@@ -1523,7 +1555,7 @@
                 const imgUrl = sb.url.replace('$M', String(page));
                 const bgX = sb.cols > 1 ? (col / (sb.cols - 1)) * 100 : 0;
                 const bgY = sb.rows > 1 ? (row / (sb.rows - 1)) * 100 : 0;
-                previewThumb.style.cssText = `width:160px;height:90px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
+                previewThumb.style.cssText = `width:200px;height:112px;background:url('${imgUrl}') no-repeat;background-size:${sb.cols * 100}% ${sb.rows * 100}%;background-position:${bgX}% ${bgY}%`;
               } else {
                 previewThumb.style.display = 'none';
               }
@@ -1560,6 +1592,13 @@
             window._scrubSendSeek = sendSeek;
             window._scrubUpdateBar = updateBarVisual;
             window._scrubHidePreview = hideSeekPreview;
+            // Show current position marker at where playback is
+            const curPos = document.getElementById('npCurrentPos');
+            const fill = document.getElementById('npFill');
+            if (curPos && fill) {
+              curPos.style.left = fill.style.width;
+              curPos.classList.add('visible');
+            }
             updateBarVisual(e.touches[0].clientX);
           });
         }
@@ -1628,8 +1667,8 @@
     const btn = document.getElementById('npPlayPause');
     if (btn) {
       btn.innerHTML = data.paused
-        ? '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
-        : '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+        ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
+        : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
     }
   };
 
