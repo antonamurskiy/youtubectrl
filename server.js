@@ -356,6 +356,7 @@ app.get("/api/search", async (req, res) => {
       thumbnail: v.thumbnail?.url,
       duration: v.durationFormatted,
       channel: v.channel?.name,
+      channelId: v.channel?.id,
       views: v.views,
       url: v.url,
       uploadedAt: v.uploadedAt || "",
@@ -710,7 +711,7 @@ app.post("/api/play", async (req, res) => {
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // Get HLS URL via yt-dlp
       const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "95/94/93/96", "--get-url", url],
+        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "96/95/94/93", "--get-url", url],
         { timeout: 15000 }
       );
       const hlsUrl = stdout.trim();
@@ -822,7 +823,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
