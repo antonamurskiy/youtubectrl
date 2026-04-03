@@ -632,15 +632,26 @@ function spawnVlc(hlsUrl) {
   vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
   activePlayer = "vlc";
   windowMode = null;
-  // After VLC opens, close the play queue sidebar via keyboard shortcut
-  setTimeout(() => {
+  // Hide play queue sidebar after VLC window is ready
+  const hideQueue = (attempts = 0) => {
+    if (attempts > 5) return;
     try {
-      // Cmd+Shift+P toggles play queue in VLC 4
-      execSync(`osascript -e 'tell application "System Events" to tell process "VLC"
-        click menu item "Play Queue..." of menu "Window" of menu bar 1
-      end tell'`, { stdio: "ignore" });
-    } catch {}
-  }, 4000);
+      // Check if queue pane is visible (3rd split view pane not collapsed)
+      const state = execSync(`defaults read org.videolan.vlc "NSSplitView Subview Frames librarywindowsplitview"`, { encoding: "utf8" });
+      // If the 3rd pane has width > 0 and isn't collapsed (YES), toggle it
+      const panes = state.match(/"([^"]+)"/g) || [];
+      if (panes.length >= 3) {
+        const thirdPane = panes[2];
+        // Format: "x, y, w, h, collapsed, ..."  — if not collapsed, click to hide
+        if (!thirdPane.includes("YES")) {
+          execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to click menu item "Play Queue..." of menu "Window" of menu bar 1'`, { stdio: "ignore" });
+        }
+      }
+    } catch {
+      setTimeout(() => hideQueue(attempts + 1), 1000);
+    }
+  };
+  setTimeout(hideQueue, 3000);
 }
 
 app.get("/api/now-playing", (_req, res) => {
