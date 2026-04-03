@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv. Single-user, runs on the local network.
+YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv (VODs) or VLC (live streams with DVR). Single-user, runs on the local network.
 
 ## Commands
 
@@ -47,15 +47,31 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Progress saved to `nowPlaying` (not captured URL) to prevent cross-video corruption
 - Videos only added to history after confirming they loaded (duration > 0); removed if mpv crashes within 5s
 
+### VLC Playback (Live Streams)
+
+- **Why VLC**: mpv/ffmpeg's HLS demuxer cannot seek outside its local cache in live streams. VLC has its own HLS demuxer that properly re-requests segments from YouTube's CDN, enabling full DVR seeking.
+- VLC 4.0 nightly (`brew install --cask vlc@nightly`) — must clear quarantine: `xattr -cr /Applications/VLC.app`
+- Controlled via CLI RC interface over TCP (`--extraintf cli --rc-host 127.0.0.1:9091`)
+- RC commands: `get_time`, `get_length`, `is_playing`, `seek N`, `pause`, `fullscreen`, `clear`, `add`
+- RC responses are plain text (just the value + newline), no JSON, no prompt
+- **Stream switching without restart**: write HLS URL to `/tmp/vlc-next.m3u`, then `clear` + `add /tmp/vlc-next.m3u` via RC (direct URLs are too long for RC's line buffer)
+- VLC 4 removed the HTTP Lua interface from VLC 3 — must use CLI RC instead
+- VLC 4 has a sidebar/media library that cannot be disabled via config or CLI flags
+- VLC enforces minimum window size based on video aspect ratio — cannot resize smaller via AppleScript
+- Hide on pause / show on resume: `osascript` to set `visible of process "VLC"` (same as mpv)
+
 ### AeroSpace Integration
 
 - mpv rule: `layout floating` with `check-further-callbacks = false` — aerospace can't switch mpv to tiling
+- VLC has no aerospace rule — it's a normal managed window
 - Monitor 1 (Built-in/laptop) = workspace 8, Monitor 2 (LG UltraFine) = workspace 1
-- Three window modes tracked server-side (`windowMode`): `floating`, `maximize` (aerospace fullscreen with dock), `fullscreen` (mpv native)
-- Floating: top-right corner, always-on-top, auto-hides on pause
-- Moving between monitors: fullscreen bounce (enter fs on target screen → exit → set geometry)
-- `aerospace fullscreen on/off` works on floating windows (no need for `layout tiling`)
-- Find mpv window ID: `aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}'`
+- Three window modes tracked server-side (`windowMode`): `floating`, `maximize` (aerospace fullscreen with dock), `fullscreen` (native)
+- Floating: top-right corner, always-on-top (mpv only), auto-hides on pause
+- Moving between monitors: mpv uses fullscreen bounce; VLC uses `aerospace move-node-to-workspace`
+- **mpv maximize**: `aerospace fullscreen --no-outer-gaps on/off` works directly on floating windows
+- **VLC maximize**: must `layout tiling` first, then `fullscreen --no-outer-gaps on`; exit with `fullscreen off` then `layout floating`
+- `vlcAerospace()` helper wraps try/catch since commands like `layout tiling` fail if already tiled
+- Find window IDs: `aerospace list-windows --all | grep mpv` or `grep VLC`
 
 ### HiDPI and Resolution Switching
 
@@ -79,7 +95,13 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - YouTube URL pasted in search box auto-plays immediately
 - Tabs: Home, Live, History
 - Secret menu (tap "ytctrl" logo): volume slider (system volume), toggle resolution
+- FABs: top-right (hamburger → secret menu), bottom-right (refresh, long-press → tab switcher)
+- Long-press context menu on video cards: "More from [channel]" (yt-dlp channel scrape), "Copy link"
+- Seek preview: storyboard thumbnails from YouTube sprite sheets + time bubble above thumb while dragging
+- Current position marker (white line) shown during scrub, fades out after release
 - Home feed paginated: 24 videos per page, infinite scroll loads more
+- Event delegation for video card clicks (one handler on grid, not per-card)
+- All polling pauses when tab is hidden (visibility API)
 - Firefox must be installed and logged into YouTube for yt-dlp cookies
 
 ## Key Files
@@ -88,3 +110,5 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - `.tokens.json` — OAuth tokens (runtime, gitignored)
 - `.history.json` — Watch history with position/duration (runtime, gitignored)
 - `/tmp/mpv-socket` — mpv IPC socket (runtime)
+- `/tmp/vlc-next.m3u` — temp file for VLC stream switching (runtime)
+- `activePlayer` — server-side variable: `'mpv'` | `'vlc'` | `null`
