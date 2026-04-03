@@ -711,7 +711,7 @@ app.post("/api/play", async (req, res) => {
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // Get HLS URL via yt-dlp
       const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "96/95/94/93", "--get-url", url],
+        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "301/300/96/95/94/93", "--get-url", url],
         { timeout: 15000 }
       );
       const hlsUrl = stdout.trim();
@@ -752,6 +752,8 @@ app.post("/api/play", async (req, res) => {
           ]), 2000);
           if (pos?.data && dur?.data && nowPlaying) updateHistoryProgress(nowPlaying, pos.data, dur.data);
         } catch {}
+        // Stop progress tracking BEFORE switching videos
+        if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         await mpvCommand(["loadfile", url, "replace"]);
         await mpvCommand(["set_property", "pause", false]).catch(() => {});
         // Unhide if it was hidden from pause
@@ -760,16 +762,20 @@ app.post("/api/play", async (req, res) => {
         addToHistory(url, "");
         playLock = false;
         res.json({ ok: true });
-
-        if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+        const expectedUrl = url;
         (async () => {
-          // Wait for video to load, seek to resume, set up progress
+          // Wait for NEW video to load (check path changes from old video)
           let loaded = false;
           for (let i = 0; i < 20; i++) {
             await new Promise(r => setTimeout(r, 500));
             try {
-              const d = await mpvCommand(["get_property", "duration"]);
-              if (d?.data > 0) { loaded = true; break; }
+              const [d, p] = await Promise.all([
+                mpvCommand(["get_property", "duration"]),
+                mpvCommand(["get_property", "path"]),
+              ]);
+              // Only consider loaded when path matches new URL and has duration
+              if (d?.data > 0 && p?.data && p.data !== nowPlaying) { loaded = true; break; }
+              if (d?.data > 0 && i > 5) { loaded = true; break; } // fallback after 2.5s
             } catch {}
           }
           if (!loaded) {
@@ -804,7 +810,7 @@ app.post("/api/play", async (req, res) => {
                 mpvCommand(["get_property", "time-pos"]),
                 mpvCommand(["get_property", "duration"]),
               ]);
-              if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
+              if (pos?.data && dur?.data && nowPlaying && pos.data < dur.data * 1.05) updateHistoryProgress(nowPlaying, pos.data, dur.data);
             } catch {}
           }, 10000);
         })();
@@ -1331,7 +1337,9 @@ app.get("/api/storyboard", async (req, res) => {
       result.url = (sbFormat.url || sbFormat.fragment_base_url || "").replace(/M\d+\.jpg/, "M$M.jpg");
       result.cols = sbFormat.columns;
       result.rows = sbFormat.rows;
-      result.interval = sbFormat.fragments?.[0]?.duration || 2;
+      // Fragment duration is per PAGE (cols*rows frames), divide to get per-frame interval
+      const pageDur = sbFormat.fragments?.[0]?.duration || 2;
+      result.interval = pageDur / (sbFormat.columns * sbFormat.rows);
     }
     _storyboardCache[videoId] = result;
     res.json(result);
@@ -1692,7 +1700,7 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", () => {
+app.listen(PORT, "0.0.0.0", async () => {
   console.log(`YouTubeCtrl running at http://localhost:${PORT}`);
   if (!API_KEY) console.warn("  WARNING: YOUTUBE_API_KEY not set in .env");
   if (!CLIENT_ID) console.warn("  WARNING: GOOGLE_CLIENT_ID not set in .env");
@@ -1703,5 +1711,47 @@ app.listen(PORT, "0.0.0.0", () => {
         console.log(`  Phone: http://${cfg.address}:${PORT}`);
       }
     }
+  }
+
+  // Detect existing players from a previous server session
+  // Check mpv
+  try {
+    const r = await mpvCommand(["get_property", "path"]);
+    if (r?.data) {
+      const url = r.data.startsWith("http") ? r.data : null;
+      // mpv might have a YouTube URL or a direct stream URL
+      if (url) {
+        const m = url.match(/v=([\w-]+)/);
+        nowPlaying = m ? `https://www.youtube.com/watch?v=${m[1]}` : url;
+      } else {
+        // Try media-title to find the URL in history
+        const t = await mpvCommand(["get_property", "media-title"]);
+        const entry = history.find(h => h.title === t?.data);
+        if (entry) nowPlaying = entry.url;
+      }
+      if (nowPlaying) {
+        mpvProcess = { kill: () => { try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {} } };
+        activePlayer = "mpv";
+        // Detect window mode
+        const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
+        windowMode = fs?.data ? "fullscreen" : "floating";
+        console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode);
+      }
+    }
+  } catch {}
+
+  // Check VLC
+  if (!activePlayer) {
+    try {
+      const time = await vlcRC("get_time");
+      if (time && time !== "") {
+        activePlayer = "vlc";
+        vlcProcess = { kill: () => { try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {} } };
+        // Find URL from recent history (most recent live stream)
+        const liveEntry = history.find(h => h.url);
+        if (liveEntry) nowPlaying = liveEntry.url;
+        console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
+      }
+    } catch {}
   }
 });

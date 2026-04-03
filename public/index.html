@@ -1662,7 +1662,7 @@
               // Fetch storyboard for this video (non-blocking)
               if (!data.isLive) {
                 fetch('/api/storyboard?videoId=' + vm[1]).then(r => r.json()).then(sb => {
-                  if (sb.url) window._storyboardData = sb;
+                  if (sb.url || sb.chapters?.length) window._storyboardData = sb;
                   else window._storyboardData = null;
                 }).catch(() => { window._storyboardData = null; });
               } else {
