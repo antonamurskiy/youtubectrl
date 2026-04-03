@@ -592,6 +592,9 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    width: 100%;
+    min-width: 0;
+    overflow: hidden;
   }
 
   .np-btn-row {
@@ -700,6 +703,8 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
   }
 
   .np-stop {
@@ -874,6 +879,19 @@
     padding: 4px 8px;
     border: 1px solid var(--border);
     white-space: nowrap;
+  }
+  .seek-preview-chapter {
+    background: #000;
+    color: var(--accent2);
+    font-family: var(--font);
+    font-size: 11px;
+    padding: 2px 8px;
+    border: 1px solid var(--border);
+    border-top: none;
+    white-space: nowrap;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* ── Comments panel ── */
@@ -1307,7 +1325,7 @@
       const res = await fetch('/api/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, isLive })
+        body: JSON.stringify({ url, isLive, title: card.querySelector('.video-title')?.textContent || '' })
       });
       if (!res.ok) showToast('Failed to play');
       else startPolling();
@@ -1446,6 +1464,7 @@
               <div class="seek-preview" id="seekPreview">
                 <div class="seek-preview-thumb" id="seekPreviewThumb"></div>
                 <div class="seek-preview-time" id="seekPreviewTime">0:00</div>
+                <div class="seek-preview-chapter" id="seekPreviewChapter" style="display:none"></div>
               </div>
             </div>
             <div class="np-sub-row">
@@ -1521,6 +1540,15 @@
                   previewThumb.style.display = 'none';
                 }
               }
+              // Show chapter name
+              const chapterEl = document.getElementById('seekPreviewChapter');
+              if (chapterEl) {
+                const sb = window._storyboardData;
+                const seekTime = pct * dur;
+                const ch = sb?.chapters?.find(c => seekTime >= c.start && seekTime < c.end);
+                if (ch) { chapterEl.textContent = ch.title; chapterEl.style.display = ''; }
+                else { chapterEl.style.display = 'none'; }
+              }
             }
             return pct;
           }
@@ -1559,6 +1587,14 @@
               } else {
                 previewThumb.style.display = 'none';
               }
+            }
+            const chapterEl = document.getElementById('seekPreviewChapter');
+            if (chapterEl) {
+              const sb = window._storyboardData;
+              const seekTime = pct * dur;
+              const ch = sb?.chapters?.find(c => seekTime >= c.start && seekTime < c.end);
+              if (ch) { chapterEl.textContent = ch.title; chapterEl.style.display = ''; }
+              else { chapterEl.style.display = 'none'; }
             }
           }
 
@@ -1608,7 +1644,7 @@
           const fill = document.getElementById('npFill');
           const thumb = document.getElementById('npThumbDot');
           const posEl = document.getElementById('npTimePos');
-          const pct = data.duration > 0 ? (data.position / data.duration) * 100 : 0;
+          const pct = data.duration > 0 ? Math.min(100, (data.position / data.duration) * 100) : 0;
           if (fill) fill.style.width = pct + '%';
           if (thumb) thumb.style.left = pct + '%';
           if (data.isLive) {

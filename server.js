@@ -567,6 +567,7 @@ let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let progressInterval = null;
 let activePlayer = null; // 'mpv' | 'vlc' | null
+let vlcPaused = false;
 
 const VLC_RC_PORT = 9091;
 function vlcRC(cmd) {
@@ -643,6 +644,7 @@ function spawnVlc(hlsUrl) {
   vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
   activePlayer = "vlc";
   windowMode = null;
+  vlcPaused = false;
   // Hide play queue sidebar after VLC window is ready
   const hideQueue = (attempts = 0) => {
     if (attempts > 5) return;
@@ -694,7 +696,7 @@ let playLock = false;
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
-  const { url, isLive } = req.body;
+  const { url, isLive, title: reqTitle } = req.body;
   if (!url || !url.startsWith("https://www.youtube.com/")) {
     playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
@@ -722,7 +724,7 @@ app.post("/api/play", async (req, res) => {
         spawnVlc(hlsUrl);
       }
       nowPlaying = url;
-      addToHistory(url, "");
+      addToHistory(url, reqTitle || "");
       markWatchedOnYouTube(url);
       playLock = false;
       return res.json({ ok: true, player: "vlc" });
@@ -988,9 +990,9 @@ app.get("/api/playback", async (_req, res) => {
         playing: true,
         url: nowPlaying,
         position: s.time || 0,
-        duration: s.length || 0,
-        title: s.information?.category?.meta?.filename || "",
-        paused: s.state === "paused",
+        duration: Math.max(s.time || 0, s.length || 0),
+        title: historyMap.get(nowPlaying)?.title || "",
+        paused: vlcPaused,
         fullscreen: windowMode === "fullscreen",
         isLive: true,
         windowMode: windowMode || "floating",
@@ -1322,17 +1324,16 @@ app.get("/api/storyboard", async (req, res) => {
     const sbFormat = (info.formats || [])
       .filter(f => f.format_id?.startsWith("sb") && f.columns && f.rows)
       .sort((a, b) => (b.width || 0) - (a.width || 0))[0];
+    const chapters = (info.chapters || []).map(c => ({ start: c.start_time, end: c.end_time, title: c.title }));
+    const result = { chapters };
     if (sbFormat) {
-      const result = {
-        url: (sbFormat.url || sbFormat.fragment_base_url || "").replace(/M\d+\.jpg/, "M$M.jpg"),
-        cols: sbFormat.columns,
-        rows: sbFormat.rows,
-        interval: sbFormat.fragments?.[0]?.duration || 2,
-      };
-      _storyboardCache[videoId] = result;
-      return res.json(result);
+      result.url = (sbFormat.url || sbFormat.fragment_base_url || "").replace(/M\d+\.jpg/, "M$M.jpg");
+      result.cols = sbFormat.columns;
+      result.rows = sbFormat.rows;
+      result.interval = sbFormat.fragments?.[0]?.duration || 2;
     }
-    res.json({});
+    _storyboardCache[videoId] = result;
+    res.json(result);
   } catch (err) {
     console.error("Storyboard error:", err.message);
     res.json({});
@@ -1373,11 +1374,10 @@ app.post("/api/playpause", async (_req, res) => {
   if (activePlayer === "vlc") {
     try {
       await vlcPause();
-      const s = await vlcStatus();
-      const paused = s.state === "paused";
+      vlcPaused = !vlcPaused;
       if (windowMode === "floating" || windowMode === "maximize") {
         try {
-          if (paused) {
+          if (vlcPaused) {
             execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to false'`, { stdio: "ignore" });
           } else {
             execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to true'`, { stdio: "ignore" });
@@ -1385,7 +1385,7 @@ app.post("/api/playpause", async (_req, res) => {
           }
         } catch {}
       }
-      return res.json({ ok: true, paused });
+      return res.json({ ok: true, paused: vlcPaused });
     } catch {
       return res.status(500).json({ error: "VLC play/pause failed" });
     }
