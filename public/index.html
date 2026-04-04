@@ -1397,6 +1397,7 @@
   // ── Media Session (lock screen controls) ──
   // Short looping near-silent audio triggers iOS Now Playing widget
   const silentAudio = new Audio('/silent.m4a');
+  silentAudio.volume = 0;
   const hasMediaSession = 'mediaSession' in navigator;
   let mediaSessionActive = false;
   let lastVideoPos = 0;
@@ -1454,7 +1455,7 @@
   }
 
   function activateMediaSession(title, channel, videoUrl) {
-    if (!hasMediaSession) return;
+    if (!hasMediaSession || !('ontouchstart' in window)) return;
     silentAudio.play().catch(() => {});
     mediaSessionActive = true;
     updateMediaSessionMetadata(title, channel, videoUrl);
