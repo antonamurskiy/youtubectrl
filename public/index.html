@@ -1032,7 +1032,7 @@
   <header class="header" style="position:relative">
     <span class="logo-text" onclick="document.getElementById('secretMenu').classList.toggle('open')">ytctrl</span>
     <div class="secret-menu" id="secretMenu">
-      <div class="secret-menu-item" id="volArea" style="position:relative;height:200px;padding:0;cursor:pointer;touch-action:none;">
+      <div class="secret-menu-item" id="volArea" style="position:relative;height:200px;padding:0;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;">
         <div id="volFill" style="position:absolute;bottom:0;left:0;right:0;background:#333;pointer-events:none;"></div>
         <div id="volLabel" style="position:absolute;bottom:8px;left:0;right:0;text-align:center;font-family:var(--font);font-size:10px;color:var(--text-dim);pointer-events:none;"></div>
       </div>
@@ -1321,14 +1321,20 @@
     // Show toast
     showToast('Playing on computer');
 
+    const title = card.querySelector('.video-title')?.textContent || '';
+    const channel = card.dataset.channel || '';
+
     try {
       const res = await fetch('/api/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, isLive, title: card.querySelector('.video-title')?.textContent || '', channel: card.dataset.channel || '' })
+        body: JSON.stringify({ url, isLive, title, channel })
       });
       if (!res.ok) showToast('Failed to play');
-      else startPolling();
+      else {
+        activateMediaSession(title, channel, url);
+        startPolling();
+      }
     } catch {
       showToast('Connection error');
     }
@@ -1371,11 +1377,15 @@
     if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
   }
 
-  // Pause all polling when tab is hidden
+  // Slow down polling when tab is hidden (keep it alive for lock screen controls)
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopPolling();
       if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+      // Keep slow poll for media session position updates on lock screen
+      if (mediaSessionActive && nowPlayingUrl) {
+        pollInterval = setInterval(pollPlayback, 5000);
+      }
     } else if (nowPlayingUrl) {
       startPolling();
     }
@@ -1383,6 +1393,123 @@
 
   let controlsBuilt = false;
   let isSeeking = false;
+
+  // ── Media Session (lock screen controls) ──
+  // Short looping near-silent audio triggers iOS Now Playing widget
+  const silentAudio = new Audio('/silent.m4a');
+  const hasMediaSession = 'mediaSession' in navigator;
+  let mediaSessionActive = false;
+  let lastVideoPos = 0;
+  let lastVideoDur = 0;
+
+  // Manually restart instead of loop — set position state BEFORE restarting to prevent flash to 0
+  silentAudio.addEventListener('ended', () => {
+    if (!mediaSessionActive) return;
+    if (hasMediaSession && lastVideoDur > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: lastVideoDur,
+          playbackRate: 1,
+          position: Math.max(0, Math.min(lastVideoPos, lastVideoDur))
+        });
+      } catch {}
+    }
+    silentAudio.currentTime = 0;
+    silentAudio.play().catch(() => {});
+  });
+
+  // Register action handlers once at startup
+  if (hasMediaSession) {
+    navigator.mediaSession.setActionHandler('play', () => {
+      fetch('/api/playpause', { method: 'POST' });
+      navigator.mediaSession.playbackState = 'playing';
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+      // Do NOT pause silentAudio — iOS removes the lock screen widget if audio stops
+      fetch('/api/playpause', { method: 'POST' });
+      navigator.mediaSession.playbackState = 'paused';
+    });
+    navigator.mediaSession.setActionHandler('seekbackward', () => {
+      fetch('/api/seek-relative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offset: -10 }) });
+    });
+    navigator.mediaSession.setActionHandler('seekforward', () => {
+      fetch('/api/seek-relative', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ offset: 10 }) });
+    });
+    navigator.mediaSession.setActionHandler('stop', () => {
+      window.stopPlayback();
+    });
+    navigator.mediaSession.setActionHandler('seekto', (details) => {
+      if (details.seekTime != null) {
+        lastVideoPos = details.seekTime;
+        try {
+          navigator.mediaSession.setPositionState({
+            duration: lastVideoDur,
+            playbackRate: 1,
+            position: Math.max(0, Math.min(details.seekTime, lastVideoDur))
+          });
+        } catch {}
+        fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: details.seekTime }) });
+      }
+    });
+  }
+
+  function activateMediaSession(title, channel, videoUrl) {
+    if (!hasMediaSession) return;
+    silentAudio.play().catch(() => {});
+    mediaSessionActive = true;
+    updateMediaSessionMetadata(title, channel, videoUrl);
+    // Set initial position immediately so iOS doesn't show the silent audio's own 0:00/5:00
+    if (lastVideoDur > 0) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: lastVideoDur,
+          playbackRate: 1,
+          position: Math.max(0, Math.min(lastVideoPos, lastVideoDur))
+        });
+      } catch {}
+    }
+  }
+
+  function updateMediaSessionMetadata(title, channel, videoUrl) {
+    if (!hasMediaSession) return;
+    const m = (videoUrl || '').match(/v=([\w-]+)/);
+    const artwork = m ? [
+      { src: `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg`, sizes: '480x360', type: 'image/jpeg' },
+    ] : [];
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title: title || 'YouTubeCtrl',
+      artist: channel || '',
+      album: 'YouTubeCtrl',
+      artwork
+    });
+    navigator.mediaSession.playbackState = 'playing';
+  }
+
+  function updateMediaSessionPosition(position, duration, paused) {
+    if (!mediaSessionActive || !hasMediaSession) return;
+    lastVideoPos = position || 0;
+    lastVideoDur = duration || 0;
+    navigator.mediaSession.playbackState = paused ? 'paused' : 'playing';
+    if (duration > 0 && isFinite(duration) && isFinite(position)) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: duration,
+          playbackRate: 1,
+          position: Math.max(0, Math.min(position, duration))
+        });
+      } catch {}
+    }
+  }
+
+  function deactivateMediaSession() {
+    mediaSessionActive = false;
+    silentAudio.pause();
+    silentAudio.currentTime = 0;
+    if (hasMediaSession) {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    }
+  }
 
   // Global scrub drag handlers (added once, not per poll)
   document.addEventListener('touchmove', (e) => {
@@ -1707,8 +1834,15 @@
             bar.style.width = pct + '%';
           }
         }
+        // Update lock screen media session position
+        updateMediaSessionPosition(data.position, data.duration, data.paused);
+        // Activate media session if not yet active (e.g. reconnecting to existing playback)
+        if (!mediaSessionActive && data.title) {
+          activateMediaSession(data.title, data.channel || '', data.url || '');
+        }
       } else if (!data.playing) {
         hideNowPlaying();
+        deactivateMediaSession();
         stopPolling();
       }
     } catch {}
@@ -1731,11 +1865,13 @@
   };
 
   let _volLast = 0;
+  let _volTimer = null;
   window.setVolume = function(val) {
-    const now = Date.now();
-    if (now - _volLast < 250) return;
-    _volLast = now;
-    fetch('/api/volume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ volume: parseInt(val) }) });
+    if (_volTimer) clearTimeout(_volTimer);
+    _volTimer = setTimeout(() => {
+      _volTimer = null;
+      fetch('/api/volume', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ volume: parseInt(val) }) });
+    }, 100);
   };
 
   window.toggleMute = async function() {
@@ -1952,6 +2088,7 @@
   window.stopPlayback = async function() {
     await fetch('/api/stop', { method: 'POST' });
     hideNowPlaying();
+    deactivateMediaSession();
     stopPolling();
     showToast('Stopped');
   };
@@ -1987,7 +2124,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ url })
-        }).then(() => startPolling());
+        }).then(() => { activateMediaSession('', '', url); startPolling(); });
         input.value = '';
         clearBtn.classList.remove('visible');
         return;
@@ -2325,16 +2462,18 @@
   });
 
   volArea.addEventListener('touchstart', (e) => {
+    e.preventDefault();
     const vol = volFromY(e);
     updateVolVisual(vol);
     setVolume(vol);
-  }, { passive: true });
+  });
 
   volArea.addEventListener('touchmove', (e) => {
+    e.preventDefault();
     const vol = volFromY(e);
     updateVolVisual(vol);
     setVolume(vol);
-  }, { passive: true });
+  });
 
   // Sync visual on menu open
   const secretMenuEl = document.getElementById('secretMenu');
