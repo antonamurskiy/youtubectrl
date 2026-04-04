@@ -586,13 +586,17 @@ let mpvProcess = null;
 let vlcProcess = null;
 let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
+let currentMonitor = "lg"; // tracked server-side, updated on move-monitor
 let progressInterval = null;
+let progressGen = 0; // generation counter to prevent overlapping intervals
 let activePlayer = null; // 'mpv' | 'vlc' | null
 let vlcPaused = false;
 
 const VLC_RC_PORT = 9091;
 function vlcRC(cmd) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; client.destroy(); resolve(buf.trim()); } }, 1000);
     const client = net.createConnection(VLC_RC_PORT, "127.0.0.1", () => {
       client.write(cmd + "\n");
     });
@@ -600,12 +604,10 @@ function vlcRC(cmd) {
     client.on("data", (chunk) => {
       buf += chunk;
       if (buf.includes("\n")) {
-        client.destroy();
-        resolve(buf.trim());
+        if (!settled) { settled = true; clearTimeout(timer); client.destroy(); resolve(buf.trim()); }
       }
     });
-    client.on("error", reject);
-    setTimeout(() => { client.destroy(); resolve(buf.trim()); }, 1000);
+    client.on("error", (err) => { if (!settled) { settled = true; clearTimeout(timer); client.destroy(); reject(err); } });
   });
 }
 async function vlcStatus() {
@@ -686,6 +688,7 @@ function spawnVlc(hlsUrl) {
     }
   };
   // Wait for VLC window, then position + hide queue
+  let fsResets = 0;
   const initVlc = (attempts = 0) => {
     if (attempts > 15) return;
     try {
@@ -694,6 +697,7 @@ function spawnVlc(hlsUrl) {
       try {
         const isFs = execSync(`osascript -e 'tell application "System Events" to get value of attribute "AXFullScreen" of first window of process "VLC"'`, { encoding: "utf8" }).trim();
         if (isFs === "true") {
+          if (++fsResets > 3) { windowMode = "fullscreen"; return; }
           execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set value of attribute "AXFullScreen" of first window to false'`, { stdio: "ignore" });
           setTimeout(() => initVlc(0), 1200);
           return;
@@ -712,6 +716,22 @@ function spawnVlc(hlsUrl) {
 app.get("/api/now-playing", (_req, res) => {
   res.json({ url: nowPlaying });
 });
+
+function startProgressTracking(url) {
+  if (progressInterval) clearInterval(progressInterval);
+  const gen = ++progressGen;
+  progressInterval = setInterval(async () => {
+    if (gen !== progressGen) { clearInterval(progressInterval); return; }
+    try {
+      const [pos, dur] = await Promise.all([
+        mpvCommand(["get_property", "time-pos"]),
+        mpvCommand(["get_property", "duration"]),
+      ]);
+      if (gen !== progressGen) return;
+      if (pos?.data && dur?.data && pos.data < dur.data * 1.05) updateHistoryProgress(url, pos.data, dur.data);
+    } catch {}
+  }, 10000);
+}
 
 let playLock = false;
 app.post("/api/play", async (req, res) => {
@@ -837,16 +857,7 @@ app.post("/api/play", async (req, res) => {
             if (t?.data) { history[0].title = t.data; saveHistory(); }
           } catch {}
           markWatchedOnYouTube(url);
-          if (progressInterval) clearInterval(progressInterval);
-          progressInterval = setInterval(async () => {
-            try {
-              const [pos, dur] = await Promise.all([
-                mpvCommand(["get_property", "time-pos"]),
-                mpvCommand(["get_property", "duration"]),
-              ]);
-              if (pos?.data && dur?.data && nowPlaying && pos.data < dur.data * 1.05) updateHistoryProgress(nowPlaying, pos.data, dur.data);
-            } catch {}
-          }, 10000);
+          startProgressTracking(url);
         })();
         return;
       } catch {}
@@ -863,7 +874,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -927,20 +938,12 @@ app.post("/api/play", async (req, res) => {
         if (t?.data) { history[0].title = t.data; saveHistory(); }
       } catch {}
       markWatchedOnYouTube(url);
-      if (progressInterval) clearInterval(progressInterval);
-      progressInterval = setInterval(async () => {
-        try {
-          const [pos, dur] = await Promise.all([
-            mpvCommand(["get_property", "time-pos"]),
-            mpvCommand(["get_property", "duration"]),
-          ]);
-          if (pos?.data && dur?.data) updateHistoryProgress(nowPlaying, pos.data, dur.data);
-        } catch {}
-      }, 10000);
+      startProgressTracking(url);
     }, 5000);
 
     child.on("exit", async (code) => {
-      if (progressInterval) clearInterval(progressInterval);
+      progressGen++;
+      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       if (mpvProcess === child) {
         // If mpv exited within 5 seconds, it probably failed — remove from history
         const elapsed = Date.now() - child._startTime;
@@ -979,6 +982,7 @@ app.post("/api/stop", async (_req, res) => {
     ]);
     if (pos?.data && dur?.data && nowPlaying) updateHistoryProgress(nowPlaying, pos.data, dur.data);
   } catch {}
+  progressGen++;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {}
   mpvProcess = null;
@@ -990,28 +994,27 @@ app.post("/api/stop", async (_req, res) => {
 // IPC helper for mpv
 function mpvCommand(cmd) {
   return new Promise((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => { if (!settled) { settled = true; client.destroy(); resolve(null); } }, 2000);
     const client = net.createConnection("/tmp/mpv-socket", () => {
       client.write(JSON.stringify({ command: cmd }) + "\n");
     });
     let buf = "";
     client.on("data", (chunk) => {
       buf += chunk;
-      // mpv sends newline-delimited JSON; grab first complete line
       const lines = buf.split("\n");
       for (const line of lines) {
         if (!line) continue;
         try {
           const parsed = JSON.parse(line);
           if ("request_id" in parsed) {
-            client.destroy();
-            resolve(parsed);
+            if (!settled) { settled = true; clearTimeout(timer); client.destroy(); resolve(parsed); }
             return;
           }
         } catch {}
       }
     });
-    client.on("error", (err) => { client.destroy(); reject(err); });
-    setTimeout(() => { client.destroy(); resolve(null); }, 2000);
+    client.on("error", (err) => { if (!settled) { settled = true; clearTimeout(timer); client.destroy(); reject(err); } });
   });
 }
 
@@ -1021,12 +1024,8 @@ app.get("/api/playback", async (_req, res) => {
   if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
     try {
       const s = await vlcStatus();
-      let monitor = "lg";
-      try {
-        const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "VLC"'`, { encoding: "utf8" }).trim();
-        const x = parseInt(posStr.split(",")[0]);
-        monitor = x < 0 ? "laptop" : "lg";
-      } catch {}
+      vlcPaused = s.state !== "playing";
+      const monitor = currentMonitor;
       return res.json({
         playing: true,
         url: nowPlaying,
@@ -1049,27 +1048,15 @@ app.get("/api/playback", async (_req, res) => {
     return res.json({ playing: false });
   }
   try {
-    const pos = await mpvCommand(["get_property", "time-pos"]);
-    const dur = await mpvCommand(["get_property", "duration"]);
-    const title = await mpvCommand(["get_property", "media-title"]);
-    const paused = await mpvCommand(["get_property", "pause"]).catch(() => ({ data: false }));
-    const fileFormat = await mpvCommand(["get_property", "file-format"]).catch(() => ({ data: "" }));
+    const [pos, dur, title, paused, fileFormat, fs] = await Promise.all([
+      mpvCommand(["get_property", "time-pos"]),
+      mpvCommand(["get_property", "duration"]),
+      mpvCommand(["get_property", "media-title"]),
+      mpvCommand(["get_property", "pause"]).catch(() => ({ data: false })),
+      mpvCommand(["get_property", "file-format"]).catch(() => ({ data: "" })),
+      mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false })),
+    ]);
     const isLive = (fileFormat?.data || "").includes("hls");
-    const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
-    let monitor = "lg";
-    if (fs?.data) {
-      const fsScreen = await mpvCommand(["get_property", "fs-screen"]).catch(() => ({ data: 0 }));
-      const screens = getScreenInfo();
-      const mainIdx = screens.findIndex(s => s.main);
-      monitor = fsScreen?.data === mainIdx ? "lg" : "laptop";
-    } else {
-      // Floating — check window position
-      try {
-        const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
-        const x = parseInt(posStr.split(",")[0]);
-        monitor = x < 0 ? "laptop" : "lg";
-      } catch {}
-    }
     // Sync windowMode from actual mpv fullscreen state
     if (fs?.data && windowMode !== "fullscreen") windowMode = "fullscreen";
     else if (!fs?.data && windowMode === "fullscreen") windowMode = "floating";
@@ -1084,7 +1071,7 @@ app.get("/api/playback", async (_req, res) => {
       fullscreen: fs?.data || false,
       isLive,
       windowMode,
-      monitor,
+      monitor: currentMonitor,
     });
   } catch {
     res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0, title: "" });
@@ -1357,11 +1344,12 @@ app.get("/api/livechat", async (req, res) => {
 });
 
 // Storyboard (seek preview thumbnails) — parsed from yt-dlp
-let _storyboardCache = {}; // videoId -> { url, cols, rows, interval }
+const _storyboardCache = new Map(); // videoId -> { url, cols, rows, interval } — capped at 50
+const STORYBOARD_CACHE_MAX = 50;
 app.get("/api/storyboard", async (req, res) => {
   const { videoId } = req.query;
   if (!videoId) return res.json({});
-  if (_storyboardCache[videoId]) return res.json(_storyboardCache[videoId]);
+  if (_storyboardCache.has(videoId)) return res.json(_storyboardCache.get(videoId));
   try {
     const { stdout } = await execFileP("yt-dlp", [
       "--cookies", COOKIES_FILE, "-j", "--no-download", "--no-warnings",
@@ -1383,7 +1371,11 @@ app.get("/api/storyboard", async (req, res) => {
       const pageDur = sbFormat.fragments?.[0]?.duration || 2;
       result.interval = pageDur / (sbFormat.columns * sbFormat.rows);
     }
-    _storyboardCache[videoId] = result;
+    if (_storyboardCache.size >= STORYBOARD_CACHE_MAX) {
+      const oldest = _storyboardCache.keys().next().value;
+      _storyboardCache.delete(oldest);
+    }
+    _storyboardCache.set(videoId, result);
     res.json(result);
   } catch (err) {
     console.error("Storyboard error:", err.message);
@@ -1470,9 +1462,9 @@ app.post("/api/playpause", async (_req, res) => {
 // Gets screen info dynamically so it works at any resolution
 let _screenInfoCache = null;
 let _screenInfoAt = 0;
-function getScreenInfo() {
+async function getScreenInfo() {
   if (_screenInfoCache && Date.now() - _screenInfoAt < 3000) return _screenInfoCache;
-  const out = execSync(`python3 -c "
+  const { stdout: out } = await execFileP("python3", ["-c", `
 import subprocess, json
 r = subprocess.run(['system_profiler', 'SPDisplaysDataType', '-json'], capture_output=True, text=True)
 data = json.loads(r.stdout)
@@ -1486,7 +1478,7 @@ for gpu in data.get('SPDisplaysDataType', []):
         main = 'yes' in d.get('spdisplays_main', '')
         screens.append({'name': d.get('_name',''), 'w': w, 'h': h, 'main': main})
 print(json.dumps(screens))
-"`, { encoding: "utf8" });
+`], { timeout: 5000 });
   _screenInfoCache = JSON.parse(out.trim());
   _screenInfoAt = Date.now();
   return _screenInfoCache;
@@ -1524,6 +1516,7 @@ app.post("/api/move-monitor", async (req, res) => {
       } else {
         windowMode = "floating";
       }
+      currentMonitor = target;
       res.json({ ok: true });
       windowLock = false;
       return;
@@ -1561,6 +1554,7 @@ app.post("/api/move-monitor", async (req, res) => {
         try { await mpvCommand(["set_property", "ontop", true]); } catch {}
       }
     }
+    currentMonitor = target;
     res.json({ ok: true });
   } catch (err) {
     console.error("Move failed:", err.message);
@@ -1779,6 +1773,13 @@ app.listen(PORT, "0.0.0.0", async () => {
         const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
         windowMode = fs?.data ? "fullscreen" : "floating";
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode);
+        // Start progress tracking for reconnected player
+        startProgressTracking(nowPlaying);
+        // Monitor mpv liveness — if IPC fails, clean up state
+        const mpvMonitor = setInterval(async () => {
+          try { await mpvCommand(["get_property", "pid"]); }
+          catch { clearInterval(mpvMonitor); progressGen++; if (progressInterval) { clearInterval(progressInterval); progressInterval = null; } mpvProcess = null; nowPlaying = null; activePlayer = null; }
+        }, 5000);
       }
     }
   } catch {}
@@ -1794,6 +1795,11 @@ app.listen(PORT, "0.0.0.0", async () => {
         const liveEntry = history.find(h => h.url);
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
+        // Monitor VLC liveness
+        const vlcMonitor = setInterval(async () => {
+          try { await vlcRC("get_time"); }
+          catch { clearInterval(vlcMonitor); vlcProcess = null; nowPlaying = null; activePlayer = null; }
+        }, 5000);
       }
     } catch {}
   }

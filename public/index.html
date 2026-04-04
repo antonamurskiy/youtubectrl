@@ -1233,19 +1233,24 @@
 
   let homePage = 0;
   let homeHasMore = false;
+  let loadGen = 0; // generation counter to discard stale responses
 
   async function loadHome(refresh) {
+    const gen = ++loadGen;
     showSkeletons();
     label.innerHTML = `<span class="accent">//</span> Home`;
     homePage = 0;
     try {
       const res = await fetch('/api/home?page=0' + (refresh ? '&refresh=1' : ''));
+      if (gen !== loadGen) return;
       if (!res.ok) throw new Error('no home');
       const data = await res.json();
+      if (gen !== loadGen) return;
       if (!data.videos?.length) throw new Error('empty');
       homeHasMore = data.hasMore;
       renderVideos(data.videos);
     } catch {
+      if (gen !== loadGen) return;
       label.innerHTML = `<span class="accent">//</span> Trending`;
       loadTrending(true);
     }
@@ -1267,12 +1272,16 @@
   }
 
   async function loadTrending(skipSkeleton) {
+    const gen = ++loadGen;
     if (!skipSkeleton) showSkeletons();
     try {
       const res = await fetch('/api/trending');
+      if (gen !== loadGen) return;
       const data = await res.json();
+      if (gen !== loadGen) return;
       renderVideos(data);
     } catch {
+      if (gen !== loadGen) return;
       grid.innerHTML = `
         <div class="empty-state">
           <div class="icon">!</div>
@@ -1282,6 +1291,7 @@
   }
 
   async function search(query, append) {
+    const gen = append ? loadGen : ++loadGen;
     if (!append) { showSkeletons(); currentQuery = query; nextPageToken = null; }
     else { loadMoreEl.style.display = 'flex'; }
     label.innerHTML = `<span class="accent">//</span> Results`;
@@ -1289,12 +1299,15 @@
       let url = '/api/search?q=' + encodeURIComponent(query);
       if (append && nextPageToken) url += '&pageToken=' + nextPageToken;
       const res = await fetch(url);
+      if (gen !== loadGen) return;
       const data = await res.json();
+      if (gen !== loadGen) return;
       const videos = data.videos || data;
       nextPageToken = data.nextPageToken || null;
       if (append) appendVideos(videos);
       else renderVideos(videos);
     } catch {
+      if (gen !== loadGen) return;
       if (!append) grid.innerHTML = `
         <div class="empty-state">
           <div class="icon">!</div>
@@ -1369,12 +1382,16 @@
 
   function startPolling() {
     stopPolling();
-    pollInterval = setInterval(pollPlayback, 1000);
+    pollInterval = 'active';
     pollPlayback();
   }
 
   function stopPolling() {
-    if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+    if (pollInterval) { clearTimeout(pollInterval); pollInterval = null; }
+  }
+
+  function schedulePoll(ms) {
+    if (pollInterval) pollInterval = setTimeout(pollPlayback, ms || 1000);
   }
 
   // Slow down polling when tab is hidden (keep it alive for lock screen controls)
@@ -1384,7 +1401,8 @@
       if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
       // Keep slow poll for media session position updates on lock screen
       if (mediaSessionActive && nowPlayingUrl) {
-        pollInterval = setInterval(pollPlayback, 5000);
+        pollInterval = 'active';
+        schedulePoll(5000);
       }
     } else if (nowPlayingUrl) {
       startPolling();
@@ -1393,11 +1411,12 @@
 
   let controlsBuilt = false;
   let isSeeking = false;
+  let seekTarget = null; // position we seeked to, cleared when poll confirms it
 
   // ── Media Session (lock screen controls) ──
   // Short looping near-silent audio triggers iOS Now Playing widget
   const silentAudio = new Audio('/silent.m4a');
-  silentAudio.volume = 0;
+  silentAudio.volume = 1;
   const hasMediaSession = 'mediaSession' in navigator;
   let mediaSessionActive = false;
   let lastVideoPos = 0;
@@ -1519,11 +1538,20 @@
   document.addEventListener('touchend', (e) => {
     if (window._scrubDragging && window._scrubSendSeek) {
       window._scrubDragging = false;
+      const bar = document.getElementById('npProgressBar');
+      const dur = parseFloat(bar?.dataset.duration || 0);
+      const rect = bar?.getBoundingClientRect();
+      if (rect && dur > 0) {
+        const pct = Math.max(0, Math.min(1, (e.changedTouches[0].clientX - rect.left) / rect.width));
+        seekTarget = pct * dur;
+      }
       window._scrubSendSeek(e.changedTouches[0].clientX);
       if (window._scrubHidePreview) window._scrubHidePreview();
       const curPos = document.getElementById('npCurrentPos');
       if (curPos) setTimeout(() => curPos.classList.remove('visible'), 2000);
-      setTimeout(() => { isSeeking = false; }, 500);
+      // Keep isSeeking true until poll confirms position near seekTarget (see pollPlayback)
+      // Fallback: clear after 3s in case server never catches up
+      setTimeout(() => { isSeeking = false; seekTarget = null; }, 3000);
     }
   });
 
@@ -1538,13 +1566,17 @@
     npBar.style.display = 'none';
     updateFabPosition();
     controlsBuilt = false;
+    nowPlayingUrl = null;
     const c = npBar.querySelector('.np-controls');
     if (c) c.remove();
   }
 
   async function pollPlayback() {
     try {
-      const res = await fetch('/api/playback');
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 5000);
+      const res = await fetch('/api/playback', { signal: ac.signal });
+      clearTimeout(t);
       const data = await res.json();
       if (data.playing && data.duration > 0) {
         npBar.style.display = 'flex';
@@ -1562,9 +1594,10 @@
         if (data.windowMode === 'maximize') document.getElementById('btnMaximize')?.classList.add('active');
         if (document.getElementById('phonePlayer')) document.getElementById('btnPhone')?.classList.add('active');
 
-        // Sync play/pause icon
+        // Sync play/pause icon (only update DOM when state changes)
         const ppBtn = document.getElementById('npPlayPause');
-        if (ppBtn) {
+        if (ppBtn && ppBtn._lastPaused !== !!data.paused) {
+          ppBtn._lastPaused = !!data.paused;
           ppBtn.innerHTML = data.paused
             ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
             : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
@@ -1768,6 +1801,10 @@
           });
         }
 
+        // Clear isSeeking once server confirms position is near the seek target
+        if (isSeeking && seekTarget !== null && data.position > 0) {
+          if (Math.abs(data.position - seekTarget) < 3) { isSeeking = false; seekTarget = null; }
+        }
         if (!isSeeking) {
           const barEl = document.getElementById('npProgressBar');
           const fill = document.getElementById('npFill');
@@ -1806,13 +1843,15 @@
             if (!durEl._liveBtn) {
               durEl.innerHTML = '<span style="color:#e33;cursor:pointer;font-weight:700">LIVE</span>';
               durEl._liveBtn = true;
-              durEl.addEventListener('click', () => {
+              durEl._liveHandler = () => {
                 const d = parseFloat(document.getElementById('npProgressBar')?.dataset.duration || 0);
                 if (d > 0) fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: d }) });
                 showToast('Going live');
-              });
+              };
+              durEl.addEventListener('click', durEl._liveHandler);
             }
           } else {
+            if (durEl._liveHandler) { durEl.removeEventListener('click', durEl._liveHandler); durEl._liveHandler = null; }
             durEl._liveBtn = false;
             durEl.textContent = fmtTime(data.duration);
           }
@@ -1845,8 +1884,10 @@
         hideNowPlaying();
         deactivateMediaSession();
         stopPolling();
+        return; // don't schedule next poll
       }
     } catch {}
+    schedulePoll(document.hidden ? 5000 : 1000);
   }
 
   window.togglePlayPause = async function() {
@@ -2020,13 +2061,15 @@
         let chatToken = null;
         const seenIds = new Set();
         let chatPollTimer = null;
+        const chatAbort = new AbortController();
         const pollChat = async () => {
-          if (document.hidden || !document.getElementById('chatEmbed')) return;
+          if (chatAbort.signal.aborted || document.hidden || !document.getElementById('chatEmbed')) return;
           if (seenIds.size > 2000) { const arr = [...seenIds]; seenIds.clear(); arr.slice(-1000).forEach(id => seenIds.add(id)); }
           try {
             const url = '/api/livechat?videoId=' + m[1] + (chatToken ? '&pageToken=' + chatToken : '');
-            const r = await fetch(url);
+            const r = await fetch(url, { signal: chatAbort.signal });
             const data = await r.json();
+            if (chatAbort.signal.aborted) return;
             const list = document.getElementById('liveChatList');
             if (!list) return;
             if (data.messages?.length) {
@@ -2044,13 +2087,13 @@
               if (wasAtBottom) list.scrollTop = list.scrollHeight;
             }
             chatToken = data.nextPageToken;
-            if (document.getElementById('chatEmbed')) {
+            if (!chatAbort.signal.aborted && document.getElementById('chatEmbed')) {
               chatPollTimer = setTimeout(pollChat, data.pollingMs || 5000);
             }
           } catch {}
         };
-        // Store timer ref for cleanup
-        embed._chatPollTimer = () => { if (chatPollTimer) clearTimeout(chatPollTimer); };
+        // Store cleanup ref — abort controller cancels in-flight fetch + prevents rescheduling
+        embed._chatPollTimer = () => { chatAbort.abort(); if (chatPollTimer) clearTimeout(chatPollTimer); };
         pollChat();
         return;
       } else {
@@ -2187,11 +2230,14 @@
   // ── History ──
 
   async function loadHistory() {
+    const gen = ++loadGen;
     showSkeletons();
     label.innerHTML = `<span class="accent">//</span> History`;
     try {
       const res = await fetch('/api/history');
+      if (gen !== loadGen) return;
       const data = await res.json();
+      if (gen !== loadGen) return;
       if (!data.length) {
         grid.innerHTML = `<div class="empty-state">Play some videos to build your history.</div>`;
         return;
@@ -2216,14 +2262,18 @@
   }
 
   async function loadLive() {
+    const gen = ++loadGen;
     showSkeletons();
     label.innerHTML = `<span class="accent">//</span> Live`;
     try {
       const res = await fetch('/api/live');
+      if (gen !== loadGen) return;
       const data = await res.json();
+      if (gen !== loadGen) return;
       if (!data.length) throw new Error('empty');
       renderVideos(data);
     } catch {
+      if (gen !== loadGen) return;
       grid.innerHTML = `
         <div class="empty-state">
           <div class="icon">!</div>
@@ -2325,10 +2375,13 @@
     menu.appendChild(cancelBtn);
     document.body.appendChild(menu);
 
-    // Close on outside click
+    // Close on outside click (self-removes if menu was already removed)
     setTimeout(() => {
       const close = (e) => {
-        if (!e.target.closest('#cardMenu')) { menu.remove(); document.removeEventListener('click', close); }
+        if (!document.getElementById('cardMenu') || !e.target.closest('#cardMenu')) {
+          menu.remove();
+          document.removeEventListener('click', close);
+        }
       };
       document.addEventListener('click', close);
     }, 100);
@@ -2413,7 +2466,10 @@
     document.body.appendChild(menu);
     setTimeout(() => {
       const close = (e) => {
-        if (!e.target.closest('#fabMenu')) { menu.remove(); document.removeEventListener('click', close); }
+        if (!document.getElementById('fabMenu') || !e.target.closest('#fabMenu')) {
+          menu.remove();
+          document.removeEventListener('click', close);
+        }
       };
       document.addEventListener('click', close);
     }, 100);
