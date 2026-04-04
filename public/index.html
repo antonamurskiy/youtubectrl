@@ -308,7 +308,7 @@
     bottom: 0;
     left: 0;
     height: 2px;
-    background: #2d8a4e;
+    background: #c00;
   }
 
   .live-badge {
@@ -1075,7 +1075,7 @@
   <div class="np-top-row">
     <div class="np-thumb" id="npThumb" onclick="togglePlayPause()"></div>
     <div class="np-info" onclick="togglePlayPause()">
-      <div class="np-label">Now playing</div>
+      <div class="np-label" id="npLabel">Now playing</div>
       <div class="np-title" id="npTitle"></div>
     </div>
     <button class="np-stop" id="npPlayPause" onclick="togglePlayPause()">
@@ -1325,7 +1325,7 @@
       const res = await fetch('/api/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, isLive, title: card.querySelector('.video-title')?.textContent || '' })
+        body: JSON.stringify({ url, isLive, title: card.querySelector('.video-title')?.textContent || '', channel: card.dataset.channel || '' })
       });
       if (!res.ok) showToast('Failed to play');
       else startPolling();
@@ -1423,6 +1423,7 @@
         setTimeout(updateFabPosition, 50);
         npBar.style.flexWrap = 'wrap';
         if (data.url) nowPlayingUrl = data.url;
+        document.getElementById('npLabel').textContent = data.channel || 'Now playing';
         if (data.title) npTitle.textContent = data.title;
 
         // Highlight active mode buttons
@@ -1690,6 +1691,22 @@
         }
         const barEl2 = document.getElementById('npProgressBar');
         if (barEl2) barEl2.dataset.duration = data.duration;
+
+        // Sync watch progress on video card in grid
+        if (data.url && data.position > 0 && data.duration > 0) {
+          const vid = (data.url.match(/v=([\w-]+)/) || [])[1];
+          const card = vid && document.querySelector(`.video-card[data-url*="${vid}"]`);
+          if (card) {
+            const pct = Math.min(100, (data.position / data.duration) * 100);
+            let bar = card.querySelector('.watch-progress');
+            if (!bar) {
+              bar = document.createElement('div');
+              bar.className = 'watch-progress';
+              card.querySelector('.thumb-wrap')?.appendChild(bar);
+            }
+            bar.style.width = pct + '%';
+          }
+        }
       } else if (!data.playing) {
         hideNowPlaying();
         stopPolling();

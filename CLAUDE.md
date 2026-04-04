@@ -39,7 +39,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 ### mpv Playback
 
-- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies-from-browser=firefox`
+- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies=cookies.txt`
 - Unix domain socket sends JSON commands: `{"command": ["get_property", "time-pos"]}`
 - mpv keeps the socket open — read first complete JSON line with `request_id`, then close
 - New videos loaded via `loadfile` IPC command (reuses existing window/position) — only spawns new mpv if no existing player
@@ -102,13 +102,16 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Home feed paginated: 24 videos per page, infinite scroll loads more
 - Event delegation for video card clicks (one handler on grid, not per-card)
 - All polling pauses when tab is hidden (visibility API)
-- Firefox must be installed and logged into YouTube for yt-dlp cookies
+- Cookies exported from Firefox to `cookies.txt` on server startup (requires Mac to be unlocked)
+- `POST /api/refresh-cookies` to re-export if cookies expire
+- Firefox must be installed and logged into YouTube
 
 ## Key Files
 
 - `.env` — `YOUTUBE_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
 - `.tokens.json` — OAuth tokens (runtime, gitignored)
 - `.history.json` — Watch history with position/duration (runtime, gitignored)
+- `cookies.txt` — Firefox YouTube cookies, exported on startup (runtime, gitignored)
 - `/tmp/mpv-socket` — mpv IPC socket (runtime)
 - `/tmp/vlc-next.m3u` — temp file for VLC stream switching (runtime)
 - `activePlayer` — server-side variable: `'mpv'` | `'vlc'` | `null`

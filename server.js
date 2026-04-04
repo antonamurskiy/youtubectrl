@@ -18,6 +18,7 @@ const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
 const YT_API = "https://www.googleapis.com/youtube/v3";
 const TOKENS_FILE = path.join(__dirname, ".tokens.json");
 const HISTORY_FILE = path.join(__dirname, ".history.json");
+const COOKIES_FILE = path.join(__dirname, "cookies.txt");
 
 // Persistent history
 let history = [];
@@ -41,7 +42,7 @@ function saveHistory() {
 
 function markWatchedOnYouTube(url) {
   require("child_process").execFile("yt-dlp", [
-    "--mark-watched", "--simulate", "--cookies-from-browser", "firefox", "--no-warnings", url,
+    "--mark-watched", "--simulate", "--cookies", COOKIES_FILE, "--no-warnings", url,
   ], { timeout: 15000 }, () => {});
 }
 
@@ -50,14 +51,31 @@ function rebuildHistoryMap() {
   for (const h of history) historyMap.set(h.url, h);
 }
 
-function addToHistory(url, title) {
+async function exportCookies() {
+  try {
+    await execFileP("yt-dlp", [
+      "--cookies-from-browser", "firefox",
+      "--cookies", COOKIES_FILE,
+      "--simulate", "--no-warnings",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    ], { timeout: 30000 });
+    console.log("  Cookies exported to cookies.txt");
+    return true;
+  } catch (err) {
+    console.error("  Failed to export cookies:", err.message);
+    return false;
+  }
+}
+
+function addToHistory(url, title, channel) {
   const existing = historyMap.get(url);
   if (existing) {
     existing.timestamp = Date.now();
     if (title) existing.title = title;
+    if (channel) existing.channel = channel;
     history = [existing, ...history.filter((h) => h.url !== url)];
   } else {
-    const entry = { url, title, timestamp: Date.now(), position: 0, duration: 0 };
+    const entry = { url, title, channel: channel || "", timestamp: Date.now(), position: 0, duration: 0 };
     history.unshift(entry);
   }
   history = history.slice(0, 100);
@@ -306,7 +324,7 @@ app.get("/api/channel-videos", async (req, res) => {
   if (!channelId) return res.json([]);
   try {
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies-from-browser", "firefox",
+      "--cookies", COOKIES_FILE,
       "--flat-playlist", "--dump-json", "--no-warnings",
       "-I", "1:15",
       `https://www.youtube.com/channel/${channelId}/videos`,
@@ -400,7 +418,7 @@ async function getHomeFeed() {
   });
 
   const ytdlpArgs = (feed, count) => [
-    "--cookies-from-browser", "firefox",
+    "--cookies", COOKIES_FILE,
     "--flat-playlist", "--dump-json", "--no-warnings",
     "-I", `1:${count}`,
     `https://www.youtube.com/feed/${feed}`,
@@ -699,7 +717,7 @@ let playLock = false;
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
-  const { url, isLive, title: reqTitle } = req.body;
+  const { url, isLive, title: reqTitle, channel: reqChannel } = req.body;
   if (!url || !url.startsWith("https://www.youtube.com/")) {
     playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
@@ -713,7 +731,7 @@ app.post("/api/play", async (req, res) => {
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
       // Get HLS URL via yt-dlp
       const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "301/300/96/95/94/93", "--get-url", url],
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", url],
         { timeout: 15000 }
       );
       const hlsUrl = stdout.trim();
@@ -727,7 +745,7 @@ app.post("/api/play", async (req, res) => {
         spawnVlc(hlsUrl);
       }
       nowPlaying = url;
-      addToHistory(url, reqTitle || "");
+      addToHistory(url, reqTitle || "", reqChannel || "");
       markWatchedOnYouTube(url);
       playLock = false;
       return res.json({ ok: true, player: "vlc" });
@@ -761,7 +779,7 @@ app.post("/api/play", async (req, res) => {
         // Unhide if it was hidden from pause
         try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
         nowPlaying = url;
-        addToHistory(url, "");
+        addToHistory(url, reqTitle || "", reqChannel || "");
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
@@ -845,7 +863,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies-from-browser=firefox`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=2G`, `--cache=yes`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -887,7 +905,7 @@ app.post("/api/play", async (req, res) => {
       } catch {}
     };
     applyWindowMode();
-    addToHistory(url, "");
+    addToHistory(url, reqTitle || "", reqChannel || "");
 
     // Wait for video to load, then set up progress (remove from history if failed)
     if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -1015,6 +1033,7 @@ app.get("/api/playback", async (_req, res) => {
         position: s.time || 0,
         duration: Math.max(s.time || 0, s.length || 0),
         title: historyMap.get(nowPlaying)?.title || "",
+        channel: historyMap.get(nowPlaying)?.channel || "",
         paused: vlcPaused,
         fullscreen: windowMode === "fullscreen",
         isLive: true,
@@ -1060,6 +1079,7 @@ app.get("/api/playback", async (_req, res) => {
       position: pos?.data || 0,
       duration: dur?.data || 0,
       title: title?.data || "",
+      channel: historyMap.get(nowPlaying)?.channel || "",
       paused: paused?.data || false,
       fullscreen: fs?.data || false,
       isLive,
@@ -1173,7 +1193,7 @@ app.get("/api/history", async (_req, res) => {
       title: h.title || h.url,
       thumbnail: m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : "",
       duration: "",
-      channel: "",
+      channel: h.channel || "",
       views: 0,
       url: h.url,
       savedPosition: h.position || 0,
@@ -1238,6 +1258,12 @@ app.post("/api/volume", (req, res) => {
   }
 });
 
+// Refresh cookies from Firefox (requires Mac to be unlocked)
+app.post("/api/refresh-cookies", async (_req, res) => {
+  const ok = await exportCookies();
+  res.json({ ok });
+});
+
 // Mute toggle
 app.post("/api/mute", (_req, res) => {
   try {
@@ -1276,7 +1302,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
     const { stdout } = await execFileP(
-      "yt-dlp", ["--cookies-from-browser", "firefox", "-f", "18/best[height<=720]", "--get-url", nowPlaying],
+      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const streamUrl = stdout.trim().split("\n")[0];
@@ -1338,7 +1364,7 @@ app.get("/api/storyboard", async (req, res) => {
   if (_storyboardCache[videoId]) return res.json(_storyboardCache[videoId]);
   try {
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies-from-browser", "firefox", "-j", "--no-download", "--no-warnings",
+      "--cookies", COOKIES_FILE, "-j", "--no-download", "--no-warnings",
       `https://www.youtube.com/watch?v=${videoId}`,
     ], { timeout: 15000 });
     const info = JSON.parse(stdout);
@@ -1372,7 +1398,7 @@ app.get("/api/comments", async (req, res) => {
   try {
     const { stdout } = await execFileP(
       "yt-dlp", [
-        "--cookies-from-browser", "firefox",
+        "--cookies", COOKIES_FILE,
         "--extractor-args", "youtube:max_comments=20",
         "--write-comments", "--skip-download", "--dump-json",
         "--no-warnings",
@@ -1720,6 +1746,7 @@ app.listen(PORT, "0.0.0.0", async () => {
   console.log(`YouTubeCtrl running at http://localhost:${PORT}`);
   if (!API_KEY) console.warn("  WARNING: YOUTUBE_API_KEY not set in .env");
   if (!CLIENT_ID) console.warn("  WARNING: GOOGLE_CLIENT_ID not set in .env");
+  await exportCookies();
   const nets = require("os").networkInterfaces();
   for (const iface of Object.values(nets)) {
     for (const cfg of iface) {
