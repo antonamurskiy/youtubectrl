@@ -612,11 +612,10 @@ function vlcRC(cmd) {
   });
 }
 async function vlcStatus() {
-  const [time, length, playing] = await Promise.all([
-    vlcRC("get_time").then(s => parseInt(s) || 0),
-    vlcRC("get_length").then(s => parseInt(s) || 0),
-    vlcRC("is_playing").then(s => s.trim() === "1"),
-  ]);
+  // Sequential — VLC RC can't handle parallel TCP connections reliably
+  const time = parseInt(await vlcRC("get_time")) || 0;
+  const length = parseInt(await vlcRC("get_length")) || 0;
+  const playing = (await vlcRC("is_playing")).trim() === "1";
   return { time, length, state: playing ? "playing" : "paused", fullscreen: false };
 }
 async function vlcSeek(val) { return vlcRC(`seek ${val}`); }
@@ -1029,7 +1028,6 @@ app.get("/api/playback", async (_req, res) => {
   if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
     try {
       const s = await vlcStatus();
-      vlcPaused = s.state !== "playing";
       const monitor = currentMonitor;
       return res.json({
         playing: true,
