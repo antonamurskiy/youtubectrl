@@ -670,7 +670,6 @@ function spawnVlc(hlsUrl) {
   activePlayer = "vlc";
   windowMode = null;
   vlcPaused = false;
-  startVlcTimeModel();
   // Hide play queue sidebar after VLC window is ready
   const hideQueue = (attempts = 0) => {
     if (attempts > 5) return;
@@ -1091,7 +1090,6 @@ app.post("/api/seek", async (req, res) => {
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
     if (activePlayer === "vlc") {
-      const s = await vlcStatus();
       await vlcSeek(Math.floor(position));
       return res.json({ ok: true });
     }
@@ -1308,10 +1306,7 @@ function startVlcTimeModel() {
       }
       lastRaw = raw;
     } catch {}
-    // Poll faster when near the expected next integer boundary
-    const elapsed = (Date.now() - vlcTimeModel.lastIntAt) / 1000;
-    const nextPoll = elapsed > 0.7 ? 100 : 200;
-    setTimeout(poll, nextPoll);
+    setTimeout(poll, 1000);
   };
   poll();
 }
@@ -1913,7 +1908,6 @@ app.listen(PORT, "0.0.0.0", async () => {
         const liveEntry = history.find(h => h.url);
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
-        startVlcTimeModel();
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }
