@@ -591,6 +591,7 @@ let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
 let activePlayer = null; // 'mpv' | 'vlc' | null
 let vlcPaused = false;
+let lastVlcHlsUrl = null; // stored for fMP4 relay
 
 const VLC_RC_PORT = 9091;
 function vlcRC(cmd) {
@@ -655,6 +656,7 @@ async function vlcFloatTopRight() {
 }
 
 function spawnVlc(hlsUrl) {
+  lastVlcHlsUrl = hlsUrl;
   killVlc();
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
     "--extraintf", "cli",
@@ -668,6 +670,7 @@ function spawnVlc(hlsUrl) {
   activePlayer = "vlc";
   windowMode = null;
   vlcPaused = false;
+  startVlcTimeModel();
   // Hide play queue sidebar after VLC window is ready
   const hideQueue = (attempts = 0) => {
     if (attempts > 5) return;
@@ -757,6 +760,7 @@ app.post("/api/play", async (req, res) => {
       const hlsUrl = stdout.trim();
       if (activePlayer === "vlc" && vlcProcess) {
         // Switch stream without restarting VLC — write URL to temp file and load it
+        lastVlcHlsUrl = hlsUrl;
         fs.writeFileSync("/tmp/vlc-next.m3u", hlsUrl);
         await vlcRC("clear");
         await vlcRC("add /tmp/vlc-next.m3u");
@@ -968,6 +972,7 @@ app.post("/api/play", async (req, res) => {
 
 // Stop playback
 app.post("/api/stop", async (_req, res) => {
+  killPhoneStream();
   // Save final position before stopping
   if (activePlayer === "vlc") {
     killVlc();
@@ -1031,6 +1036,7 @@ app.get("/api/playback", async (_req, res) => {
         url: nowPlaying,
         position: s.time || 0,
         duration: Math.max(s.time || 0, s.length || 0),
+        dvrWindow: s.length || 0,
         title: historyMap.get(nowPlaying)?.title || "",
         channel: historyMap.get(nowPlaying)?.channel || "",
         paused: vlcPaused,
@@ -1274,7 +1280,98 @@ app.post("/api/mpv-video", async (req, res) => {
   }
 });
 
-// Watch on phone — get direct stream URL
+// Phone sync debug — stores latest data from phone, readable via GET
+let _phoneSyncDebug = null;
+app.post("/api/phone-debug", (req, res) => { _phoneSyncDebug = { ...req.body, ts: Date.now() }; res.json({ ok: true }); });
+app.get("/api/phone-debug", (_req, res) => { res.json(_phoneSyncDebug || {}); });
+
+// VLC time interpolation — sub-second precision from integer get_time
+let vlcTimeModel = { lastInt: 0, lastIntAt: 0, prevInt: 0, prevIntAt: 0, running: false };
+
+function startVlcTimeModel() {
+  if (vlcTimeModel.running) return;
+  vlcTimeModel.running = true;
+  let lastRaw = 0;
+  const poll = async () => {
+    if (!vlcTimeModel.running || activePlayer !== "vlc") { vlcTimeModel.running = false; return; }
+    try {
+      const raw = await vlcRC("get_time").then(s => parseInt(s) || 0);
+      const now = Date.now();
+      if (raw !== lastRaw && raw > 0) {
+        // Integer just changed — record the transition
+        vlcTimeModel.prevInt = vlcTimeModel.lastInt;
+        vlcTimeModel.prevIntAt = vlcTimeModel.lastIntAt;
+        vlcTimeModel.lastInt = raw;
+        vlcTimeModel.lastIntAt = now;
+      }
+      lastRaw = raw;
+    } catch {}
+    // Poll faster when near the expected next integer boundary
+    const elapsed = (Date.now() - vlcTimeModel.lastIntAt) / 1000;
+    const nextPoll = elapsed > 0.7 ? 100 : 200;
+    setTimeout(poll, nextPoll);
+  };
+  poll();
+}
+
+function vlcTimeNow() {
+  if (!vlcTimeModel.lastIntAt) return 0;
+  const elapsed = (Date.now() - vlcTimeModel.lastIntAt) / 1000;
+  return vlcTimeModel.lastInt + elapsed;
+}
+
+app.get("/api/phone-sync-target", async (_req, res) => {
+  if (activePlayer === "vlc" && vlcTimeModel.lastIntAt) {
+    return res.json({ vlcTime: vlcTimeNow(), serverTs: Date.now() });
+  }
+  if (activePlayer === "mpv" && mpvProcess) {
+    try {
+      const p = await mpvCommand(["get_property", "time-pos"]);
+      if (p?.data) return res.json({ vlcTime: p.data, serverTs: Date.now() });
+    } catch {}
+  }
+  res.json({});
+});
+
+// fMP4 relay — ffmpeg reads stream source, outputs fragmented MP4 for phone
+let phoneFmp4Process = null;
+
+app.get("/api/phone-live-stream", async (_req, res) => {
+  // Stream directly from ffmpeg with Content-Length for Safari compatibility
+  let streamUrl = lastVlcHlsUrl;
+  if (!streamUrl && nowPlaying) {
+    try {
+      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "95/94/93/22/18/best[height<=720]", "--get-url", nowPlaying], { timeout: 15000 });
+      streamUrl = stdout.trim().split("\n")[0];
+    } catch {}
+  }
+  if (!streamUrl) return res.status(400).send("no stream");
+  if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} }
+  // Safari requires Content-Length to play video inline
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Content-Length", 500 * 1024 * 1024);
+  const ffArgs = [];
+  const isLive = streamUrl.includes(".m3u8") || streamUrl.includes("/live/1");
+  if (!isLive) {
+    if (activePlayer === "vlc") {
+      try { const t = await vlcRC("get_time").then(s => parseInt(s) || 0); if (t > 5) ffArgs.push("-ss", String(t - 3)); } catch {}
+    } else if (activePlayer === "mpv") {
+      try { const p = await mpvCommand(["get_property", "time-pos"]); if (p?.data > 5) ffArgs.push("-ss", String(Math.floor(p.data - 3))); } catch {}
+    }
+  }
+  ffArgs.push("-i", streamUrl, "-c", "copy", "-bsf:a", "aac_adtstoasc", "-f", "mp4", "-movflags", "frag_keyframe+empty_moov+default_base_moof", "pipe:1");
+  const ff = spawn("ffmpeg", ffArgs, { stdio: ["ignore", "pipe", "ignore"] });
+  phoneFmp4Process = ff;
+  ff.stdout.pipe(res);
+  ff.on("exit", () => { if (phoneFmp4Process === ff) phoneFmp4Process = null; });
+  res.on("close", () => { try { ff.kill("SIGKILL"); } catch {} });
+});
+
+// Watch on phone — get stream URL for phone playback
+function killPhoneStream() {
+  if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} phoneFmp4Process = null; }
+}
+
 app.post("/api/watch-on-phone", async (_req, res) => {
   if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
   try {
@@ -1288,12 +1385,24 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     }
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
+
+    if (activePlayer === "vlc") {
+      // Live — store HLS URL for fMP4 relay, phone uses /api/phone-live-stream
+      const { stdout } = await execFileP(
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
+        { timeout: 15000 }
+      );
+      lastVlcHlsUrl = stdout.trim().split("\n")[0];
+      return res.json({ streamUrl: "/api/phone-live-stream", seconds, videoId, isLive: true });
+    }
+
+    // VOD — direct URL (Safari plays these natively)
     const { stdout } = await execFileP(
-      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "18/best[height<=720]", "--get-url", nowPlaying],
+      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const streamUrl = stdout.trim().split("\n")[0];
-    res.json({ streamUrl, seconds, videoId, title: "" });
+    res.json({ streamUrl, seconds, videoId });
   } catch (err) {
     console.error("Watch on phone error:", err.message);
     try {
@@ -1311,6 +1420,11 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       res.status(500).json({ error: "Failed" });
     }
   }
+});
+
+app.post("/api/stop-phone-stream", (_req, res) => {
+  killPhoneStream();
+  res.json({ ok: true });
 });
 
 // Comments — uses yt-dlp (no quota)
@@ -1795,6 +1909,7 @@ app.listen(PORT, "0.0.0.0", async () => {
         const liveEntry = history.find(h => h.url);
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
+        startVlcTimeModel();
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }

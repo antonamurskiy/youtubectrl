@@ -1398,7 +1398,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
       stopPolling();
-      if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+      // Keep phone sync interval running (it no-ops when vid is paused in background)
       // Keep slow poll for media session position updates on lock screen
       if (mediaSessionActive && nowPlayingUrl) {
         pollInterval = 'active';
@@ -1406,6 +1406,13 @@
       }
     } else if (nowPlayingUrl) {
       startPolling();
+      // Re-sync phone video immediately after returning from background
+      const vid = document.getElementById('phoneVideo');
+      if (vid && !vid.paused) {
+        fetch('/api/playback').then(r => r.json()).then(pb => {
+          if (pb.position) vid.currentTime = pb.position;
+        }).catch(() => {});
+      }
     }
   });
 
@@ -1946,10 +1953,12 @@
         const player = document.createElement('div');
         player.id = 'phonePlayer';
         player.style.cssText = 'position:sticky;top:0;z-index:500;background:#000;border-bottom:1px solid var(--border);';
+        const videoSrc = data.isLive ? '/api/phone-live-stream' : data.streamUrl;
+        const videoType = 'video/mp4';
         player.innerHTML = `
           <div style="position:relative;">
             <video id="phoneVideo" style="width:100%;background:#000;display:block" controls playsinline autoplay muted>
-              <source src="${data.streamUrl}" type="${data.streamUrl.includes('.m3u8') ? 'application/x-mpegURL' : 'video/mp4'}">
+              <source src="${videoSrc}" type="${videoType}">
             </video>
             <button onclick="closePhonePlayer()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;line-height:1">&times;</button>
           </div>
@@ -1959,26 +1968,67 @@
         mpvVideoHidden = true;
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
 
-        const vid = document.getElementById('phoneVideo');
-        vid.addEventListener('playing', async function onPlay() {
-          vid.removeEventListener('playing', onPlay);
-          const fresh = await fetch('/api/playback').then(r => r.json());
-          vid.currentTime = (fresh.position || data.seconds) + 1;
-        }, { once: true });
-
-        // Keep phone synced to desktop — check every 3s, re-sync if >2s off
         if (window._phoneSyncInterval) clearInterval(window._phoneSyncInterval);
-        window._phoneSyncInterval = setInterval(async () => {
-          try {
-            const vid = document.getElementById('phoneVideo');
-            if (!vid || vid.paused) return;
-            const fresh = await fetch('/api/playback').then(r => r.json());
-            if (!fresh.position) return;
-            if (!fresh.position) return;
-            const drift = Math.abs(vid.currentTime - fresh.position);
-            if (drift > 2 && isFinite(fresh.position)) vid.currentTime = fresh.position + 0.5;
-          } catch {}
-        }, 3000);
+        if (data.isLive) {
+          // Live: fMP4 starts at live edge. After buffering 12s, seek back 10s
+          // to match VLC's display cache (network-caching + live-caching = 10s).
+          // Both then play at 1x from the same content position.
+          // fMP4 starts at VLC's DVR position via -live_start_index
+          // No seek-back needed — both show content from the same DVR position
+          // Monitor for debug
+          window._phoneSyncInterval = setInterval(async () => {
+            try {
+              const vid = document.getElementById('phoneVideo');
+              if (!vid || vid.paused) return;
+              fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+                phoneCT: +vid.currentTime.toFixed(1), buffered: vid.buffered.length ? +vid.buffered.end(0).toFixed(0) : 0, seekDone
+              })}).catch(() => {});
+            } catch {}
+          }, 3000);
+        } else if (videoType === 'video/mp4') {
+          // VOD MP4 relay: use calibration + rate sync (works in Chrome, seek-based on Safari)
+          const vid2 = document.getElementById('phoneVideo');
+          // Seek to desktop position immediately
+          vid2.currentTime = data.seconds || 0;
+          // Sync: compare mpv position directly with phone (same time base for VODs)
+          window._phoneSyncInterval = setInterval(async () => {
+            try {
+              const vid = document.getElementById('phoneVideo');
+              if (!vid || vid.paused) return;
+              const t0 = performance.now();
+              const pb = await fetch('/api/playback').then(r => r.json());
+              if (!pb.position || pb.paused) return;
+              const rtt = (performance.now() - t0) / 1000;
+              const desktopPos = pb.position + rtt + 0.5;
+              const drift = desktopPos - vid.currentTime;
+              if (Math.abs(drift) > 0.5) {
+                vid.currentTime = desktopPos;
+              }
+            } catch {}
+          }, 200);
+        } else {
+          // VOD: rate sync using absolute HLS timestamps
+          window._phoneSyncInterval = setInterval(async () => {
+            try {
+              const vid = document.getElementById('phoneVideo');
+              if (!vid || vid.paused) return;
+              const t0 = performance.now();
+              const fresh = await fetch('/api/playback').then(r => r.json());
+              if (!fresh.position || !isFinite(fresh.position)) return;
+              const rtt = (performance.now() - t0) / 1000;
+              const desktopPos = fresh.position + rtt / 2;
+              const drift = desktopPos - vid.currentTime;
+              if (Math.abs(drift) < 0.2) {
+                vid.playbackRate = 1.0;
+              } else if (Math.abs(drift) > 5) {
+                vid.currentTime = desktopPos;
+                vid.playbackRate = 1.0;
+              } else {
+                vid.playbackRate = Math.max(0.7, Math.min(1.5, 1.0 + drift * 0.15));
+              }
+            } catch {}
+          }, 2000);
+        }
       } else if (data.youtubeUrl) {
         showToast('Opening YouTube');
         setTimeout(() => { window.location.href = data.youtubeUrl; }, 500);
@@ -1999,6 +2049,7 @@
 
   window.closePhonePlayer = function() {
     if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+    fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {});
     // Restore mpv video
     if (mpvVideoHidden) {
       mpvVideoHidden = false;
