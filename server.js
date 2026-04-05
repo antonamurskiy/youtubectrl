@@ -800,6 +800,7 @@ app.post("/api/play", async (req, res) => {
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         await mpvCommand(["loadfile", url, "replace"]);
         await mpvCommand(["set_property", "pause", false]).catch(() => {});
+        await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
         // Unhide if it was hidden from pause
         try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
         nowPlaying = url;
@@ -1090,6 +1091,7 @@ app.post("/api/seek", async (req, res) => {
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
     if (activePlayer === "vlc") {
+      const s = await vlcStatus();
       await vlcSeek(Math.floor(position));
       return res.json({ ok: true });
     }
@@ -1387,13 +1389,14 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
 
     if (activePlayer === "vlc") {
-      // Live — store HLS URL for fMP4 relay, phone uses /api/phone-live-stream
+      // Live — give phone the HLS URL directly (Safari plays HLS natively)
       const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "95/94/93/301/300/96", "--get-url", nowPlaying],
         { timeout: 15000 }
       );
-      lastVlcHlsUrl = stdout.trim().split("\n")[0];
-      return res.json({ streamUrl: "/api/phone-live-stream", seconds, videoId, isLive: true });
+      const hlsUrl = stdout.trim().split("\n")[0];
+      lastVlcHlsUrl = hlsUrl;
+      return res.json({ streamUrl: hlsUrl, seconds, videoId, isLive: true });
     }
 
     // VOD — direct URL (Safari plays these natively)
@@ -1887,6 +1890,7 @@ app.listen(PORT, "0.0.0.0", async () => {
         const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
         windowMode = fs?.data ? "fullscreen" : "floating";
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode);
+        await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
         // Start progress tracking for reconnected player
         startProgressTracking(nowPlaying);
         // Monitor mpv liveness — if IPC fails, clean up state

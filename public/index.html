@@ -107,7 +107,7 @@
     right: 16px;
     background: var(--bg);
     border: 1px solid var(--border);
-    z-index: 102;
+    z-index: 600;
     min-width: 180px;
   }
 
@@ -1030,7 +1030,7 @@
 
 <div class="app">
   <header class="header" style="position:relative">
-    <span class="logo-text" onclick="document.getElementById('secretMenu').classList.toggle('open')">ytctrl</span>
+    <span class="logo-text" onclick="const m=document.getElementById('secretMenu');m.classList.toggle('open');const pp=document.getElementById('phonePlayer');if(pp)pp.style.display=m.classList.contains('open')?'none':''">ytctrl</span>
     <div class="secret-menu" id="secretMenu">
       <div class="secret-menu-item" id="volArea" style="position:relative;height:200px;padding:0;cursor:pointer;touch-action:none;user-select:none;-webkit-user-select:none;">
         <div id="volFill" style="position:absolute;bottom:0;left:0;right:0;background:#333;pointer-events:none;"></div>
@@ -1086,7 +1086,7 @@
 
 <div class="toast-stack" id="toastStack"></div>
 
-<button class="fab fab-top" onclick="document.getElementById('secretMenu').classList.toggle('open')">
+<button class="fab fab-top" onclick="const m=document.getElementById('secretMenu');m.classList.toggle('open');const pp=document.getElementById('phonePlayer');if(pp)pp.style.display=m.classList.contains('open')?'none':''">
   <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square" stroke-linejoin="miter"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
 </button>
 <button class="fab fab-bottom" id="fabRefresh" onclick="refreshFeed()">
@@ -1322,6 +1322,8 @@
     const url = card.dataset.url;
     if (!url) return;
 
+    const hadPhonePlayer = !!document.getElementById('phonePlayer');
+
     // Visual feedback
     if (currentlyPlaying) currentlyPlaying.classList.remove('playing');
     card.classList.add('playing');
@@ -1347,6 +1349,21 @@
       else {
         activateMediaSession(title, channel, url);
         startPolling();
+        // Swap phone player feed if active — re-hide mpv video
+        if (hadPhonePlayer) {
+          setTimeout(async () => {
+            try {
+              fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
+              const d = await fetch('/api/watch-on-phone', { method: 'POST' }).then(r => r.json());
+              const vid = document.getElementById('phoneVideo');
+              if (vid && d.streamUrl) {
+                vid.src = d.streamUrl;
+                vid.currentTime = d.seconds || 0;
+                vid.play().catch(() => {});
+              }
+            } catch {}
+          }, 2000);
+        }
       }
     } catch {
       showToast('Connection error');
@@ -1449,11 +1466,12 @@
   if (hasMediaSession) {
     navigator.mediaSession.setActionHandler('play', () => {
       fetch('/api/playpause', { method: 'POST' });
+      silentAudio.play().catch(() => {});
       navigator.mediaSession.playbackState = 'playing';
     });
     navigator.mediaSession.setActionHandler('pause', () => {
-      // Do NOT pause silentAudio — iOS removes the lock screen widget if audio stops
       fetch('/api/playpause', { method: 'POST' });
+      silentAudio.pause();
       navigator.mediaSession.playbackState = 'paused';
     });
     navigator.mediaSession.setActionHandler('seekbackward', () => {
@@ -1902,9 +1920,18 @@
     const data = await res.json();
     const btn = document.getElementById('npPlayPause');
     if (btn) {
+      btn._lastPaused = !!data.paused;
       btn.innerHTML = data.paused
         ? '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><polygon points="6 3 20 12 6 21"/></svg>'
         : '<svg viewBox="0 0 24 24" width="22" height="22" fill="currentColor"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg>';
+    }
+    // Update lock screen widget immediately — pause/resume silent audio to stop/start timer
+    if (data.paused) {
+      silentAudio.pause();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+    } else {
+      silentAudio.play().catch(() => {});
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
     }
   };
 
@@ -1952,8 +1979,8 @@
         // Show sticky video at top, rest of app visible below
         const player = document.createElement('div');
         player.id = 'phonePlayer';
-        player.style.cssText = 'position:sticky;top:0;z-index:500;background:#000;border-bottom:1px solid var(--border);';
-        const videoSrc = data.isLive ? '/api/phone-live-stream' : data.streamUrl;
+        player.style.cssText = 'position:fixed;top:env(safe-area-inset-top,0px);left:0;right:0;z-index:99;background:#000;border-bottom:1px solid var(--border);';
+        const videoSrc = data.streamUrl;
         const videoType = 'video/mp4';
         player.innerHTML = `
           <div style="position:relative;">
@@ -1963,7 +1990,11 @@
             <button onclick="closePhonePlayer()" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,0.6);border:none;color:#fff;font-size:18px;cursor:pointer;padding:2px 8px;line-height:1">&times;</button>
           </div>
         `;
-        document.querySelector('.app').prepend(player);
+        document.body.prepend(player);
+        // Add padding to push content below the fixed player
+        setTimeout(() => {
+          document.querySelector('.app').style.paddingTop = player.offsetHeight + 'px';
+        }, 100);
         // Hide mpv video on computer by default
         mpvVideoHidden = true;
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
@@ -1994,11 +2025,15 @@
           window._phoneSyncInterval = setInterval(async () => {
             try {
               const vid = document.getElementById('phoneVideo');
-              if (!vid || vid.paused) return;
+              if (!vid) return;
               const t0 = performance.now();
               const pb = await fetch('/api/playback').then(r => r.json());
-              if (!pb.position || pb.paused) return;
+              if (!pb.position) return;
               const rtt = (performance.now() - t0) / 1000;
+              // Sync pause/resume state
+              if (pb.paused && !vid.paused) vid.pause();
+              else if (!pb.paused && vid.paused) vid.play().catch(() => {});
+              if (pb.paused || vid.paused) return;
               const desktopPos = pb.position + rtt + 0.5;
               const drift = desktopPos - vid.currentTime;
               if (Math.abs(drift) > 0.5) {
@@ -2057,6 +2092,7 @@
     }
     const player = document.getElementById('phonePlayer');
     if (player) player.remove();
+    document.querySelector('.app').style.paddingTop = '';
     startPolling();
   };
 
@@ -2613,6 +2649,8 @@
     const menu = document.getElementById('secretMenu');
     if (menu.classList.contains('open') && !e.target.closest('.logo-text') && !e.target.closest('.secret-menu') && !e.target.closest('.fab-top')) {
       menu.classList.remove('open');
+      const pp = document.getElementById('phonePlayer');
+      if (pp) pp.style.display = '';
     }
   });
 
