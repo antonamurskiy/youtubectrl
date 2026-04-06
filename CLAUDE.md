@@ -67,10 +67,18 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - VLC 4 has a sidebar/media library that cannot be disabled via config or CLI flags
 - VLC enforces minimum window size based on video aspect ratio — cannot resize smaller via AppleScript
 - Hide on pause / show on resume: `osascript` to set `visible of process "VLC"` (same as mpv)
-- VLC 4 DVR HLS seeking is fragile — can hang on large seeks. Not a code issue, VLC bug.
+- **VLC `seek` command is broken for live HLS DVR** — hangs/buffers indefinitely. Do NOT use `vlcSeek()` for live streams.
+- **DVR scrubbing uses reload-based seeking**: instead of VLC's `seek`, reload the stream via an HLS proxy (`/api/vlc-hls-offset`) that serves the YouTube manifest with segments trimmed from the end. `clear` + `add /tmp/vlc-next.m3u` reloads VLC at the desired offset.
+- **DVR position tracked server-side** (`vlcDvrBehind`): VLC's `get_time` PTS is unreliable for live HLS — resets to a different base after every reload. Do NOT use `get_time` for position tracking in live streams.
+- **VLC `get_length` reports local buffer, not real DVR window**: after a trimmed reload, `get_length` shrinks. Use `vlcDvrWindow` which is refreshed from the real YouTube manifest every 5s (`startDvrRefresh()`).
+- **YouTube HLS `playlist_duration` is signed** — cannot modify the URL to request a larger DVR window. The manifest contains whatever YouTube provides (often 30s for some streams, 2+ hours for others).
+- **YouTube HLS manifests can have discontinuities** — multiple `#EXT-X-PROGRAM-DATE-TIME` tags with time gaps. When computing live edge PDT, use the LAST PDT tag + durations after it (not first PDT + total duration).
+- `vlcDvrBehind` = 0 at live edge, increases when user scrubs back. "Go live" (seek to duration) sets it to 0 and reloads the original HLS URL directly.
+- `vlcSeekBusy` flag blocks seeks for 3s after each reload to let VLC rebuffer.
 - `--video-on-top` flag for always-on-top in floating mode
 - `/api/vlc-rate` endpoint to set VLC playback rate (used for phone sync experiments, kept for future use)
-- `/api/vlc-absolute-time` endpoint: returns VLC's absolute wall-clock content time from PDT + vlcTimeNow()
+- `/api/vlc-absolute-time` endpoint: at live edge uses `vlcPdtEpochMs + vlcTimeNow()` (accurate, accounts for VLC buffering); after DVR seeks uses manifest-based calculation (`vlcManifestLiveEdgeMs - vlcDvrBehind`). Returns empty during active seeks (`vlcSeekBusy`) to prevent drift sync from computing bad values.
+- `/api/vlc-hls-offset` endpoint: HLS proxy that fetches the real YouTube manifest and trims segments from the end based on `vlcDvrBehind`. VLC refreshes from this URL periodically, maintaining the time offset.
 - `/api/mpv-speed` endpoint: sets mpv `speed` property
 - `/api/switch-to-vlc` endpoint: switches live stream from mpv to VLC for DVR scrubbing
 
@@ -110,7 +118,9 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
     - Phone: `video.getStartDate().getTime() + currentTime * 1000` (Safari exposes HLS PDT)
     - VLC: `streamStartEpochMs + vlcTimeNow() * 1000` (server parses manifest PDT + MEDIA-SEQUENCE to compute stream start)
   - `streamStartEpochMs = pdtOfFirstManifestSegment - mediaSequence * avgSegmentDuration * 1000` — critical because YouTube DVR manifests have MEDIA-SEQUENCE > 0 (DVR window shifts) but VLC's `get_time` is PTS from the original stream start (segment 0)
-  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect — do NOT re-fetch later (manifest URL expires, DVR window shifts, new PDT won't match VLC's get_time reference)
+  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect. On reconnect, if `lastVlcHlsUrl` is null, fetches it via yt-dlp.
+  - **Two absolute time modes**: at live edge, uses original `vlcPdtEpochMs + vlcTimeNow()` (accurate, accounts for VLC's ~10s buffering from `--network-caching 5000 --live-caching 5000`). After DVR seeks (where VLC PTS resets), uses manifest-based: `vlcManifestLiveEdgeMs + elapsed - vlcDvrBehind * 1000`. The manifest live edge is computed from the last `#EXT-X-PROGRAM-DATE-TIME` tag + segment durations after it.
+  - **Drift sync suppressed during seeks**: `vlcSeekBusy` flag causes `/api/vlc-absolute-time` to return empty, preventing drift corrections during VLC reload. Frontend `isSeeking` flag (set for both click and touch seeks) also blocks drift corrections for 15s on live.
   - Phone seeks to match VLC when drift > 1s; 3s settle period after each correction
   - VLC `get_time` returns integers; `vlcTimeNow()` interpolates sub-second precision
   - Drift naturally grows ~0.02s/s due to clock differences between VLC and Safari HLS players
@@ -128,7 +138,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Responsive: mobile list layout (<768px) + desktop grid layout (768px+) with hover preview
 - Brutalist DOS aesthetic: JetBrains Mono, black bg, gray text
 - Now-playing bar: fixed bottom, polls `/api/playback` via `setTimeout` chaining (not `setInterval` — prevents overlapping polls). `AbortController` with 5s timeout on poll fetch.
-- `isSeeking` flag prevents poll from overwriting user's drag position. Held until poll confirms position within 3s of seek target (not a fixed timeout).
+- `isSeeking` flag prevents poll from overwriting user's drag position. Set for both click and touch seeks. Held until poll confirms position within 3s of seek target; 15s timeout for live streams (reload takes longer).
 - Load generation counter (`loadGen`) discards stale responses from interleaved tab/search loads
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
@@ -136,7 +146,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Secret menu (tap "ytctrl" logo): volume slider (system volume), toggle resolution
 - FABs: top-right (hamburger → secret menu), bottom-right (refresh, long-press → tab switcher)
 - Long-press context menu on video cards: "More from [channel]" (yt-dlp channel scrape), "Copy link"
-- Seek preview: storyboard thumbnails from YouTube sprite sheets + time bubble above thumb while dragging
+- Seek preview: storyboard thumbnails from YouTube sprite sheets + time bubble above thumb while dragging. Live streams show time-behind-live (e.g., `-0:15`) instead of absolute time.
 - Current position marker (white line) shown during scrub, fades out after release
 - Home feed paginated: 24 videos per page, infinite scroll loads more
 - Event delegation for video card clicks (one handler on grid, not per-card)
