@@ -2025,6 +2025,11 @@
           </div>
         `;
         document.body.prepend(player);
+        // Seek phone to mpv's current position
+        const phoneVid = document.getElementById('phoneVideo');
+        if (phoneVid && data.seconds > 0 && !data.isLive) {
+          phoneVid.currentTime = data.seconds;
+        }
         // Add padding to push content below the fixed player
         setTimeout(() => {
           document.querySelector('.app').style.paddingTop = player.offsetHeight + 'px';
@@ -2151,9 +2156,36 @@
               if (pb.paused && !vid.paused) vid.pause();
               else if (!pb.paused && vid.paused) vid.play().catch(() => {});
               if (pb.paused || vid.paused) return;
-              const target = pb.position - syncOffset;
+              const target = pb.position;
               const drift = target - vid.currentTime;
-              if (Math.abs(drift) > 2) vid.currentTime = target;
+              // Debug drift display
+              fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ drift: +drift.toFixed(3), syncOffset: +syncOffset.toFixed(1), target: +target.toFixed(1), phone: +vid.currentTime.toFixed(1), mpv: +pb.position.toFixed(1) })
+              });
+              let driftEl = document.getElementById('syncDrift');
+              if (!driftEl) {
+                driftEl = document.createElement('div');
+                driftEl.id = 'syncDrift';
+                driftEl.style.cssText = 'position:absolute;top:4px;left:4px;color:#0f0;font-size:11px;font-family:monospace;background:rgba(0,0,0,0.6);padding:2px 6px;pointer-events:none;z-index:1';
+                document.querySelector('#phonePlayer > div')?.appendChild(driftEl);
+              }
+              const absDrift = Math.abs(drift);
+              driftEl.style.color = absDrift < 0.1 ? '#0f0' : absDrift < 0.5 ? '#ff0' : '#f33';
+              driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
+
+              if (Math.abs(drift) > 2) {
+                vid.currentTime = target;
+              } else if (Math.abs(drift) > 0.1 && !isSeeking) {
+                // Proportional speed control: adjust mpv rate to counteract drift
+                const gain = 0.05;
+                const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * gain));
+                fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ speed: +rate.toFixed(4) }) });
+              } else if (Math.abs(drift) <= 0.1) {
+                // Close enough — reset to 1x
+                fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ speed: 1.0 }) });
+              }
             } catch {}
           }, 1000);
         }
