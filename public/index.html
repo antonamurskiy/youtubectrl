@@ -2209,6 +2209,10 @@
 
   window.closePhonePlayer = function() {
     if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+    // Reset VLC/mpv rate to 1x (proportional drift sync may have changed it)
+    if (window._liveBurstTimer) { clearTimeout(window._liveBurstTimer); window._liveBurstTimer = null; }
+    fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) }).catch(() => {});
+    fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 1.0 }) }).catch(() => {});
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {});
     // Restore mpv video
     if (mpvVideoHidden) {
