@@ -1288,8 +1288,12 @@ app.get("/api/vlc-absolute-time", async (_req, res) => {
   // Suppress during DVR seek reloads — VLC is rebuffering, drift would be wrong
   if (vlcSeekBusy) return res.json({});
   try {
+    if (!vlcPdtEpochMs && vlcDvrBehind < 2) {
+      // No PDT calibration (reconnected VLC) and at live edge — can't compute absolute time
+      return res.json({});
+    }
     if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
-      // At live edge: use original PDT + vlcTime (accurate, accounts for VLC buffering)
+      // At live edge with PDT: use original PDT + vlcTime (accurate, accounts for VLC buffering)
       const absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
       return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
     }
@@ -1299,9 +1303,7 @@ app.get("/api/vlc-absolute-time", async (_req, res) => {
       const absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
       return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
     }
-    if (!vlcPdtEpochMs) return res.json({});
-    const absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
-    res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
+    return res.json({});
   } catch {
     res.json({});
   }

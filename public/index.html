@@ -2134,20 +2134,13 @@
                   vid.currentTime = vid.currentTime + drift;
                   liveState = 'settle';
                   settleTimer = setTimeout(() => { liveState = 'done'; }, 3000);
-                } else if (liveState === 'done' && !isSeeking && Math.abs(drift) > 0.3) {
-                  // Small drift: VLC rate burst (avoids Safari keyframe snap)
-                  // drift > 0 = VLC ahead → slow VLC; drift < 0 = VLC behind → speed VLC
-                  const burstRate = drift > 0 ? 0.98 : 1.02;
-                  const burstMs = Math.abs(drift) / 0.02 * 1000;
+                } else if (liveState === 'done' && !isSeeking) {
+                  // Proportional rate control: continuously adjust VLC rate to counteract drift
+                  // rate = 1.0 - drift * gain (drift>0 = VLC ahead → slow down)
+                  const gain = 0.05; // 5% rate change per 1s of drift
+                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * gain));
                   fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rate: burstRate }) });
-                  liveState = 'settle';
-                  window._liveBurstTimer = setTimeout(() => {
-                    fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ rate: 1.0 }) });
-                    window._liveBurstTimer = null;
-                  }, burstMs);
-                  settleTimer = setTimeout(() => { liveState = 'done'; }, burstMs + 3000);
+                    body: JSON.stringify({ rate: +rate.toFixed(4) }) });
                 }
                 if (liveState === 'seek' || liveState === 'wait') liveState = 'done';
                 return;
