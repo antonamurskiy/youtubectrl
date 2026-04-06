@@ -1884,8 +1884,10 @@
             durEl.textContent = fmtTime(data.duration);
           }
         }
-        const barEl2 = document.getElementById('npProgressBar');
-        if (barEl2) barEl2.dataset.duration = data.duration;
+        if (!isSeeking) {
+          const barEl2 = document.getElementById('npProgressBar');
+          if (barEl2) barEl2.dataset.duration = data.duration;
+        }
 
         // Sync watch progress on video card in grid
         if (data.url && data.position > 0 && data.duration > 0) {

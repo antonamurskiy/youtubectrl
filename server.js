@@ -1226,7 +1226,17 @@ app.get("/api/history", async (_req, res) => {
   // Try YouTube internal API (OAuth token or cookies)
   try {
     const videos = await getYouTubeHistory(token);
-    if (videos.length) return res.json(videos);
+    if (videos.length) {
+      // Merge local progress data (more accurate than YouTube's startPercent)
+      for (const v of videos) {
+        const h = historyMap.get(v.url);
+        if (h?.position > 0 && h?.duration > 0) {
+          v.savedPosition = h.position;
+          v.savedDuration = h.duration;
+        }
+      }
+      return res.json(videos);
+    }
   } catch (err) {
     console.error("YouTube history API failed:", err.message);
   }
