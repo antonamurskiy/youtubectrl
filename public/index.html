@@ -2056,6 +2056,13 @@
                 // VLC: pdtEpoch + vlcTimeNow() (sub-second, from manifest PDT + interpolation)
                 if (pb.paused && !vid.paused) vid.pause();
                 else if (!pb.paused && vid.paused) vid.play().catch(() => {});
+                // When paused, reset VLC rate to 1x and skip sync
+                if (pb.paused) {
+                  if (window._liveBurstTimer) { clearTimeout(window._liveBurstTimer); window._liveBurstTimer = null; }
+                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) });
+                  if (liveState === 'settle') liveState = 'done';
+                  return;
+                }
 
                 let phoneAbsMs = null;
                 try {
@@ -2075,12 +2082,38 @@
                 fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ drift: +drift.toFixed(2), state: liveState })
                 });
+                // Show drift in phone player UI
+                let driftEl = document.getElementById('syncDrift');
+                if (!driftEl) {
+                  driftEl = document.createElement('div');
+                  driftEl.id = 'syncDrift';
+                  driftEl.style.cssText = 'position:absolute;top:4px;left:4px;color:#0f0;font-size:11px;font-family:monospace;background:rgba(0,0,0,0.6);padding:2px 6px;pointer-events:none;z-index:1';
+                  document.querySelector('#phonePlayer > div')?.appendChild(driftEl);
+                }
+                const absDrift = Math.abs(drift);
+                const color = absDrift < 0.3 ? '#0f0' : absDrift < 1 ? '#ff0' : '#f33';
+                driftEl.style.color = color;
+                driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
 
-                // Re-sync phone if drift exceeds 1s
-                if (liveState === 'done' && Math.abs(drift) > 1) {
+                if (liveState === 'done' && Math.abs(drift) > 2) {
+                  // Large drift: seek phone (snaps to ~2s keyframes)
                   vid.currentTime = vid.currentTime + drift;
                   liveState = 'settle';
                   settleTimer = setTimeout(() => { liveState = 'done'; }, 3000);
+                } else if (liveState === 'done' && Math.abs(drift) > 0.3) {
+                  // Small drift: VLC rate burst (avoids Safari keyframe snap)
+                  // drift > 0 = VLC ahead → slow VLC; drift < 0 = VLC behind → speed VLC
+                  const burstRate = drift > 0 ? 0.98 : 1.02;
+                  const burstMs = Math.abs(drift) / 0.02 * 1000;
+                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rate: burstRate }) });
+                  liveState = 'settle';
+                  window._liveBurstTimer = setTimeout(() => {
+                    fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ rate: 1.0 }) });
+                    window._liveBurstTimer = null;
+                  }, burstMs);
+                  settleTimer = setTimeout(() => { liveState = 'done'; }, burstMs + 3000);
                 }
                 if (liveState === 'seek' || liveState === 'wait') liveState = 'done';
                 return;
