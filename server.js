@@ -1194,11 +1194,17 @@ async function getYouTubeHistory(token) {
       const meta = lv.metadata?.lockupMetadataViewModel;
       const title = meta?.title?.content || "";
       const channel = meta?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.[0]?.text?.content?.trim() || "";
+      // Extract watch progress from thumbnail overlay
+      const lvJson = JSON.stringify(lv);
+      const progMatch = lvJson.match(/"startPercent":(\d+)/);
+      const pct = progMatch ? parseInt(progMatch[1]) : 0;
       if (id) videos.push({
         id, title, channel,
         thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
         duration: "", views: 0,
         url: `https://www.youtube.com/watch?v=${id}`,
+        savedPosition: pct > 0 ? pct : 0,
+        savedDuration: pct > 0 ? 100 : 0,
       });
       return;
     }
