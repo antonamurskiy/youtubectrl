@@ -1116,14 +1116,49 @@ app.post("/api/seek-relative", async (req, res) => {
   }
 });
 
+// Parse cookies.txt (Netscape format) into a cookie string and extract specific values
+function parseCookieFile() {
+  try {
+    const text = fs.readFileSync(COOKIES_FILE, "utf8");
+    const cookies = [];
+    const cookieMap = {};
+    for (const line of text.split("\n")) {
+      if (line.startsWith("#") || !line.trim()) continue;
+      const parts = line.split("\t");
+      if (parts.length >= 7 && parts[0].includes("youtube.com")) {
+        cookies.push(`${parts[5]}=${parts[6]}`);
+        cookieMap[parts[5]] = parts[6];
+      }
+    }
+    return { cookieStr: cookies.join("; "), cookieMap };
+  } catch { return { cookieStr: "", cookieMap: {} }; }
+}
+
+// SAPISIDHASH for YouTube internal API cookie auth
+function sapisidHash(sapisid, origin) {
+  const ts = Math.floor(Date.now() / 1000);
+  const hash = crypto.createHash("sha1").update(`${ts} ${sapisid} ${origin}`).digest("hex");
+  return `SAPISIDHASH ${ts}_${hash}`;
+}
+
 // History — YouTube internal API, falls back to local
 async function getYouTubeHistory(token) {
+  const headers = { "Content-Type": "application/json" };
+  // Use OAuth token if available, otherwise use cookies
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  } else {
+    const { cookieStr, cookieMap } = parseCookieFile();
+    const sapisid = cookieMap["SAPISID"] || cookieMap["__Secure-3PAPISID"];
+    if (!sapisid) throw new Error("No SAPISID cookie");
+    headers["Cookie"] = cookieStr;
+    headers["Authorization"] = sapisidHash(sapisid, "https://www.youtube.com");
+    headers["Origin"] = "https://www.youtube.com";
+    headers["X-Origin"] = "https://www.youtube.com";
+  }
   const res = await fetch("https://www.youtube.com/youtubei/v1/browse", {
     method: "POST",
-    headers: {
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       browseId: "FEhistory",
       context: {
@@ -1134,26 +1169,36 @@ async function getYouTubeHistory(token) {
   if (!res.ok) throw new Error(`${res.status}`);
   const data = await res.json();
 
-  // Extract videos from the nested response
+  // Extract videos — supports both old videoRenderer and new lockupViewModel
   const videos = [];
   function extract(obj, depth) {
-    if (depth > 20 || videos.length >= 30) return;
+    if (depth > 30 || videos.length >= 30) return;
     if (typeof obj !== "object" || !obj) return;
     if (Array.isArray(obj)) { obj.forEach((i) => extract(i, depth + 1)); return; }
     if (obj.videoRenderer) {
       const vr = obj.videoRenderer;
-      const title = vr.title?.runs?.[0]?.text || "";
-      const channel = vr.shortBylineText?.runs?.[0]?.text || "";
-      const dur = vr.lengthText?.simpleText || "";
-      const views = vr.viewCountText?.simpleText || "";
       videos.push({
         id: vr.videoId,
-        title,
+        title: vr.title?.runs?.[0]?.text || "",
         thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
-        duration: dur,
-        channel,
-        views: parseInt((views.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,
+        duration: vr.lengthText?.simpleText || "",
+        channel: vr.shortBylineText?.runs?.[0]?.text || "",
+        views: parseInt((vr.viewCountText?.simpleText?.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,
         url: `https://www.youtube.com/watch?v=${vr.videoId}`,
+      });
+      return;
+    }
+    if (obj.lockupViewModel) {
+      const lv = obj.lockupViewModel;
+      const id = lv.contentId || "";
+      const meta = lv.metadata?.lockupMetadataViewModel;
+      const title = meta?.title?.content || "";
+      const channel = meta?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.[0]?.text?.content?.trim() || "";
+      if (id) videos.push({
+        id, title, channel,
+        thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
+        duration: "", views: 0,
+        url: `https://www.youtube.com/watch?v=${id}`,
       });
       return;
     }
@@ -1166,14 +1211,12 @@ async function getYouTubeHistory(token) {
 app.get("/api/history", async (_req, res) => {
   const token = await getAccessToken();
 
-  // Try YouTube internal API first
-  if (token) {
-    try {
-      const videos = await getYouTubeHistory(token);
-      if (videos.length) return res.json(videos);
-    } catch (err) {
-      console.error("YouTube history API failed:", err.message);
-    }
+  // Try YouTube internal API (OAuth token or cookies)
+  try {
+    const videos = await getYouTubeHistory(token);
+    if (videos.length) return res.json(videos);
+  } catch (err) {
+    console.error("YouTube history API failed:", err.message);
   }
 
   // Fall back to local history, enriched with API data
