@@ -660,7 +660,7 @@ function spawnVlc(hlsUrl) {
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
     "--extraintf", "cli",
     "--rc-host", `127.0.0.1:${VLC_RC_PORT}`,
-    "--no-video-title-show", "--no-fullscreen",
+    "--no-video-title-show", "--no-fullscreen", "--video-on-top",
     "--network-caching", "5000",
     "--live-caching", "5000",
     hlsUrl,
@@ -851,15 +851,17 @@ app.post("/api/play", async (req, res) => {
             }
           } catch {}
           // Re-apply window mode in case loadfile disrupted it
-          if (windowMode === "maximize") {
-            try {
-              const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-              if (wid) {
+          try {
+            const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+            if (wid) {
+              if (windowMode === "maximize") {
                 execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
                 execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+              } else if (windowMode === "floating") {
+                await floatTopRight(wid);
               }
-            } catch {}
-          }
+            }
+          } catch {}
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
             if (t?.data) { history[0].title = t.data; saveHistory(); }
@@ -1119,6 +1121,18 @@ app.post("/api/seek-relative", async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Seek failed" });
+  }
+});
+
+app.post("/api/vlc-rate", async (req, res) => {
+  const { rate } = req.body;
+  if (typeof rate !== "number" || rate < 0.5 || rate > 2.0) return res.status(400).json({ error: "Invalid rate" });
+  if (activePlayer !== "vlc") return res.status(400).json({ error: "VLC not active" });
+  try {
+    await vlcRC(`rate ${rate}`);
+    res.json({ ok: true, rate });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1772,6 +1786,7 @@ function getScreenOrigins() {
 
 // Set mpv to floating mode (ontop, no geometry change — stays on current screen)
 async function floatTopRight(wid) {
+  if (wid) try { execSync(`aerospace layout floating --window-id ${wid}`, { stdio: "ignore" }); } catch {}
   try { await mpvCommand(["set_property", "ontop", true]); } catch {}
 }
 

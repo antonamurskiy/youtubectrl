@@ -2006,16 +2006,40 @@
 
         if (window._phoneSyncInterval) clearInterval(window._phoneSyncInterval);
         {
-          // Sync phone to desktop — works for both live (VLC) and VOD (mpv)
-          // Calibrate offset on start, then follow scrubs via hard-seek
+          // Sync: phone is the reference clock, VLC adjusts rate to match
+          // For live: both play same HLS, VLC rate-adjusts to converge
+          // For VOD: phone hard-seeks to match mpv (can't control mpv rate easily)
           const vid2 = document.getElementById('phoneVideo');
           let syncOffset = null;
+          let vlcRateLocked = false;
           vid2.addEventListener('playing', () => {
             setTimeout(async () => {
               try {
                 const pb = await fetch('/api/playback').then(r => r.json());
                 const v = document.getElementById('phoneVideo');
-                if (pb.position && v) syncOffset = pb.position - v.currentTime;
+                if (pb.position && v) {
+                  if (pb.isLive && pb.duration > 0) {
+                    // VLC is (duration - position) seconds behind the live edge.
+                    // Phone starts near the live edge. Seek VLC to the live edge
+                    // so both display the same content, then recalibrate.
+                    const behindLive = pb.duration - pb.position;
+                    if (behindLive > 3) {
+                      await fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: pb.duration }) });
+                      // Wait for seek to settle, then calibrate
+                      setTimeout(async () => {
+                        try {
+                          const pb2 = await fetch('/api/playback').then(r => r.json());
+                          const v2 = document.getElementById('phoneVideo');
+                          if (pb2.position && v2) syncOffset = pb2.position - v2.currentTime;
+                        } catch {}
+                      }, 3000);
+                    } else {
+                      syncOffset = pb.position - v.currentTime;
+                    }
+                  } else {
+                    syncOffset = pb.position - v.currentTime;
+                  }
+                }
               } catch {}
             }, 2000);
           }, { once: true });
@@ -2031,12 +2055,41 @@
               if (pb.paused && !vid.paused) vid.pause();
               else if (!pb.paused && vid.paused) vid.play().catch(() => {});
               if (pb.paused || vid.paused) return;
-              // For live VLC: subtract cache delay (get_time reports received, not displayed)
-              const cacheDelay = pb.isLive ? 10 : 0;
-              const target = pb.position - cacheDelay + rtt / 2 - syncOffset;
-              const drift = target - vid.currentTime;
-              if (Math.abs(drift) > 2) {
-                vid.currentTime = target;
+
+              if (pb.isLive) {
+                // Live: use sub-second vlcTimeNow for precise sync
+                const t0s = performance.now();
+                const sync = await fetch('/api/phone-sync-target').then(r => r.json());
+                const rtt2 = (performance.now() - t0s) / 1000;
+                if (!sync.vlcTime) return;
+                // VLC time at moment phone was sampled (compensate for RTT)
+                const vlcNow = sync.vlcTime + rtt2 / 2;
+                const vlcTarget = vid.currentTime + syncOffset;
+                const drift = vlcNow - vlcTarget;
+                // Post debug data
+                fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ vlcPos: vlcNow, phonePos: vid.currentTime, syncOffset, vlcTarget, drift, rtt: rtt2 })
+                });
+                if (Math.abs(drift) > 3) {
+                  // Large drift: seek VLC
+                  fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: vlcTarget }) });
+                } else if (Math.abs(drift) > 0.15) {
+                  // Small drift: brief rate burst to close gap, then back to 1x
+                  // drift > 0 = VLC ahead, slow down; drift < 0 = VLC behind, speed up
+                  const burstRate = drift > 0 ? 0.9 : 1.1;
+                  const burstDuration = Math.abs(drift) / Math.abs(burstRate - 1) * 1000; // ms to close gap
+                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: burstRate }) });
+                  setTimeout(() => {
+                    fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) });
+                  }, Math.min(burstDuration, 5000));
+                }
+              } else {
+                // VOD: phone hard-seeks to match mpv
+                const target = pb.position + rtt / 2 - syncOffset;
+                const drift = target - vid.currentTime;
+                if (Math.abs(drift) > 2) {
+                  vid.currentTime = target;
+                }
               }
             } catch {}
           }, 1000);
