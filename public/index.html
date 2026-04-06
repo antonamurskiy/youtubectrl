@@ -1579,7 +1579,8 @@
       if (curPos) setTimeout(() => curPos.classList.remove('visible'), 2000);
       // Keep isSeeking true until poll confirms position near seekTarget (see pollPlayback)
       // Fallback: clear after 3s in case server never catches up
-      setTimeout(() => { isSeeking = false; seekTarget = null; }, 3000);
+      const isLiveNow = document.getElementById('npTimeDur')?._liveBtn;
+      setTimeout(() => { isSeeking = false; seekTarget = null; }, isLiveNow ? 15000 : 3000);
     }
   });
 
@@ -1707,7 +1708,13 @@
               const clampedPct = Math.max(minPct, Math.min(maxPct, pct));
               preview.style.left = (clampedPct * 100) + '%';
               if (previewTime && dur) {
-                previewTime.textContent = fmtTime(pct * dur);
+                const isLiveNow = document.getElementById('npTimeDur')?._liveBtn;
+                if (isLiveNow) {
+                  const behind = dur - pct * dur;
+                  previewTime.textContent = behind < 2 ? 'LIVE' : '-' + fmtTime(behind);
+                } else {
+                  previewTime.textContent = fmtTime(pct * dur);
+                }
               }
               // Show storyboard thumbnail if available
               if (previewThumb) {
@@ -1757,7 +1764,15 @@
             const minPct = (bubbleW / 2) / barW;
             const maxPct = 1 - minPct;
             preview.style.left = (Math.max(minPct, Math.min(maxPct, pct)) * 100) + '%';
-            if (previewTime && dur) previewTime.textContent = fmtTime(pct * dur);
+            if (previewTime && dur) {
+              const isLiveNow = document.getElementById('npTimeDur')?._liveBtn;
+              if (isLiveNow) {
+                const behind = dur - pct * dur;
+                previewTime.textContent = behind < 2 ? 'LIVE' : '-' + fmtTime(behind);
+              } else {
+                previewTime.textContent = fmtTime(pct * dur);
+              }
+            }
             if (previewThumb) {
               previewThumb.innerHTML = '';
               const sb = window._storyboardData;
@@ -1797,13 +1812,21 @@
             const dur = parseFloat(bar.dataset.duration || 0);
             if (dur > 0) {
               clearTimeout(seekTimer);
+              // Longer debounce for live (500ms) — VLC needs time between seeks
+              const delay = data.isLive ? 500 : 150;
               seekTimer = setTimeout(() => {
+                const phoneVid = document.getElementById('phoneVideo');
+                if (data.isLive && phoneVid && phoneVid.seekable?.length > 0) {
+                  const phoneStart = phoneVid.seekable.start(0);
+                  const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
+                  phoneVid.currentTime = phoneStart + pct * (phoneEnd - phoneStart);
+                }
                 fetch('/api/seek', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ position: pct * dur })
                 });
-              }, 150);
+              }, delay);
             }
           }
           bar.addEventListener('click', (e) => { sendSeek(e.clientX); });
@@ -2095,12 +2118,12 @@
                 driftEl.style.color = color;
                 driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
 
-                if (liveState === 'done' && Math.abs(drift) > 2) {
+                if (liveState === 'done' && !isSeeking && Math.abs(drift) > 2) {
                   // Large drift: seek phone (snaps to ~2s keyframes)
                   vid.currentTime = vid.currentTime + drift;
                   liveState = 'settle';
                   settleTimer = setTimeout(() => { liveState = 'done'; }, 3000);
-                } else if (liveState === 'done' && Math.abs(drift) > 0.3) {
+                } else if (liveState === 'done' && !isSeeking && Math.abs(drift) > 0.3) {
                   // Small drift: VLC rate burst (avoids Safari keyframe snap)
                   // drift > 0 = VLC ahead → slow VLC; drift < 0 = VLC behind → speed VLC
                   const burstRate = drift > 0 ? 0.98 : 1.02;

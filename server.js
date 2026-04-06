@@ -591,6 +591,8 @@ let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
 let activePlayer = null; // 'mpv' | 'vlc' | null
 let vlcPaused = false;
+let vlcDvrWindow = 0; // last known DVR window size from get_length
+let vlcDvrBehind = 0; // seconds behind live edge (0 = at live edge)
 let lastVlcHlsUrl = null; // stored for fMP4 relay
 
 const VLC_RC_PORT = 9091;
@@ -625,6 +627,7 @@ async function vlcCommand(cmd) { return vlcRC(cmd); }
 function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
+  vlcDvrWindow = 0; vlcDvrBehind = 0;
 }
 
 function vlcAerospace(cmd) {
@@ -715,6 +718,7 @@ function spawnVlc(hlsUrl) {
   setTimeout(initVlc, 500);
   startVlcTimeModel();
   fetchPdtFromUrl(hlsUrl); // capture PDT from the same manifest VLC uses
+  startDvrRefresh();
 }
 
 app.get("/api/now-playing", (_req, res) => {
@@ -1048,12 +1052,16 @@ app.get("/api/playback", async (_req, res) => {
     try {
       const s = await vlcStatus();
       const monitor = currentMonitor;
+      // vlcDvrWindow is set from the real YouTube manifest (not VLC's get_length which shrinks after trimmed reload)
+      if (vlcDvrWindow <= 0 && s.length > 0) vlcDvrWindow = s.length; // fallback only if never set
+      // DVR position: tracked server-side (VLC PTS is unreliable for live HLS)
+      const dvrPos = Math.max(0, vlcDvrWindow - vlcDvrBehind);
       return res.json({
         playing: true,
         url: nowPlaying,
-        position: s.time || 0,
-        duration: Math.max(s.time || 0, s.length || 0),
-        dvrWindow: s.length || 0,
+        position: dvrPos,
+        duration: vlcDvrWindow,
+        dvrWindow: vlcDvrWindow,
         title: historyMap.get(nowPlaying)?.title || "",
         channel: historyMap.get(nowPlaying)?.channel || "",
         paused: vlcPaused,
@@ -1102,12 +1110,30 @@ app.get("/api/playback", async (_req, res) => {
 });
 
 // Seek absolute
+let vlcSeekBusy = false;
 app.post("/api/seek", async (req, res) => {
   const { position } = req.body;
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
     if (activePlayer === "vlc") {
-      await vlcSeek(Math.floor(position));
+      if (vlcSeekBusy) { console.log("VLC seek SKIPPED (busy), position:", position); return res.json({ ok: true, skipped: true }); }
+      vlcSeekBusy = true;
+      // position is DVR-relative (0 = DVR start, dvrWindow = live edge)
+      const targetBehind = Math.max(0, vlcDvrWindow - position);
+      vlcDvrBehind = targetBehind;
+      console.log(`VLC seek: pos=${position} behind=${targetBehind} dvrWin=${vlcDvrWindow}`);
+      if (targetBehind < 2) {
+        // Go live — reload original HLS URL
+        vlcDvrBehind = 0;
+        fs.writeFileSync("/tmp/vlc-next.m3u", lastVlcHlsUrl);
+      } else {
+        // Reload via proxy that trims segments from the end
+        fs.writeFileSync("/tmp/vlc-next.m3u", "http://localhost:3000/api/vlc-hls-offset");
+      }
+      await vlcRC("clear");
+      await vlcRC("add /tmp/vlc-next.m3u");
+      // Give VLC time to rebuffer before allowing next seek
+      setTimeout(() => { vlcSeekBusy = false; }, 3000);
       return res.json({ ok: true });
     }
     await mpvCommand(["seek", position, "absolute"]);
@@ -1132,6 +1158,77 @@ app.post("/api/seek-relative", async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Seek failed" });
+  }
+});
+
+// Fetch HLS manifest helper
+function fetchManifest(url) {
+  const https = require('https');
+  const http = require('http');
+  const get = url.startsWith('https') ? https.get : http.get;
+  return new Promise((resolve, reject) => {
+    get(url, r => {
+      let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d));
+    }).on('error', reject);
+    setTimeout(reject, 5000);
+  });
+}
+
+// Parse total duration from HLS manifest segments
+function hlsTotalDuration(manifest) {
+  let total = 0;
+  for (const line of manifest.split('\n')) {
+    if (line.startsWith('#EXTINF:')) total += parseFloat(line.split(':')[1]);
+  }
+  return total;
+}
+
+// Refresh real DVR window from YouTube manifest periodically
+let vlcDvrRefreshInterval = null;
+function startDvrRefresh() {
+  if (vlcDvrRefreshInterval) clearInterval(vlcDvrRefreshInterval);
+  vlcDvrRefreshInterval = setInterval(async () => {
+    if (!lastVlcHlsUrl || activePlayer !== "vlc") { clearInterval(vlcDvrRefreshInterval); vlcDvrRefreshInterval = null; return; }
+    try {
+      const m = await fetchManifest(lastVlcHlsUrl);
+      const dur = hlsTotalDuration(m);
+      if (dur > 0) vlcDvrWindow = dur;
+    } catch {}
+  }, 5000);
+}
+
+// HLS proxy for DVR seeking — serves playlist with segments trimmed from end
+app.get("/api/vlc-hls-offset", async (_req, res) => {
+  if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
+  try {
+    const manifest = await fetchManifest(lastVlcHlsUrl);
+    // Update real DVR window from manifest
+    const realDvr = hlsTotalDuration(manifest);
+    if (realDvr > 0) vlcDvrWindow = realDvr;
+    if (vlcDvrBehind <= 0) {
+      return res.type('application/vnd.apple.mpegurl').send(manifest);
+    }
+    // Parse segments and trim the last N seconds worth
+    const lines = manifest.split('\n');
+    const segLines = []; // [{idx, dur}]
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXTINF:')) {
+        segLines.push({ idx: i, dur: parseFloat(lines[i].split(':')[1]) });
+      }
+    }
+    // Remove segments from the end to cover vlcDvrBehind seconds
+    let trimDur = 0;
+    let trimFrom = segLines.length;
+    for (let i = segLines.length - 1; i >= 0; i--) {
+      trimDur += segLines[i].dur;
+      if (trimDur >= vlcDvrBehind) { trimFrom = i; break; }
+    }
+    // Keep lines up to (but not including) the first trimmed segment's #EXTINF line
+    const cutAt = trimFrom < segLines.length ? segLines[trimFrom].idx : lines.length;
+    const trimmed = lines.slice(0, cutAt).join('\n');
+    res.type('application/vnd.apple.mpegurl').send(trimmed);
+  } catch (e) {
+    res.status(500).send("Proxy error: " + e.message);
   }
 });
 
@@ -2067,7 +2164,7 @@ app.listen(PORT, "0.0.0.0", async () => {
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
         startVlcTimeModel();
-        if (lastVlcHlsUrl) fetchPdtFromUrl(lastVlcHlsUrl);
+        if (lastVlcHlsUrl) { fetchPdtFromUrl(lastVlcHlsUrl); startDvrRefresh(); }
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }
