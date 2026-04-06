@@ -627,7 +627,7 @@ async function vlcCommand(cmd) { return vlcRC(cmd); }
 function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
-  vlcDvrWindow = 0; vlcDvrBehind = 0;
+  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0;
 }
 
 function vlcAerospace(cmd) {
@@ -1183,6 +1183,23 @@ function hlsTotalDuration(manifest) {
   return total;
 }
 
+// Compute live edge PDT from manifest (last PDT + durations after it)
+// Handles discontinuities where PDT resets mid-manifest
+function hlsLiveEdgePdt(manifest) {
+  const lines = manifest.split('\n');
+  let lastPdtMs = 0;
+  let durAfterLastPdt = 0;
+  for (const line of lines) {
+    if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+      lastPdtMs = new Date(line.substring('#EXT-X-PROGRAM-DATE-TIME:'.length).trim()).getTime();
+      durAfterLastPdt = 0;
+    } else if (line.startsWith('#EXTINF:')) {
+      durAfterLastPdt += parseFloat(line.split(':')[1]);
+    }
+  }
+  return lastPdtMs > 0 ? lastPdtMs + durAfterLastPdt * 1000 : 0;
+}
+
 // Refresh real DVR window from YouTube manifest periodically
 let vlcDvrRefreshInterval = null;
 function startDvrRefresh() {
@@ -1193,6 +1210,8 @@ function startDvrRefresh() {
       const m = await fetchManifest(lastVlcHlsUrl);
       const dur = hlsTotalDuration(m);
       if (dur > 0) vlcDvrWindow = dur;
+      const liveEdge = hlsLiveEdgePdt(m);
+      if (liveEdge > 0) { vlcManifestLiveEdgeMs = liveEdge; vlcManifestFetchedAt = Date.now(); }
     } catch {}
   }, 5000);
 }
@@ -1234,6 +1253,8 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
 
 // VLC absolute time via HLS PDT — for phone sync
 let vlcPdtEpochMs = 0;
+let vlcManifestLiveEdgeMs = 0; // PDT of last segment in manifest (= live edge content time)
+let vlcManifestFetchedAt = 0; // wall-clock when manifest was last fetched
 // Fetch PDT from an HLS URL (called once at VLC spawn)
 async function fetchPdtFromUrl(hlsUrl) {
   try {
@@ -1264,11 +1285,23 @@ async function fetchPdtFromUrl(hlsUrl) {
 }
 app.get("/api/vlc-absolute-time", async (_req, res) => {
   if (activePlayer !== "vlc") return res.json({});
+  // Suppress during DVR seek reloads — VLC is rebuffering, drift would be wrong
+  if (vlcSeekBusy) return res.json({});
   try {
+    if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
+      // At live edge: use original PDT + vlcTime (accurate, accounts for VLC buffering)
+      const absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+      return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
+    }
+    // Behind live (after DVR seek): manifest-based (VLC PTS is unreliable after reload)
+    if (vlcManifestLiveEdgeMs > 0) {
+      const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
+      const absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
+      return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
+    }
     if (!vlcPdtEpochMs) return res.json({});
-    const vlcTime = vlcTimeNow();
-    const absoluteMs = vlcPdtEpochMs + vlcTime * 1000;
-    res.json({ absoluteMs, vlcTime, pdtEpoch: vlcPdtEpochMs });
+    const absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+    res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
   } catch {
     res.json({});
   }
@@ -2164,6 +2197,13 @@ app.listen(PORT, "0.0.0.0", async () => {
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
         startVlcTimeModel();
+        // Fetch HLS URL if not cached (needed for DVR scrubbing and phone sync)
+        if (!lastVlcHlsUrl && nowPlaying) {
+          try {
+            const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying], { timeout: 15000 });
+            if (stdout.trim()) lastVlcHlsUrl = stdout.trim();
+          } catch {}
+        }
         if (lastVlcHlsUrl) { fetchPdtFromUrl(lastVlcHlsUrl); startDvrRefresh(); }
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {

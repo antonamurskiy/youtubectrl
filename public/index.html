@@ -1829,7 +1829,13 @@
               }, delay);
             }
           }
-          bar.addEventListener('click', (e) => { sendSeek(e.clientX); });
+          bar.addEventListener('click', (e) => {
+            isSeeking = true;
+            const isLiveNow = document.getElementById('npTimeDur')?._liveBtn;
+            sendSeek(e.clientX);
+            // Keep isSeeking until poll confirms (live needs longer for reload)
+            setTimeout(() => { isSeeking = false; seekTarget = null; }, isLiveNow ? 15000 : 3000);
+          });
           // Desktop: show preview on hover (without moving the scrubber)
           bar.addEventListener('mousemove', (e) => {
             if (!isSeeking) showSeekPreviewAt(e.clientX, bar);
