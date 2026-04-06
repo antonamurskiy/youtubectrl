@@ -2124,6 +2124,11 @@
                 driftEl.style.color = color;
                 driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
 
+                // Skip drift corrections when behind live — manifest-based absolute time isn't precise
+                // enough for sync. Phone was already seeked by the scrub handler.
+                const behindLive = pb.duration - pb.position;
+                if (behindLive > 5) return;
+
                 if (liveState === 'done' && !isSeeking && Math.abs(drift) > 2) {
                   // Large drift: seek phone (snaps to ~2s keyframes)
                   vid.currentTime = vid.currentTime + drift;

@@ -2204,7 +2204,10 @@ app.listen(PORT, "0.0.0.0", async () => {
             if (stdout.trim()) lastVlcHlsUrl = stdout.trim();
           } catch {}
         }
-        if (lastVlcHlsUrl) { fetchPdtFromUrl(lastVlcHlsUrl); startDvrRefresh(); }
+        // Only start DVR refresh on reconnect — do NOT call fetchPdtFromUrl with a freshly
+        // fetched URL because the manifest's media sequence won't match VLC's existing PTS base.
+        // PDT sync only works when VLC was spawned with that specific manifest.
+        if (lastVlcHlsUrl) startDvrRefresh();
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }
