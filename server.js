@@ -738,7 +738,7 @@ let playLock = false;
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
-  const { url, isLive, title: reqTitle, channel: reqChannel } = req.body;
+  const { url, isLive, title: reqTitle, channel: reqChannel, watchPct } = req.body;
   if (!url || !url.startsWith("https://www.youtube.com/")) {
     playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
@@ -832,12 +832,17 @@ app.post("/api/play", async (req, res) => {
             nowPlaying = null;
             return;
           }
-          // Always seek — to resume position or to start (mpv carries over old position)
+          // Seek to resume position, or compute from YouTube watch percentage
           try {
-            if (resumePos > 0) {
+            let seekTo = resumePos;
+            if (seekTo <= 0 && watchPct > 0 && watchPct < 95) {
               const actualDur = await mpvCommand(["get_property", "duration"]);
-              if (actualDur?.data && resumePos < actualDur.data * 0.95) {
-                await mpvCommand(["seek", resumePos, "absolute"]);
+              if (actualDur?.data > 0) seekTo = Math.floor(actualDur.data * watchPct / 100);
+            }
+            if (seekTo > 0) {
+              const actualDur = await mpvCommand(["get_property", "duration"]);
+              if (actualDur?.data && seekTo < actualDur.data * 0.95) {
+                await mpvCommand(["seek", seekTo, "absolute"]);
               } else {
                 await mpvCommand(["seek", 0, "absolute"]);
               }
@@ -882,6 +887,7 @@ app.post("/api/play", async (req, res) => {
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
+    else if (watchPct > 0 && watchPct < 95) mpvArgs.push(`--start=${Math.floor(watchPct)}%`);
 
     // Focus LG workspace so mpv spawns there
     try { execSync("aerospace workspace 1", { stdio: "ignore" }); } catch {}
@@ -1433,7 +1439,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     if (activePlayer === "vlc") {
       // Live — give phone the HLS URL directly (Safari plays HLS natively)
       const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "95/94/93/301/300/96", "--get-url", nowPlaying],
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
         { timeout: 15000 }
       );
       const hlsUrl = stdout.trim().split("\n")[0];

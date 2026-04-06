@@ -1340,10 +1340,13 @@
     const channel = card.dataset.channel || '';
 
     try {
+      // Pass watch percentage for cross-device resume (YouTube history)
+      const progressBar = card.querySelector('.watch-progress');
+      const watchPct = progressBar ? parseFloat(progressBar.style.width) || 0 : 0;
       const res = await fetch('/api/play', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, isLive, title, channel })
+        body: JSON.stringify({ url, isLive, title, channel, watchPct })
       });
       if (!res.ok) showToast('Failed to play');
       else {
@@ -2000,32 +2003,24 @@
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
 
         if (window._phoneSyncInterval) clearInterval(window._phoneSyncInterval);
-        if (data.isLive) {
-          // Live: fMP4 starts at live edge. After buffering 12s, seek back 10s
-          // to match VLC's display cache (network-caching + live-caching = 10s).
-          // Both then play at 1x from the same content position.
-          // fMP4 starts at VLC's DVR position via -live_start_index
-          // No seek-back needed — both show content from the same DVR position
-          // Monitor for debug
-          window._phoneSyncInterval = setInterval(async () => {
-            try {
-              const vid = document.getElementById('phoneVideo');
-              if (!vid || vid.paused) return;
-              fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-                phoneCT: +vid.currentTime.toFixed(1), buffered: vid.buffered.length ? +vid.buffered.end(0).toFixed(0) : 0, seekDone
-              })}).catch(() => {});
-            } catch {}
-          }, 3000);
-        } else if (videoType === 'video/mp4') {
-          // VOD MP4 relay: use calibration + rate sync (works in Chrome, seek-based on Safari)
+        {
+          // Sync phone to desktop — works for both live (VLC) and VOD (mpv)
+          // Calibrate offset on start, then follow scrubs via hard-seek
           const vid2 = document.getElementById('phoneVideo');
-          // Seek to desktop position immediately
-          vid2.currentTime = data.seconds || 0;
-          // Sync: compare mpv position directly with phone (same time base for VODs)
+          let syncOffset = null;
+          vid2.addEventListener('playing', () => {
+            setTimeout(async () => {
+              try {
+                const pb = await fetch('/api/playback').then(r => r.json());
+                const v = document.getElementById('phoneVideo');
+                if (pb.position && v) syncOffset = pb.position - v.currentTime;
+              } catch {}
+            }, 2000);
+          }, { once: true });
           window._phoneSyncInterval = setInterval(async () => {
             try {
               const vid = document.getElementById('phoneVideo');
-              if (!vid) return;
+              if (!vid || syncOffset === null) return;
               const t0 = performance.now();
               const pb = await fetch('/api/playback').then(r => r.json());
               if (!pb.position) return;
@@ -2034,35 +2029,15 @@
               if (pb.paused && !vid.paused) vid.pause();
               else if (!pb.paused && vid.paused) vid.play().catch(() => {});
               if (pb.paused || vid.paused) return;
-              const desktopPos = pb.position + rtt + 0.5;
-              const drift = desktopPos - vid.currentTime;
-              if (Math.abs(drift) > 0.5) {
-                vid.currentTime = desktopPos;
+              // For live VLC: subtract cache delay (get_time reports received, not displayed)
+              const cacheDelay = pb.isLive ? 10 : 0;
+              const target = pb.position - cacheDelay + rtt / 2 - syncOffset;
+              const drift = target - vid.currentTime;
+              if (Math.abs(drift) > 2) {
+                vid.currentTime = target;
               }
             } catch {}
-          }, 200);
-        } else {
-          // VOD: rate sync using absolute HLS timestamps
-          window._phoneSyncInterval = setInterval(async () => {
-            try {
-              const vid = document.getElementById('phoneVideo');
-              if (!vid || vid.paused) return;
-              const t0 = performance.now();
-              const fresh = await fetch('/api/playback').then(r => r.json());
-              if (!fresh.position || !isFinite(fresh.position)) return;
-              const rtt = (performance.now() - t0) / 1000;
-              const desktopPos = fresh.position + rtt / 2;
-              const drift = desktopPos - vid.currentTime;
-              if (Math.abs(drift) < 0.2) {
-                vid.playbackRate = 1.0;
-              } else if (Math.abs(drift) > 5) {
-                vid.currentTime = desktopPos;
-                vid.playbackRate = 1.0;
-              } else {
-                vid.playbackRate = Math.max(0.7, Math.min(1.5, 1.0 + drift * 0.15));
-              }
-            } catch {}
-          }, 2000);
+          }, 1000);
         }
       } else if (data.youtubeUrl) {
         showToast('Opening YouTube');
@@ -2218,6 +2193,7 @@
 
   window.stopPlayback = async function() {
     await fetch('/api/stop', { method: 'POST' });
+    if (document.getElementById('phonePlayer')) closePhonePlayer();
     hideNowPlaying();
     deactivateMediaSession();
     stopPolling();
