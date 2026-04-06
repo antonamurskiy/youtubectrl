@@ -68,8 +68,15 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - VLC enforces minimum window size based on video aspect ratio — cannot resize smaller via AppleScript
 - Hide on pause / show on resume: `osascript` to set `visible of process "VLC"` (same as mpv)
 - VLC 4 DVR HLS seeking is fragile — can hang on large seeks. Not a code issue, VLC bug.
+- `--video-on-top` flag for always-on-top in floating mode
+- `/api/vlc-rate` endpoint to set VLC playback rate (used for phone sync experiments, kept for future use)
+- `/api/vlc-absolute-time` endpoint: returns VLC's absolute wall-clock content time from PDT + vlcTimeNow()
+- `/api/mpv-speed` endpoint: sets mpv `speed` property
+- `/api/switch-to-vlc` endpoint: switches live stream from mpv to VLC for DVR scrubbing
 
 ### AeroSpace Integration
+
+- mpv `floatTopRight()` now sets `aerospace layout floating` + `ontop` (was missing `layout floating`)
 
 - mpv rule: `layout floating` with `check-further-callbacks = false` — aerospace can't switch mpv to tiling
 - VLC has no aerospace rule — it's a normal managed window
@@ -97,8 +104,18 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 - Phone plays the same video as the desktop player, synced via polling
 - **VOD (mpv)**: phone gets direct YouTube MP4 URL, sync loop polls `/api/playback` every 1s, hard-seeks if drift > 2s. Follows desktop scrubs and pause/resume.
-- **Live (VLC)**: phone gets the same HLS URL as VLC (same format `301/300/96/95/94/93`), plays natively on iOS Safari. Calibrated offset syncs time bases. VLC's 10s cache delay (`--network-caching 5000 --live-caching 5000`) means phone shows content ~10s ahead — subtracted from target in sync loop.
-- **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries. Fragmented MP4 via pipe doesn't play (needs Content-Length). These prevent <0.1s live sync on iOS.
+- **Live (VLC) sync via EXT-X-PROGRAM-DATE-TIME**:
+  - Phone gets the same HLS URL as VLC (same format `301/300/96/95/94/93`), plays natively on iOS Safari
+  - Drift measured by comparing absolute wall-clock content times:
+    - Phone: `video.getStartDate().getTime() + currentTime * 1000` (Safari exposes HLS PDT)
+    - VLC: `streamStartEpochMs + vlcTimeNow() * 1000` (server parses manifest PDT + MEDIA-SEQUENCE to compute stream start)
+  - `streamStartEpochMs = pdtOfFirstManifestSegment - mediaSequence * avgSegmentDuration * 1000` — critical because YouTube DVR manifests have MEDIA-SEQUENCE > 0 (DVR window shifts) but VLC's `get_time` is PTS from the original stream start (segment 0)
+  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect — do NOT re-fetch later (manifest URL expires, DVR window shifts, new PDT won't match VLC's get_time reference)
+  - Phone seeks to match VLC when drift > 1s; 3s settle period after each correction
+  - VLC `get_time` returns integers; `vlcTimeNow()` interpolates sub-second precision
+  - Drift naturally grows ~0.02s/s due to clock differences between VLC and Safari HLS players
+- **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries. Fragmented MP4 via pipe doesn't play (needs Content-Length).
+- **Live stream server-side detection**: if frontend doesn't send `isLive` flag (e.g., playing from History tab), server checks via `yt-dlp --print is_live`
 - Phone player is `position:fixed` on `document.body` — secret menu hides it when open (z-index stacking doesn't work reliably across Safari's position:fixed contexts)
 - Video swap: when switching videos with phone active, re-hides mpv video and updates phone `src` in-place
 - `closePhonePlayer()` restores mpv video track (`vid=auto`), clears sync interval, kills ffmpeg relay

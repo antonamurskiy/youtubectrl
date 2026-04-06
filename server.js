@@ -656,6 +656,7 @@ async function vlcFloatTopRight() {
 
 function spawnVlc(hlsUrl) {
   lastVlcHlsUrl = hlsUrl;
+  vlcPdtEpochMs = 0; // reset PDT cache for new stream
   killVlc();
   vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
     "--extraintf", "cli",
@@ -712,6 +713,8 @@ function spawnVlc(hlsUrl) {
     }
   };
   setTimeout(initVlc, 500);
+  startVlcTimeModel();
+  fetchPdtFromUrl(hlsUrl); // capture PDT from the same manifest VLC uses
 }
 
 app.get("/api/now-playing", (_req, res) => {
@@ -738,14 +741,23 @@ let playLock = false;
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
-  const { url, isLive, title: reqTitle, channel: reqChannel, watchPct } = req.body;
+  const { url, isLive: clientIsLive, title: reqTitle, channel: reqChannel, watchPct } = req.body;
   if (!url || !url.startsWith("https://www.youtube.com/")) {
     playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
   }
 
+  // Detect live streams server-side if frontend didn't flag it
+  let isLive = clientIsLive;
+  if (!isLive) {
+    try {
+      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", url], { timeout: 10000 });
+      if (stdout.trim() === "True") isLive = true;
+    } catch {}
+  }
+
   try {
-    // If live, use VLC for DVR support
+    // If live, use VLC for DVR support + phone sync
     if (isLive) {
       // Kill mpv if switching from VOD to live
       if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
@@ -757,7 +769,6 @@ app.post("/api/play", async (req, res) => {
       );
       const hlsUrl = stdout.trim();
       if (activePlayer === "vlc" && vlcProcess) {
-        // Switch stream without restarting VLC — write URL to temp file and load it
         lastVlcHlsUrl = hlsUrl;
         fs.writeFileSync("/tmp/vlc-next.m3u", hlsUrl);
         await vlcRC("clear");
@@ -1124,6 +1135,59 @@ app.post("/api/seek-relative", async (req, res) => {
   }
 });
 
+// VLC absolute time via HLS PDT — for phone sync
+let vlcPdtEpochMs = 0;
+// Fetch PDT from an HLS URL (called once at VLC spawn)
+async function fetchPdtFromUrl(hlsUrl) {
+  try {
+    const https = require('https');
+    const http = require('http');
+    const get = hlsUrl.startsWith('https') ? https.get : http.get;
+    const manifest = await new Promise((resolve, reject) => {
+      get(hlsUrl, r => {
+        let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d));
+      }).on('error', reject);
+      setTimeout(reject, 5000);
+    });
+    const lines = manifest.split('\n');
+    const pdtMatch = manifest.match(/#EXT-X-PROGRAM-DATE-TIME:(.+)/);
+    const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+    if (pdtMatch) {
+      const pdtMs = new Date(pdtMatch[1].trim()).getTime();
+      const mediaSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
+      // Compute average segment duration
+      let totalDur = 0, count = 0;
+      lines.filter(l => l.startsWith('#EXTINF')).forEach(l => { totalDur += parseFloat(l.split(':')[1]); count++; });
+      const avgSeg = count > 0 ? totalDur / count : 5;
+      // Stream start = PDT of first segment - (mediaSequence * avgSegmentDuration)
+      vlcPdtEpochMs = pdtMs - mediaSeq * avgSeg * 1000;
+      console.log(`  PDT: seq=${mediaSeq} avgSeg=${avgSeg.toFixed(1)}s streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
+    }
+  } catch (e) { console.error("fetchPdt error:", e.message); }
+}
+app.get("/api/vlc-absolute-time", async (_req, res) => {
+  if (activePlayer !== "vlc") return res.json({});
+  try {
+    if (!vlcPdtEpochMs) return res.json({});
+    const vlcTime = vlcTimeNow();
+    const absoluteMs = vlcPdtEpochMs + vlcTime * 1000;
+    res.json({ absoluteMs, vlcTime, pdtEpoch: vlcPdtEpochMs });
+  } catch {
+    res.json({});
+  }
+});
+
+app.post("/api/mpv-speed", async (req, res) => {
+  const { speed } = req.body;
+  if (typeof speed !== "number" || speed < 0.5 || speed > 2.0) return res.status(400).json({ error: "Invalid speed" });
+  try {
+    await mpvCommand(["set_property", "speed", speed]);
+    res.json({ ok: true, speed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post("/api/vlc-rate", async (req, res) => {
   const { rate } = req.body;
   if (typeof rate !== "number" || rate < 0.5 || rate > 2.0) return res.status(400).json({ error: "Invalid rate" });
@@ -1134,6 +1198,21 @@ app.post("/api/vlc-rate", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Switch live stream from mpv to VLC for DVR scrubbing
+app.post("/api/switch-to-vlc", async (_req, res) => {
+  if (!nowPlaying || !lastVlcHlsUrl) return res.status(400).json({ error: "No live stream" });
+  // Get current mpv position for resume
+  let pos = 0;
+  try { const p = await mpvCommand(["get_property", "time-pos"]); pos = p?.data || 0; } catch {}
+  // Kill mpv
+  if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
+  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  // Start VLC
+  spawnVlc(lastVlcHlsUrl);
+  activePlayer = "vlc";
+  res.json({ ok: true, player: "vlc" });
 });
 
 // Parse cookies.txt (Netscape format) into a cookie string and extract specific values
@@ -1366,11 +1445,12 @@ app.get("/api/phone-debug", (_req, res) => { res.json(_phoneSyncDebug || {}); })
 let vlcTimeModel = { lastInt: 0, lastIntAt: 0, prevInt: 0, prevIntAt: 0, running: false };
 
 function startVlcTimeModel() {
-  if (vlcTimeModel.running) return;
+  if (vlcTimeModel.running) { console.log("vlcTimeModel already running"); return; }
+  console.log("Starting vlcTimeModel");
   vlcTimeModel.running = true;
   let lastRaw = 0;
   const poll = async () => {
-    if (!vlcTimeModel.running || activePlayer !== "vlc") { vlcTimeModel.running = false; return; }
+    if (!vlcTimeModel.running || activePlayer !== "vlc") { console.log("vlcTimeModel stopped:", vlcTimeModel.running, activePlayer); vlcTimeModel.running = false; return; }
     try {
       const raw = await vlcRC("get_time").then(s => parseInt(s) || 0);
       const now = Date.now();
@@ -1986,6 +2066,8 @@ app.listen(PORT, "0.0.0.0", async () => {
         const liveEntry = history.find(h => h.url);
         if (liveEntry) nowPlaying = liveEntry.url;
         console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
+        startVlcTimeModel();
+        if (lastVlcHlsUrl) fetchPdtFromUrl(lastVlcHlsUrl);
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }
