@@ -1854,6 +1854,8 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     } else {
       const pos = await mpvCommand(["get_property", "time-pos"]);
       seconds = Math.floor(pos?.data || 0);
+      // Hide mpv video track when playing on phone (audio continues)
+      await mpvCommand(["set_property", "vid", "no"]).catch(() => {});
     }
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
@@ -1922,8 +1924,26 @@ app.post("/api/watch-on-phone", async (_req, res) => {
   }
 });
 
-app.post("/api/stop-phone-stream", (_req, res) => {
+app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
+  // Restore mpv video track and window mode
+  if (activePlayer === "mpv") {
+    await mpvCommand(["set_property", "vid", "auto"]).catch(() => {});
+    // Re-apply window mode after vid=auto creates new window
+    if (windowMode === "maximize" || windowMode === "floating") {
+      // Wait for new window to appear
+      await new Promise(r => setTimeout(r, 500));
+      try {
+        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        if (wid && windowMode === "maximize") {
+          execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+          execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+        } else if (wid && windowMode === "floating") {
+          try { await mpvCommand(["set_property", "ontop", true]); } catch {}
+        }
+      } catch {}
+    }
+  }
   res.json({ ok: true });
 });
 
