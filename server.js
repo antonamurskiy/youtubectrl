@@ -1269,7 +1269,7 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
 });
 
 // Lightweight HLS proxy for phone — only last 30s of segments (full manifest is 5MB+)
-app.get("/api/phone-hls", async (_req, res) => {
+app.get("/api/phone-hls", async (req, res) => {
   if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
   try {
     const manifest = await fetchManifest(lastVlcHlsUrl);
@@ -1322,8 +1322,11 @@ app.get("/api/phone-hls", async (_req, res) => {
       const seg = segLines[i];
       out += lines[seg.idx] + '\n'; // #EXTINF
       const segUrl = lines[seg.idx + 1]?.trim();
-      // Proxy segment URLs through our server to avoid CORS
-      if (segUrl && segUrl.startsWith('http')) {
+      // ?direct=1: serve YouTube CDN URLs directly (Safari native HLS, no CORS)
+      // default: proxy through our server (hls.js on Chrome needs this for CORS)
+      if (req.query.direct && segUrl) {
+        out += segUrl + '\n';
+      } else if (segUrl && segUrl.startsWith('http')) {
         out += `/api/hls-seg?url=${encodeURIComponent(segUrl)}\n`;
       } else {
         out += (segUrl || '') + '\n';

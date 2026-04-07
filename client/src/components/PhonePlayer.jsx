@@ -31,7 +31,12 @@ export default function PhonePlayer({ send }) {
           setIsLive(!!data.isLive)
           // Use proxy for live (DVR-aware, serves segments at VLC's position)
           const useHls = data.isLive && Hls.isSupported()
-          const url = data.isLive ? (data.proxyUrl || data.streamUrl) : data.streamUrl
+          // Safari native: use proxy with direct YouTube segment URLs (no extra hop)
+          // hls.js (Chrome): use proxy with proxied segments (CORS workaround)
+          const useHls = data.isLive && Hls.isSupported()
+          const url = data.isLive
+            ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
+            : data.streamUrl
           setStreamUrl(url)
 
           // Wait for VLC to start playing before loading phone video
@@ -159,10 +164,11 @@ export default function PhonePlayer({ send }) {
             setTimeout(() => { readyRef.current = true; readyAtRef.current = Date.now() }, 3000)
           } else {
             video.src = ''
-            video.src = `/api/phone-hls?_t=${Date.now()}`
+            video.src = `/api/phone-hls?direct=1&_t=${Date.now()}`
             video.addEventListener('loadedmetadata', () => {
               if (video.seekable?.length > 0) {
-                video.currentTime = video.seekable.end(video.seekable.length - 1) - 19
+                // DVR reload: offset slightly less than live (VLC rebuffers faster after DVR seek)
+                video.currentTime = video.seekable.end(video.seekable.length - 1) - 21
               }
               video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
             }, { once: true })
