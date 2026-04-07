@@ -5,6 +5,7 @@ import { useSyncStore } from '../stores/sync'
 export function useSync() {
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
+  const recalibTimer = useRef(null)
   const pingState = useRef({ samples: [], pending: null })
 
   const connect = useCallback(() => {
@@ -17,6 +18,14 @@ export function useSync() {
       // Start clock offset measurement
       pingState.current = { samples: [], pending: null }
       sendPing(ws, pingState.current)
+      // Recalibrate clock offset every 5 minutes
+      if (recalibTimer.current) clearInterval(recalibTimer.current)
+      recalibTimer.current = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          pingState.current = { samples: [], pending: null }
+          sendPing(ws, pingState.current)
+        }
+      }, 5 * 60 * 1000)
     }
 
     ws.onmessage = (e) => {
@@ -42,6 +51,7 @@ export function useSync() {
   useEffect(() => {
     connect()
     return () => {
+      if (recalibTimer.current) clearInterval(recalibTimer.current)
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       if (wsRef.current) wsRef.current.close()
     }

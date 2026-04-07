@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
@@ -78,7 +79,11 @@ const Icons = {
 }
 
 export default function NowPlayingBar({ send }) {
-  const pb = usePlaybackStore()
+  const pb = usePlaybackStore(useShallow(s => ({
+    position: s.position, duration: s.duration, url: s.url,
+    isLive: s.isLive, paused: s.paused, playing: s.playing,
+    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title,
+  })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
@@ -136,54 +141,6 @@ export default function NowPlayingBar({ send }) {
       bgHeight: r * (height || 90),
     }
   }, [storyboard])
-
-  const handlePointerDown = useCallback((e) => {
-    e.preventDefault()
-    const pos = getSeekPosition(e.clientX)
-    setIsSeeking(true)
-    setSeekPos(pos)
-    setCurrentPosVisible(true)
-
-    // Show seek preview
-    const bar = barRef.current
-    if (bar) {
-      const rect = bar.getBoundingClientRect()
-      const x = e.clientX - rect.left
-      setSeekPreview({ x, time: pos })
-    }
-
-    const handleMove = (ev) => {
-      const p = getSeekPosition(ev.clientX || ev.touches?.[0]?.clientX)
-      setSeekPos(p)
-      if (bar) {
-        const rect = bar.getBoundingClientRect()
-        const cx = (ev.clientX || ev.touches?.[0]?.clientX) - rect.left
-        setSeekPreview({ x: cx, time: p })
-      }
-    }
-
-    const handleUp = () => {
-      setIsSeeking(false)
-      setSeekPreview(null)
-
-      // Send seek command
-      fetch('/api/seek', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position: seekPos }),
-      }).catch(() => {})
-
-      // Show current position marker, fade after 1.5s
-      if (currentPosTimeout.current) clearTimeout(currentPosTimeout.current)
-      currentPosTimeout.current = setTimeout(() => setCurrentPosVisible(false), 1500)
-
-      document.removeEventListener('pointermove', handleMove)
-      document.removeEventListener('pointerup', handleUp)
-    }
-
-    document.addEventListener('pointermove', handleMove)
-    document.addEventListener('pointerup', handleUp)
-  }, [getSeekPosition, seekPos])
 
   // Use a ref to capture the latest seekPos for the pointerup handler
   const seekPosRef = useRef(seekPos)

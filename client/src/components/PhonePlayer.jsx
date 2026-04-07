@@ -12,6 +12,9 @@ export default function PhonePlayer({ send }) {
   const calibOffsetRef = useRef(null) // one-time PDT calibration offset (ms)
   const driftSamplesRef = useRef([]) // moving average for smooth drift display
   const lastSeekRef = useRef(0) // timestamp of last live seek (cooldown)
+  const driftDisplayRef = useRef(null)
+  const offsetDisplayRef = useRef(null)
+  const waitForVlcRef = useRef(null) // track waitForVlc interval for cleanup
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -41,10 +44,11 @@ export default function PhonePlayer({ send }) {
           // Store VLC buffer delay for DVR reloads
           const vlcBufDelay = data.vlcBufferDelay || 19
           // Wait for VLC to start playing before loading phone video
-          const waitForVlc = setInterval(() => {
+          waitForVlcRef.current = setInterval(() => {
             const pb = usePlaybackStore.getState()
             if (!pb.playing || pb.paused) return
-            clearInterval(waitForVlc)
+            clearInterval(waitForVlcRef.current)
+            waitForVlcRef.current = null
 
             setTimeout(() => {
               const video = videoRef.current
@@ -100,6 +104,10 @@ export default function PhonePlayer({ send }) {
         setLoading(false)
       })
       .catch(() => { addToast('Failed to get stream'); setLoading(false) })
+
+    return () => {
+      if (waitForVlcRef.current) { clearInterval(waitForVlcRef.current); waitForVlcRef.current = null }
+    }
   }, [phoneOpen, addToast])
 
   // Imperative sync loop — reads store directly, no subscriptions that cause re-renders
@@ -107,7 +115,7 @@ export default function PhonePlayer({ send }) {
     if (!phoneOpen) return
 
     let lastRateSend = 0
-    const setDrift = (text) => { const el = document.getElementById('drift-display'); if (el) el.textContent = text }
+    const setDrift = (text) => { const el = driftDisplayRef.current; if (el) el.textContent = text }
 
     window._nudgeOffset = (delta) => {
       const v = videoRef.current
@@ -119,7 +127,7 @@ export default function PhonePlayer({ send }) {
       // Re-calibrate drift baseline after manual offset
       calibOffsetRef.current = null
       driftSamplesRef.current = []
-      const el = document.getElementById('offset-display')
+      const el = offsetDisplayRef.current
       if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
     }
 
@@ -272,8 +280,8 @@ export default function PhonePlayer({ send }) {
     }, 1000)
 
     return () => {
-      clearInterval(interval)
       delete window._nudgeOffset
+      clearInterval(interval)
     }
   }, [phoneOpen, send])
 
@@ -287,6 +295,7 @@ export default function PhonePlayer({ send }) {
     setStreamUrl(null)
     setIsLive(false)
     if (videoRef.current) {
+      if (videoRef.current._hls) { videoRef.current._hls.destroy(); videoRef.current._hls = null }
       videoRef.current.pause()
       videoRef.current.removeAttribute('src')
       videoRef.current.load()
@@ -306,11 +315,11 @@ export default function PhonePlayer({ send }) {
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: '#000' }}
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: '#111', fontSize: '12px', fontFamily: 'monospace' }}>
-        <span id="drift-display" style={{ color: '#0f0' }}>drift: --</span>
+        <span ref={driftDisplayRef} style={{ color: '#0f0' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-5</button>
           <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-1</button>
-          <span id="offset-display" style={{ color: '#ff0', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
+          <span ref={offsetDisplayRef} style={{ color: '#ff0', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
           <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+1</button>
           <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+5</button>
         </div>

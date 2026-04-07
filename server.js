@@ -829,11 +829,11 @@ app.post("/api/play", async (req, res) => {
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
-        playLock = false;
         res.json({ ok: true });
         const expectedUrl = url;
         const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
         (async () => {
+          try {
           // Wait for NEW video to load (duration changes from old video's)
           let loaded = false;
           for (let i = 0; i < 30; i++) {
@@ -891,6 +891,9 @@ app.post("/api/play", async (req, res) => {
           } catch {}
           markWatchedOnYouTube(url);
           startProgressTracking(url);
+          } finally {
+            playLock = false;
+          }
         })();
         return;
       } catch {}
@@ -1177,10 +1180,10 @@ function fetchManifest(url) {
   const http = require('http');
   const get = url.startsWith('https') ? https.get : http.get;
   return new Promise((resolve, reject) => {
-    get(url, r => {
+    const req = get(url, r => {
       let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d));
     }).on('error', reject);
-    setTimeout(reject, 5000);
+    setTimeout(() => { req.destroy(); reject(new Error('fetchManifest timeout')); }, 5000);
   });
 }
 
@@ -1875,16 +1878,13 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       // Chrome uses proxy (hls.js can't fetch YouTube due to CORS)
       // Include target duration so phone can compute liveSyncDurationCount dynamically
       let segDuration = 2;
+      let vlcBufferDelay = 25; // conservative fallback
       try {
         const m = await fetchManifest(lastVlcHlsUrl);
         const tdMatch = m.match(/#EXT-X-TARGETDURATION:(\d+)/);
         if (tdMatch) segDuration = parseInt(tdMatch[1]);
-      } catch {}
-      // Compute live edge from the manifest we just fetched, then measure VLC's buffer delay
-      let vlcBufferDelay = 25; // conservative fallback
-      try {
-        const m2 = await fetchManifest(lastVlcHlsUrl);
-        const liveEdgeMs = hlsLiveEdgePdt(m2);
+        // Compute live edge from the same manifest, then measure VLC's buffer delay
+        const liveEdgeMs = hlsLiveEdgePdt(m);
         const _pdt = vlcPdtEpochMs, _vt = vlcTimeNow();
         if (liveEdgeMs > 0 && _pdt && _vt > 2) {
           const vlcDisplayMs = _pdt + _vt * 1000;
@@ -2379,6 +2379,7 @@ const wss = new WebSocket.Server({ server: httpServer, path: "/ws/sync" });
 
 wss.on("connection", (ws) => {
   console.log("  Phone sync: WebSocket connected");
+  startWsSync();
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
   ws.on("message", (msg) => {
@@ -2396,7 +2397,13 @@ wss.on("connection", (ws) => {
       }
     } catch {}
   });
-  ws.on("close", () => { console.log("  Phone sync: WebSocket disconnected"); });
+  ws.on("close", () => {
+    console.log("  Phone sync: WebSocket disconnected");
+    if (wss.clients.size === 0 && wsSyncInterval) {
+      clearInterval(wsSyncInterval);
+      wsSyncInterval = null;
+    }
+  });
 });
 
 // Heartbeat
