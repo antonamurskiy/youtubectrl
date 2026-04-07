@@ -628,6 +628,7 @@ function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
   vlcDvrWindow = 0; vlcDvrBehind = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0; vlcManifestCalibOffset = 0;
+  vlcTimeModel.lastInt = 0; vlcTimeModel.lastIntAt = 0; vlcTimeModel.prevInt = 0; vlcTimeModel.prevIntAt = 0;
 }
 
 function vlcAerospace(cmd) {
@@ -2202,15 +2203,17 @@ function startWsSync() {
         const dvrPos = Math.max(0, vlcDvrWindow - vlcDvrBehind);
         // Absolute time for drift calculation
         let absoluteMs = null;
-        if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
-          absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+        const vlcT = vlcTimeNow();
+        if (vlcDvrBehind < 2 && vlcPdtEpochMs && vlcT > 10 && vlcTimeModel.prevIntAt > 0) {
+          // Only send after vlcTimeModel stabilizes (needs ~5s of integer transitions)
+          absoluteMs = vlcPdtEpochMs + vlcT * 1000;
         } else if (vlcDvrBehind >= 2 && vlcManifestLiveEdgeMs > 0) {
           absoluteMs = vlcManifestLiveEdgeMs + vlcManifestCalibOffset + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
         }
         state = {
           type: "playback",
           playing: true, isLive: true, player: "vlc",
-          position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time,
+          position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time || undefined,
           paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
           url: nowPlaying, serverTs: Date.now()
         };

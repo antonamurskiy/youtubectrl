@@ -1818,14 +1818,22 @@
                 const phoneVid = document.getElementById('phoneVideo');
                 if (phoneVid) {
                   if (data.isLive) {
-                    window._livePositionOffset = null;
-                    window._syncSettleUntil = Date.now() + 5000;
-                    window._dvrCorrected = false; // allow one correction after settle
-                    // Safari: seek phone within DVR seekable range
-                    if (phoneVid.seekable?.length > 0) {
-                      const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
-                      const behindLive = (1 - pct) * dur;
-                      phoneVid.currentTime = Math.max(0, phoneEnd - behindLive);
+                    const behindAfterScrub = (1 - pct) * dur;
+                    if (behindAfterScrub > 5) {
+                      // DVR scrub: reload phone from same proxy after VLC reloads
+                      window._livePositionOffset = null;
+                      window._syncSettleUntil = Date.now() + 6000;
+                      setTimeout(() => {
+                        const pv = document.getElementById('phoneVideo');
+                        if (pv) {
+                          const wasMuted = pv.muted;
+                          pv.src = '/api/vlc-hls-offset';
+                          pv.muted = wasMuted;
+                          pv.play().catch(() => {});
+                          window._livePositionOffset = null;
+                          window._pdtBaseline = undefined;
+                        }
+                      }, 2000);
                     }
                   } else if (!data.isLive) {
                     phoneVid.currentTime = pct * dur;
@@ -2050,6 +2058,10 @@
         setTimeout(() => {
           document.querySelector('.app').style.paddingTop = player.offsetHeight + 'px';
         }, 100);
+        // Reset sync calibration for new phone session
+        window._pdtBaseline = undefined;
+        window._livePositionOffset = null;
+        window._syncStartTime = Date.now(); // delay calibration until VLC stabilizes
         // Hide mpv video on computer by default
         mpvVideoHidden = true;
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
@@ -2104,7 +2116,15 @@
                 } catch {}
                 const usePdt = !!(phoneAbsMs && pb.absoluteMs);
                 if (usePdt) {
-                  drift = (pb.absoluteMs - phoneAbsMs) / 1000;
+                  const rawDrift = (pb.absoluteMs - phoneAbsMs) / 1000;
+                  // Calibrate baseline on first measurement — captures systematic offset
+                  // (PDT precision error, buffering differences, etc.)
+                  // Wait 15s after phone opens before calibrating (vlcTimeModel needs to stabilize)
+                  if (window._pdtBaseline === undefined) {
+                    if (Date.now() - (window._syncStartTime || 0) < 15000) return;
+                    window._pdtBaseline = rawDrift;
+                  }
+                  drift = rawDrift - window._pdtBaseline;
                 } else if (pb.vlcTime) {
                   // Chrome: track drift using VLC's advancing time
                   // Filter out VLC PTS jumps after reload (>10s change per tick = bad)
@@ -2129,27 +2149,14 @@
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
                 const behindLive = pb.duration - pb.position;
-                // When behind live: allow ONE correction after settle to fix phone seek errors,
-                // then pause (VLC PTS unreliable for continuous correction after reload)
                 if (settling || isSeeking) return;
-                if (behindLive > 5) {
-                  // One-shot correction using PDT if available (Safari)
-                  if (usePdt && Math.abs(drift) > 3 && !window._dvrCorrected) {
-                    vid.currentTime = vid.currentTime + drift;
-                    window._dvrCorrected = true;
-                    settleUntil = Date.now() + 3000;
-                  }
-                  return;
-                }
-                window._dvrCorrected = false; // reset when back at live edge
+                // Skip corrections when behind live — phone reloaded from same proxy,
+                // both at same position by construction. VLC PTS unreliable for drift correction.
+                if (behindLive > 5) return;
 
-                if (Math.abs(drift) > 2) {
-                  vid.currentTime = vid.currentTime + drift;
-                  window._livePositionOffset = null; // re-calibrate after seek
-                  settleUntil = Date.now() + 3000;
-                } else if (Math.abs(drift) > 0.1) {
-                  // Proportional VLC rate control — lower gain to prevent oscillation
-                  const rate = Math.max(0.95, Math.min(1.05, 1.0 - drift * 0.03));
+                // Only VLC rate control — no hard seeks (Safari keyframe snapping makes them ineffective)
+                if (Math.abs(drift) > 0.1) {
+                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1));
                   ws.send(JSON.stringify({ type: 'vlc-rate', rate: +rate.toFixed(4) }));
                 } else {
                   ws.send(JSON.stringify({ type: 'vlc-rate', rate: 1.0 }));
