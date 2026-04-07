@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSync } from './hooks/useSync'
+import { useMediaSession } from './hooks/useMediaSession'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -13,6 +14,7 @@ import './App.css'
 
 function App() {
   const { send } = useSync()
+  useMediaSession()
   const activeTab = useUIStore(s => s.activeTab)
   const setTab = useUIStore(s => s.setTab)
   const secretMenuOpen = useUIStore(s => s.secretMenuOpen)

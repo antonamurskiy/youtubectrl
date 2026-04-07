@@ -1,9 +1,11 @@
 import { useState, useRef, useCallback } from 'react'
 import { useUIStore } from '../stores/ui'
 
-function formatDuration(seconds) {
-  if (!seconds) return null
-  const s = parseInt(seconds, 10)
+function formatDuration(val) {
+  if (!val) return null
+  // Already formatted string like "16:27" or "1:02:30" — pass through
+  if (typeof val === 'string' && val.includes(':')) return val
+  const s = parseInt(val, 10)
   if (isNaN(s)) return null
   const h = Math.floor(s / 3600)
   const m = Math.floor((s % 3600) / 60)
@@ -148,7 +150,15 @@ export default function VideoCard({ video, isPlaying }) {
           />
           <div
             className="context-menu"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
+            ref={el => {
+              if (el) {
+                const rect = el.getBoundingClientRect()
+                const maxX = window.innerWidth - rect.width - 8
+                const maxY = window.innerHeight - rect.height - 8
+                el.style.top = `${Math.min(contextMenu.y, maxY)}px`
+                el.style.left = `${Math.min(contextMenu.x, maxX)}px`
+              }
+            }}
           >
             <button className="context-menu-item" onClick={handleMoreFromChannel}>
               More from {video.channel || 'channel'}

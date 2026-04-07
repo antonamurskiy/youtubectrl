@@ -123,9 +123,8 @@ app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
 const clientDist = path.join(__dirname, "client", "dist");
 if (fs.existsSync(clientDist)) {
   app.use(express.static(clientDist, { etag: false, lastModified: false }));
-} else {
-  app.use(express.static(path.join(__dirname, "public"), { etag: false, lastModified: false }));
 }
+app.use(express.static(path.join(__dirname, "public"), { etag: false, lastModified: false }));
 app.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
 // ── YouTube API helpers ──
@@ -2306,7 +2305,10 @@ function startWsSync() {
           position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time || undefined,
           vlcBehind: vlcRealBehind,
           paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
-          url: nowPlaying, serverTs: Date.now()
+          url: nowPlaying, serverTs: Date.now(),
+          title: historyMap.get(nowPlaying)?.title || "",
+          channel: historyMap.get(nowPlaying)?.channel || "",
+          monitor: currentMonitor, windowMode: windowMode || "floating"
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
         try {
@@ -2318,7 +2320,10 @@ function startWsSync() {
             playing: true, isLive: false, player: "mpv",
             position: pos?.data || 0, duration: dur?.data || 0,
             paused: pause?.data || false,
-            url: nowPlaying, serverTs: Date.now()
+            url: nowPlaying, serverTs: Date.now(),
+            title: historyMap.get(nowPlaying)?.title || "",
+            channel: historyMap.get(nowPlaying)?.channel || "",
+            monitor: currentMonitor, windowMode: windowMode || "floating"
           };
         } catch {
           state = { type: "playback", playing: false };

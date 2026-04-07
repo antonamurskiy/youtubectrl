@@ -246,7 +246,7 @@ export default function NowPlayingBar({ send }) {
     fetch('/api/move-monitor', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ monitor }),
+      body: JSON.stringify({ target: monitor }),
     }).catch(() => {})
   }, [])
 
