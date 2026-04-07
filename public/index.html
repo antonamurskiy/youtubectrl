@@ -2061,6 +2061,7 @@
           let liveState = 'done';
           let syncReady = false;
           let settleUntil = 0; // timestamp until which corrections are paused
+          let livePositionOffset = null; // initial (serverPos - phoneTime), for Chrome position-based sync
 
           const vid2 = document.getElementById('phoneVideo');
           vid2.addEventListener('playing', () => { syncReady = true; }, { once: true });
@@ -2093,15 +2094,30 @@
               const settling = Date.now() < settleUntil;
 
               if (pb.isLive) {
-                // ── Live sync via PDT ──
+                // ── Live sync ──
+                // Safari: PDT-based absolute time comparison
+                // Chrome fallback: position-based (both play same proxy manifest)
+                let drift;
                 let phoneAbsMs = null;
                 try {
                   const sd = vid.getStartDate();
                   if (sd && !isNaN(sd.getTime())) phoneAbsMs = sd.getTime() + vid.currentTime * 1000;
                 } catch {}
-                if (!phoneAbsMs || !pb.absoluteMs) return;
-
-                const drift = (pb.absoluteMs - phoneAbsMs) / 1000;
+                if (phoneAbsMs && pb.absoluteMs) {
+                  drift = (pb.absoluteMs - phoneAbsMs) / 1000;
+                } else if (pb.vlcTime) {
+                  // Chrome: track drift using VLC's advancing time
+                  const rawOffset = pb.vlcTime - vid.currentTime;
+                  // Only calibrate once video is actually playing (avoid capturing while buffering)
+                  if (livePositionOffset === null && vid.currentTime > 3 && vid.readyState >= 3) {
+                    livePositionOffset = rawOffset;
+                  }
+                  if (livePositionOffset === null) return;
+                  drift = rawOffset - livePositionOffset;
+                } else {
+                  return;
+                }
+                if (drift == null || !isFinite(drift)) return;
                 showDrift(drift);
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
@@ -2112,11 +2128,14 @@
 
                 if (Math.abs(drift) > 2) {
                   vid.currentTime = vid.currentTime + drift;
+                  livePositionOffset = null; // re-calibrate after seek
                   settleUntil = Date.now() + 3000;
-                } else {
-                  // Proportional VLC rate control via WebSocket
-                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1));
+                } else if (Math.abs(drift) > 0.1) {
+                  // Proportional VLC rate control — lower gain to prevent oscillation
+                  const rate = Math.max(0.95, Math.min(1.05, 1.0 - drift * 0.03));
                   ws.send(JSON.stringify({ type: 'vlc-rate', rate: +rate.toFixed(4) }));
+                } else {
+                  ws.send(JSON.stringify({ type: 'vlc-rate', rate: 1.0 }));
                 }
               } else {
                 // ── VOD sync ──

@@ -1260,6 +1260,9 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
 
 // VLC absolute time via HLS PDT — for phone sync
 let vlcPdtEpochMs = 0;
+let syncOffsetMs = 0; // tunable offset for drift calibration (milliseconds)
+app.post("/api/sync-offset", (req, res) => { syncOffsetMs = (req.body.ms || 0); console.log("  Sync offset:", syncOffsetMs, "ms"); res.json({ ok: true, ms: syncOffsetMs }); });
+app.get("/api/sync-offset", (_req, res) => { res.json({ ms: syncOffsetMs }); });
 let vlcManifestLiveEdgeMs = 0; // PDT of last segment in manifest (= live edge content time)
 let vlcManifestFetchedAt = 0; // wall-clock when manifest was last fetched
 let vlcManifestCalibOffset = 0; // offset between PDT-based and manifest-based absolute time (calibrated at live edge)
@@ -2205,8 +2208,8 @@ function startWsSync() {
         state = {
           type: "playback",
           playing: true, isLive: true, player: "vlc",
-          position: dvrPos, duration: vlcDvrWindow,
-          paused: vlcPaused, absoluteMs,
+          position: dvrPos, duration: vlcDvrWindow, vlcTime: vlcTimeNow(),
+          paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
           url: nowPlaying, serverTs: Date.now()
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
