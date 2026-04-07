@@ -1818,10 +1818,14 @@
                 const phoneVid = document.getElementById('phoneVideo');
                 if (phoneVid) {
                   if (data.isLive) {
-                    // Don't reload phone video — Chrome's HLS stalls on trimmed manifests.
-                    // Just reset offset so sync re-calibrates once VLC PTS stabilizes.
                     window._livePositionOffset = null;
                     window._syncSettleUntil = Date.now() + 5000;
+                    // Safari: seek phone within DVR seekable range
+                    if (phoneVid.seekable?.length > 0) {
+                      const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
+                      const behindLive = (1 - pct) * dur;
+                      phoneVid.currentTime = Math.max(0, phoneEnd - behindLive);
+                    }
                   } else if (!data.isLive) {
                     phoneVid.currentTime = pct * dur;
                   }
@@ -2124,10 +2128,9 @@
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
                 const behindLive = pb.duration - pb.position;
-                // PDT-based sync: skip when behind live (inaccurate after VLC reload)
-                // Position-based sync (Chrome): always active (relative tracking works after reloads)
-                if (usePdt && behindLive > 5) return;
-                if (settling || isSeeking) return;
+                // Skip corrections when behind live — phone already seeked to same DVR offset,
+                // and VLC PTS is unreliable after reload. Re-enables when back at live edge.
+                if (behindLive > 5 || settling || isSeeking) return;
 
                 if (Math.abs(drift) > 2) {
                   vid.currentTime = vid.currentTime + drift;
