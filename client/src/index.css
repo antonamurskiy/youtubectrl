@@ -1,4 +1,7 @@
 /* Minimal reset — main styles are in App.css */
 body {
   margin: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+body::-webkit-scrollbar { display: none; }

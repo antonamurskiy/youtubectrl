@@ -23,6 +23,8 @@ export default function VideoGrid() {
   const searchQuery = useUIStore(s => s.searchQuery)
   const loadGen = useUIStore(s => s.loadGen)
   const nextLoadGen = useUIStore(s => s.nextLoadGen)
+  const refreshKey = useUIStore(s => s.refreshKey)
+  const refresh = useUIStore(s => s.refresh)
   const nowPlayingUrl = usePlaybackStore(s => s.url)
 
   const [videos, setVideos] = useState([])
@@ -98,11 +100,11 @@ export default function VideoGrid() {
     }
   }, [activeTab, searchQuery])
 
-  // Re-fetch when tab or search changes
+  // Re-fetch when tab, search, or refreshKey changes
   useEffect(() => {
     genRef.current += 1
     fetchVideos()
-  }, [activeTab, searchQuery, fetchVideos])
+  }, [activeTab, searchQuery, refreshKey, fetchVideos])
 
   // Infinite scroll for home tab
   useEffect(() => {
@@ -127,12 +129,6 @@ export default function VideoGrid() {
 
   return (
     <>
-      {sectionLabel && (
-        <div className="section-label">
-          <span className="accent">//</span> {sectionLabel}
-        </div>
-      )}
-
       <div className="video-grid">
         {loading && <SkeletonCards />}
 
@@ -159,6 +155,7 @@ export default function VideoGrid() {
           <div className="spinner" />
         </div>
       )}
+
     </>
   )
 }

@@ -78,11 +78,17 @@ export default function SecretMenu() {
           <div className="vol-label">{volume}%</div>
         </div>
 
+        <button className="secret-menu-item" onClick={() => { fetch('/api/mute', { method: 'POST' }).then(() => addToast('Mute toggled')).catch(() => addToast('Mute failed')) }}>
+          Toggle mute
+        </button>
         <button className="secret-menu-item" onClick={handleToggleResolution}>
           Toggle resolution
         </button>
         <button className="secret-menu-item" onClick={handleRefreshCookies}>
           Refresh cookies
+        </button>
+        <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>
+          Close
         </button>
       </div>
     </>

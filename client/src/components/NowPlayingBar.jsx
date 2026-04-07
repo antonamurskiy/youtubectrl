@@ -121,15 +121,19 @@ export default function NowPlayingBar({ send }) {
   const getStoryboardFrame = useCallback((seconds) => {
     if (!storyboard || !storyboard.url) return null
     const { url, width, height, cols, rows, interval } = storyboard
+    const c = cols || 5, r = rows || 5
+    const framesPerPage = c * r
     const frameIndex = Math.floor(seconds / (interval || 2))
-    const col = frameIndex % (cols || 5)
-    const row = Math.floor(frameIndex / (cols || 5)) % (rows || 5)
+    const page = Math.floor(frameIndex / framesPerPage)
+    const indexInPage = frameIndex % framesPerPage
+    const col = indexInPage % c
+    const row = Math.floor(indexInPage / c)
     return {
-      url,
+      url: url.replace('M$M', `M${page}`),
       bgX: -(col * (width || 160)),
       bgY: -(row * (height || 90)),
-      bgWidth: (cols || 5) * (width || 160),
-      bgHeight: (rows || 5) * (height || 90),
+      bgWidth: c * (width || 160),
+      bgHeight: r * (height || 90),
     }
   }, [storyboard])
 
@@ -321,12 +325,11 @@ export default function NowPlayingBar({ send }) {
             {frame && (
               <div className="seek-preview-thumb">
                 <div style={{
-                  width: frame.bgWidth,
-                  height: frame.bgHeight,
+                  width: '100%',
+                  height: '100%',
                   backgroundImage: `url(${frame.url})`,
-                  backgroundPosition: `${frame.bgX}px ${frame.bgY}px`,
-                  transform: `scale(${200 / (storyboard?.width || 160)})`,
-                  transformOrigin: '0 0',
+                  backgroundSize: `${frame.bgWidth * (200 / (storyboard?.width || 160))}px ${frame.bgHeight * (112 / (storyboard?.height || 90))}px`,
+                  backgroundPosition: `${frame.bgX * (200 / (storyboard?.width || 160))}px ${frame.bgY * (112 / (storyboard?.height || 90))}px`,
                 }} />
               </div>
             )}

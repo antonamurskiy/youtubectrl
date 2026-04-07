@@ -103,7 +103,7 @@ export default function VideoCard({ video, isPlaying }) {
 
   const durationStr = formatDuration(video.duration || video.lengthSeconds)
   const viewsStr = formatViews(video.views || video.viewCount)
-  const agoStr = timeAgo(video.publishedAt || video.uploaded)
+  const agoStr = video.uploadedAt || timeAgo(video.publishedAt || video.uploaded)
   const watchPct = video.watchProgress || video.startPercent ||
     (video.savedPosition > 0 && video.savedDuration > 0 ? (video.savedPosition / video.savedDuration) * 100 : 0)
 

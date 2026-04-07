@@ -1621,7 +1621,7 @@ app.get("/api/history", async (_req, res) => {
     const videos = await getYouTubeHistory(token);
     if (videos.length) {
       // Enrich with YouTube Data API for missing durations
-      const needEnrich = videos.filter(v => !v.duration).map(v => v.id).filter(Boolean);
+      const needEnrich = videos.map(v => v.id).filter(Boolean);
       if (needEnrich.length) {
         try {
           const enriched = await enrichVideos(needEnrich, token);
@@ -1633,6 +1633,7 @@ app.get("/api/history", async (_req, res) => {
               v.channel = e.channel || v.channel;
               v.channelId = e.channelId || v.channelId;
               v.views = e.views || v.views;
+              v.uploadedAt = e.uploadedAt || v.uploadedAt;
               if (e.live) v.live = true;
             }
           }
@@ -1854,8 +1855,8 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     } else {
       const pos = await mpvCommand(["get_property", "time-pos"]);
       seconds = Math.floor(pos?.data || 0);
-      // Hide mpv video track when playing on phone (audio continues)
-      await mpvCommand(["set_property", "vid", "no"]).catch(() => {});
+      // Hide mpv window when playing on phone (don't use vid=no, it can drop audio)
+      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
@@ -1926,23 +1927,18 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
-  // Restore mpv video track and window mode
+  // Restore mpv window visibility
   if (activePlayer === "mpv") {
-    await mpvCommand(["set_property", "vid", "auto"]).catch(() => {});
-    // Re-apply window mode after vid=auto creates new window
-    if (windowMode === "maximize" || windowMode === "floating") {
-      // Wait for new window to appear
-      await new Promise(r => setTimeout(r, 500));
-      try {
+    try {
+      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+      if (windowMode === "maximize") {
         const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-        if (wid && windowMode === "maximize") {
+        if (wid) {
           execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
           execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
-        } else if (wid && windowMode === "floating") {
-          try { await mpvCommand(["set_property", "ontop", true]); } catch {}
         }
-      } catch {}
-    }
+      }
+    } catch {}
   }
   res.json({ ok: true });
 });
@@ -2001,6 +1997,8 @@ app.get("/api/storyboard", async (req, res) => {
       result.url = (sbFormat.url || sbFormat.fragment_base_url || "").replace(/M\d+\.jpg/, "M$M.jpg");
       result.cols = sbFormat.columns;
       result.rows = sbFormat.rows;
+      result.width = sbFormat.width ? Math.floor(sbFormat.width / sbFormat.columns) : 160;
+      result.height = sbFormat.height ? Math.floor(sbFormat.height / sbFormat.rows) : 90;
       // Fragment duration is per PAGE (cols*rows frames), divide to get per-frame interval
       const pageDur = sbFormat.fragments?.[0]?.duration || 2;
       result.interval = pageDur / (sbFormat.columns * sbFormat.rows);
