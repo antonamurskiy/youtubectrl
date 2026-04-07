@@ -4,3 +4,6 @@ node_modules
 .history.json
 cookies.txt
 .yt-cookies.txt
+mpv-shot0001.jpg
+client/node_modules
+client/dist

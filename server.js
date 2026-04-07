@@ -2168,7 +2168,9 @@ wss.on("connection", (ws) => {
   ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg);
-      if (data.type === "phone-state") {
+      if (data.type === "ping") {
+        ws.send(JSON.stringify({ type: "pong", serverTs: Date.now(), clientTs: data.clientTs }));
+      } else if (data.type === "phone-state") {
         _phoneSyncDebug = { ...data, ts: Date.now() };
       } else if (data.type === "vlc-rate" && typeof data.rate === "number") {
         vlcRC(`rate ${data.rate}`).catch(() => {});
