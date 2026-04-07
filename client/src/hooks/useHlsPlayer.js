@@ -17,15 +17,7 @@ export function useHlsPlayer(videoRef, src) {
       hlsRef.current = null
     }
 
-    // Safari: native HLS (bypasses CORS, best performance)
-    // Chrome: hls.js (only works with same-origin URLs like our proxy)
-    const canNative = video.canPlayType('application/vnd.apple.mpegurl')
-    if (canNative) {
-      video.src = absoluteSrc
-      video.addEventListener('loadedmetadata', () => {
-        video.play().catch(() => {})
-      }, { once: true })
-    } else if (Hls.isSupported()) {
+    if (Hls.isSupported()) {
       const hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
@@ -38,6 +30,7 @@ export function useHlsPlayer(videoRef, src) {
         video.play().catch(() => {})
       })
       hlsRef.current = hls
+      video._hls = hls // expose for sync loop access
     }
 
     return () => {

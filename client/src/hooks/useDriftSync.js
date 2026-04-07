@@ -34,8 +34,12 @@ function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
   const phoneAbsMs = getPlayingDate()
   if (!phoneAbsMs || !pb.absoluteMs) return
 
-  const drift = (pb.absoluteMs - phoneAbsMs) / 1000
   const store = useSyncStore.getState()
+  const drift = (pb.absoluteMs - phoneAbsMs) / 1000 + store.userOffset
+
+  // Filter garbage from VLC PTS glitches
+  if (Math.abs(drift) > 100) return
+
   store.setDrift(drift)
 
   // Send debug to server

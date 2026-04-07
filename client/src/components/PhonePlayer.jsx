@@ -1,27 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
+import Hls from 'hls.js'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
-import { useHlsPlayer } from '../hooks/useHlsPlayer'
-import { useDriftSync } from '../hooks/useDriftSync'
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
+  const userOffsetRef = useRef(0)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
 
-  const pb = usePlaybackStore()
-  const drift = useSyncStore(s => s.drift)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
-
-  // hls.js for live streams, direct src for VOD
-  const { hlsRef, getPlayingDate, seekTo, getSeekableEnd } = useHlsPlayer(videoRef, isLive ? streamUrl : null)
-
-  // Use drift sync for live and VOD
-  useDriftSync(videoRef, getPlayingDate, send)
 
   // Fetch stream URL on open
   useEffect(() => {
@@ -33,49 +25,129 @@ export default function PhonePlayer({ send }) {
       .then(data => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
-          // Safari: YouTube URL (native HLS, no CORS). Chrome: proxy URL (hls.js needs same-origin)
-          const canNative = videoRef.current?.canPlayType?.('application/vnd.apple.mpegurl')
-          const url = data.isLive && canNative ? data.streamUrl : (data.proxyUrl || data.streamUrl)
+          // Always use lightweight proxy (full YouTube manifest is 5MB, stalls Safari)
+          const url = data.isLive ? (data.proxyUrl || data.streamUrl) : data.streamUrl
           setStreamUrl(url)
-          // For VOD, set src directly on video element
-          if (!data.isLive && videoRef.current) {
-            videoRef.current.src = data.streamUrl
-            if (data.seconds) {
-              videoRef.current.currentTime = data.seconds
+
+          // Defer setup to next tick so React has rendered the video element
+          setTimeout(() => {
+            const video = videoRef.current
+            if (!video) { console.error('PHONE: no video ref'); return }
+            const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+            if (data.isLive && Hls.isSupported()) {
+              if (video._hls) { video._hls.destroy(); video._hls = null }
+              const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 })
+              hls.loadSource(fullUrl)
+              hls.attachMedia(video)
+              hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                video.play().catch(e => console.error('PHONE play error:', e))
+              })
+              hls.on(Hls.Events.ERROR, (_, d) => console.error('HLS error:', d.type, d.details))
+              video._hls = hls
+            } else {
+              video.src = fullUrl
+              if (data.seconds) video.currentTime = data.seconds
+              video.play().catch(e => console.error('PHONE play error:', e))
             }
-            videoRef.current.play().catch(() => {})
-          }
+          }, 100)
         }
         setLoading(false)
       })
-      .catch(() => {
-        addToast('Failed to get stream')
-        setLoading(false)
-      })
+      .catch(() => { addToast('Failed to get stream'); setLoading(false) })
   }, [phoneOpen, addToast])
 
-  // Sync VOD position from desktop player
+  // Imperative sync loop — reads store directly, no subscriptions that cause re-renders
   useEffect(() => {
-    if (!phoneOpen || pb.isLive || !videoRef.current) return
+    if (!phoneOpen) return
 
-    const video = videoRef.current
-    if (pb.paused && !video.paused) video.pause()
-    else if (!pb.paused && video.paused) video.play().catch(() => {})
-  }, [pb.paused, pb.isLive, phoneOpen])
+    let lastRateSend = 0
+    const setDrift = (text) => { const el = document.getElementById('drift-display'); if (el) el.textContent = text }
+
+    window._nudgeOffset = (delta) => {
+      userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
+      const el = document.getElementById('offset-display')
+      if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
+    }
+
+    let tick = 0
+    const interval = setInterval(() => {
+      tick++
+      const video = videoRef.current
+      const pb = usePlaybackStore.getState()
+      // Always show debug status
+      setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!video?._hls}`)
+      if (!video) return
+      if (!pb.playing || pb.paused) return
+
+      const behindLive = pb.duration - pb.position
+
+      if (pb.isLive) {
+        // Compare "seconds behind live edge"
+        const vlcBehind = pb.vlcBehind || 0 // real behind-live from server (includes VLC buffering)
+        // Phone's behind-live: seekable end - currentTime
+        let phoneBehind = 0
+        if (video.seekable?.length > 0) {
+          phoneBehind = video.seekable.end(video.seekable.length - 1) - video.currentTime
+        } else {
+          setDrift('no seekable')
+          return
+        }
+        // drift > 0 means VLC is further behind live than phone (phone is ahead)
+        const drift = vlcBehind - phoneBehind + userOffsetRef.current
+        if (Math.abs(drift) > 300) return // filter garbage
+
+        setDrift(`drift: ${drift.toFixed(1)}s (vlc:-${vlcBehind.toFixed(0)} ph:-${phoneBehind.toFixed(0)})`)
+        send({ type: 'phone-state', drift: +drift.toFixed(2), vlcBehind: +vlcBehind.toFixed(0), phoneBehind: +phoneBehind.toFixed(0) })
+
+        if (behindLive > 5) return
+
+        const now = Date.now()
+        if (now - lastRateSend < 1000) return
+        lastRateSend = now
+
+        if (Math.abs(drift) > 0.1) {
+          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1))
+          send({ type: 'vlc-rate', rate: +rate.toFixed(4) })
+        } else {
+          send({ type: 'vlc-rate', rate: 1.0 })
+        }
+      } else {
+        // VOD sync
+        const drift = pb.position - video.currentTime
+        setDrift(`drift: ${drift.toFixed(1)}s`)
+        send({ type: 'phone-state', drift: +drift.toFixed(2) })
+
+        if (Math.abs(drift) > 5) {
+          video.currentTime = pb.position
+        } else if (Math.abs(drift) > 0.5) {
+          const now = Date.now()
+          if (now - lastRateSend < 1000) return
+          lastRateSend = now
+          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.05))
+          send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
+        }
+      }
+    }, 1000)
+
+    return () => {
+      clearInterval(interval)
+      delete window._nudgeOffset
+    }
+  }, [phoneOpen, send])
 
   const handleClose = useCallback(() => {
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+    send({ type: 'vlc-rate', rate: 1.0 })
+    send({ type: 'mpv-speed', speed: 1.0 })
     setPhoneOpen(false)
     setStreamUrl(null)
     setIsLive(false)
-
-    // Stop video
     if (videoRef.current) {
       videoRef.current.pause()
       videoRef.current.removeAttribute('src')
       videoRef.current.load()
     }
-  }, [setPhoneOpen])
+  }, [setPhoneOpen, send])
 
   if (!phoneOpen) return null
 
@@ -89,18 +161,16 @@ export default function PhonePlayer({ send }) {
         controls
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: '#000' }}
       />
-      <div className="phone-player-controls">
-        <div className="drift-overlay">
-          {loading ? 'Loading...' : (
-            <>
-              drift: {drift.toFixed(3)}s
-              {isLive && ' | LIVE'}
-            </>
-          )}
-        </div>
-        <button className="phone-player-close" onClick={handleClose}>
-          CLOSE
-        </button>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: '#111', fontSize: '12px', fontFamily: 'monospace' }}>
+        <span id="drift-display" style={{ color: '#0f0' }}>drift: --</span>
+        {isLive && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <button onClick={() => window._nudgeOffset?.(-0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>-0.5</button>
+            <span id="offset-display" style={{ color: '#ff0' }}>offset: 0.0s</span>
+            <button onClick={() => window._nudgeOffset?.(0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>+0.5</button>
+          </div>
+        )}
+        <button onClick={handleClose} style={{ padding: '6px 12px', background: '#333', color: '#f33', border: '1px solid #555' }}>CLOSE</button>
       </div>
     </div>
   )

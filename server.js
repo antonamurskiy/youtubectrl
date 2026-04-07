@@ -119,7 +119,13 @@ fs.watch(path.join(__dirname, "public"), { recursive: true }, () => { lastModifi
 fs.watch(path.join(__dirname, "server.js"), () => { lastModified = Date.now(); });
 app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
 
-app.use(express.static(path.join(__dirname, "public"), { etag: false, lastModified: false }));
+// Serve React build if available, fall back to public/
+const clientDist = path.join(__dirname, "client", "dist");
+if (fs.existsSync(clientDist)) {
+  app.use(express.static(clientDist, { etag: false, lastModified: false }));
+} else {
+  app.use(express.static(path.join(__dirname, "public"), { etag: false, lastModified: false }));
+}
 app.use((_req, res, next) => { res.set("Cache-Control", "no-store"); next(); });
 
 // ── YouTube API helpers ──
@@ -1267,11 +1273,19 @@ app.get("/api/phone-hls", async (_req, res) => {
   try {
     const manifest = await fetchManifest(lastVlcHlsUrl);
     const lines = manifest.split('\n');
-    // Find all segment entries (EXTINF + URL pairs)
+    // Parse segments with their PDT tags
     const segLines = [];
+    let lastPdt = null;
+    let durSinceLastPdt = 0;
     for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+        lastPdt = new Date(lines[i].substring('#EXT-X-PROGRAM-DATE-TIME:'.length).trim()).getTime();
+        durSinceLastPdt = 0;
+      }
       if (lines[i].startsWith('#EXTINF:')) {
-        segLines.push({ idx: i, dur: parseFloat(lines[i].split(':')[1]) });
+        const dur = parseFloat(lines[i].split(':')[1]);
+        segLines.push({ idx: i, dur, pdtMs: lastPdt ? lastPdt + durSinceLastPdt * 1000 : null });
+        durSinceLastPdt += dur;
       }
     }
     // Keep only the last ~30 seconds of segments
@@ -1282,18 +1296,49 @@ app.get("/api/phone-hls", async (_req, res) => {
       keepFrom = i;
       if (keepDur >= 30) break;
     }
-    // Build trimmed manifest: header lines + last N segments
-    const headerEnd = segLines.length > 0 ? segLines[0].idx : lines.length;
-    const header = lines.slice(0, headerEnd);
-    // Update media sequence to match the first kept segment
+    if (keepFrom >= segLines.length) return res.status(500).send("No segments");
+    // Build clean minimal manifest
     const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
     const origSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
     const newSeq = origSeq + keepFrom;
-    const headerStr = header.join('\n').replace(/#EXT-X-MEDIA-SEQUENCE:\d+/, `#EXT-X-MEDIA-SEQUENCE:${newSeq}`);
-    const segments = lines.slice(segLines[keepFrom].idx).join('\n');
-    res.type('application/vnd.apple.mpegurl').send(headerStr + '\n' + segments);
+    const tdMatch = manifest.match(/#EXT-X-TARGETDURATION:(\d+)/);
+    const td = tdMatch ? tdMatch[1] : '2';
+    const keepPdt = segLines[keepFrom].pdtMs;
+    // Minimal header + EXTINF+URL pairs with proxied segment URLs for CORS
+    let out = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${td}\n#EXT-X-MEDIA-SEQUENCE:${newSeq}\n`;
+    if (keepPdt) out += `#EXT-X-PROGRAM-DATE-TIME:${new Date(keepPdt).toISOString()}\n`;
+    for (let i = keepFrom; i < segLines.length; i++) {
+      const seg = segLines[i];
+      out += lines[seg.idx] + '\n'; // #EXTINF
+      const segUrl = lines[seg.idx + 1]?.trim();
+      // Proxy segment URLs through our server to avoid CORS
+      if (segUrl && segUrl.startsWith('http')) {
+        out += `/api/hls-seg?url=${encodeURIComponent(segUrl)}\n`;
+      } else {
+        out += (segUrl || '') + '\n';
+      }
+    }
+    res.type('application/vnd.apple.mpegurl').send(out);
   } catch (e) {
     res.status(500).send("Phone HLS error: " + e.message);
+  }
+});
+
+// HLS segment proxy — passes through video segments from YouTube CDN (avoids CORS for hls.js)
+app.get("/api/hls-seg", async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send("Missing url");
+  try {
+    const https = require('https');
+    const http = require('http');
+    const get = url.startsWith('https') ? https.get : http.get;
+    get(url, (upstream) => {
+      res.set('Content-Type', upstream.headers['content-type'] || 'video/mp2t');
+      res.set('Cache-Control', 'public, max-age=30');
+      upstream.pipe(res);
+    }).on('error', (e) => res.status(502).send(e.message));
+  } catch (e) {
+    res.status(500).send(e.message);
   }
 });
 
@@ -2243,16 +2288,23 @@ function startWsSync() {
         // Absolute time for drift calculation
         let absoluteMs = null;
         const vlcT = vlcTimeNow();
-        if (vlcDvrBehind < 2 && vlcPdtEpochMs && vlcT > 10 && vlcTimeModel.prevIntAt > 0) {
-          // Only send after vlcTimeModel stabilizes (needs ~5s of integer transitions)
+        if (vlcManifestLiveEdgeMs > 0) {
+          // Use manifest live edge (accurate, refreshed every 5s) instead of vlcPdtEpochMs
+          // (which has cumulative precision error over thousands of segments)
+          const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
+          absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
+        } else if (vlcDvrBehind < 2 && vlcPdtEpochMs && vlcT > 2) {
+          // Fallback to PDT + vlcTime
           absoluteMs = vlcPdtEpochMs + vlcT * 1000;
         } else if (vlcDvrBehind >= 2 && vlcManifestLiveEdgeMs > 0) {
           absoluteMs = vlcManifestLiveEdgeMs + vlcManifestCalibOffset + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
         }
+        const vlcRealBehind = vlcDvrBehind;
         state = {
           type: "playback",
           playing: true, isLive: true, player: "vlc",
           position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time || undefined,
+          vlcBehind: vlcRealBehind,
           paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
           url: nowPlaying, serverTs: Date.now()
         };
@@ -2277,7 +2329,7 @@ function startWsSync() {
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}
-  }, 500); // 2x per second
+  }, 1000); // 1x per second
 }
 
 httpServer.listen(PORT, "0.0.0.0", async () => {
@@ -2350,10 +2402,7 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           } catch {}
         }
         vlcDvrBehind = 0; // reset stale DVR offset from previous session
-        // Only start DVR refresh on reconnect — do NOT call fetchPdtFromUrl with a freshly
-        // fetched URL because the manifest's media sequence won't match VLC's existing PTS base.
-        // PDT sync only works when VLC was spawned with that specific manifest.
-        if (lastVlcHlsUrl) startDvrRefresh();
+        if (lastVlcHlsUrl) { fetchPdtFromUrl(lastVlcHlsUrl); startDvrRefresh(); }
         // Monitor VLC liveness
         const vlcMonitor = setInterval(async () => {
           try { await vlcRC("get_time"); }

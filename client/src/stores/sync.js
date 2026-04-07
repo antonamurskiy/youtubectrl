@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export const useSyncStore = create((set) => ({
   drift: 0,
-  baseline: null,       // initial PDT offset captured on first stable measurement
+  userOffset: 0,        // manual offset in seconds (user adjustable via +/- buttons)
   clockOffset: 0,       // server-client clock difference (ms)
   connected: false,
   settling: false,
@@ -10,7 +10,7 @@ export const useSyncStore = create((set) => ({
   phoneOpen: false,
 
   setDrift: (drift) => set({ drift }),
-  setBaseline: (baseline) => set({ baseline }),
+  nudgeOffset: (delta) => set((s) => ({ userOffset: +(s.userOffset + delta).toFixed(1) })),
   setClockOffset: (clockOffset) => set({ clockOffset }),
   setConnected: (connected) => set({ connected }),
   setSettling: (until) => set({ settling: true, settleUntil: until }),
