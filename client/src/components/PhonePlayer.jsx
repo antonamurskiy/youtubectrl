@@ -11,6 +11,7 @@ export default function PhonePlayer({ send }) {
   const readyAtRef = useRef(0) // timestamp when video became ready
   const calibOffsetRef = useRef(null) // one-time PDT calibration offset (ms)
   const driftSamplesRef = useRef([]) // moving average for smooth drift display
+  const lastSeekRef = useRef(0) // timestamp of last live seek (cooldown)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -71,14 +72,20 @@ export default function PhonePlayer({ send }) {
               } else {
                 video.src = fullUrl
                 if (data.isLive) {
-                  // Native Safari HLS: seek behind live to match VLC's measured buffer delay
-                  const vlcBuf = data.vlcBufferDelay || 20
-                  video.addEventListener('loadedmetadata', () => {
+                  // Native Safari HLS: wait for seekable range, then seek to match VLC
+                  const vlcBuf = data.vlcBufferDelay || 25
+                  const waitSeekable = () => {
                     if (video.seekable?.length > 0) {
                       const seekableEnd = video.seekable.end(video.seekable.length - 1)
                       video.currentTime = Math.max(0, seekableEnd - vlcBuf)
+                      video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
+                    } else {
+                      // Retry until seekable is populated
+                      setTimeout(waitSeekable, 500)
                     }
-                    video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
+                  }
+                  video.addEventListener('loadedmetadata', () => {
+                    waitSeekable()
                   }, { once: true })
                 } else {
                   // VOD: seek to current mpv position
@@ -185,15 +192,8 @@ export default function PhonePlayer({ send }) {
         const vlcAbsMs = pb.absoluteMs ? pb.absoluteMs + elapsed : null
         let phoneAbsMs = null
 
-        // Try to get phone's absolute content time via PDT
-        // hls.js: video.getStartDate() + currentTime (if manifest has PDT)
-        // Native Safari: same API
-        try {
-          const startDate = video.getStartDate?.()
-          if (startDate && !isNaN(startDate.getTime())) {
-            phoneAbsMs = startDate.getTime() + video.currentTime * 1000
-          }
-        } catch {}
+        // Note: getStartDate() is unstable on Safari live HLS — shifts as manifest
+        // sliding window moves. Skip PDT path for live, use behind-live fallback only.
 
         if (vlcAbsMs && phoneAbsMs) {
           const rawOffset = vlcAbsMs - phoneAbsMs
@@ -214,38 +214,42 @@ export default function PhonePlayer({ send }) {
           setDrift(`drift: ${drift.toFixed(1)}s`)
           send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
+          // Live micro-seeks with 10s cooldown to avoid rebuffer spam
+          const now = Date.now()
           if (Math.abs(drift) > 5) {
             video.currentTime += drift
             calibOffsetRef.current = null
             driftSamplesRef.current = []
+            lastSeekRef.current = now
+          } else if (Math.abs(drift) > 0.5 && now - lastSeekRef.current > 10000) {
+            video.currentTime += drift
+            lastSeekRef.current = now
           }
         } else {
-          // Fallback: behind-live comparison with calibration
-          // vlcBehind doesn't include VLC's internal ~20s buffer, so calibrate
-          const vlcBehind = pb.vlcBehind || 0
-          let phoneBehind = 0
-          if (video.seekable?.length > 0) {
-            phoneBehind = video.seekable.end(video.seekable.length - 1) - video.currentTime
-          }
-          const rawDiff = vlcBehind - phoneBehind
+          // Fallback: use vlcTime (smooth, interpolated) vs phone currentTime
+          // Both advance at ~1s/s, difference should be stable
+          // Smooth drift: vlcTime vs currentTime (both advance linearly at ~1s/s)
+          // Initial position was set correctly by seekableEnd - vlcBuf
+          const vlcT = pb.vlcTime || 0
+          const rawDiff = vlcT - video.currentTime
           if (calibOffsetRef.current === null) {
-            calibOffsetRef.current = rawDiff // store in seconds
+            calibOffsetRef.current = rawDiff
             setDrift('calibrated')
             return
           }
-          const rawDrift = rawDiff - calibOffsetRef.current + userOffsetRef.current
-          if (Math.abs(rawDrift) > 300) return
-          driftSamplesRef.current.push(rawDrift)
-          if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
-          const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+          const drift = rawDiff - calibOffsetRef.current + userOffsetRef.current
 
-          setDrift(`drift: ${drift.toFixed(1)}s`)
+          setDrift(`drift: ${drift.toFixed(2)}s`)
           send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
+          const now2 = Date.now()
           if (Math.abs(drift) > 5) {
             video.currentTime += drift
             calibOffsetRef.current = null
-            driftSamplesRef.current = []
+            lastSeekRef.current = now2
+          } else if (Math.abs(drift) > 0.5 && now2 - lastSeekRef.current > 10000) {
+            video.currentTime += drift
+            lastSeekRef.current = now2
           }
         }
       } else {

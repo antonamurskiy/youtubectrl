@@ -1365,31 +1365,90 @@ let vlcManifestLiveEdgeMs = 0; // PDT of last segment in manifest (= live edge c
 let vlcManifestFetchedAt = 0; // wall-clock when manifest was last fetched
 let vlcManifestCalibOffset = 0; // offset between PDT-based and manifest-based absolute time (calibrated at live edge)
 // Fetch PDT from an HLS URL (called once at VLC spawn)
+// Parse first PTS from MPEG-TS segment buffer
+function extractFirstPts(buf) {
+  const SYNC = 0x47, PKT = 188;
+  let syncOff = -1;
+  for (let i = 0; i < Math.min(buf.length, PKT * 2); i++) {
+    if (buf[i] === SYNC && (i + PKT >= buf.length || buf[i + PKT] === SYNC)) { syncOff = i; break; }
+  }
+  if (syncOff === -1) return null;
+  for (let off = syncOff; off + PKT <= buf.length; off += PKT) {
+    if (buf[off] !== SYNC) continue;
+    const payloadStart = (buf[off + 1] & 0x40) !== 0;
+    const pid = ((buf[off + 1] & 0x1F) << 8) | buf[off + 2];
+    const afc = (buf[off + 3] & 0x30) >> 4;
+    if (!payloadStart || !(afc & 1) || pid === 0x1FFF || pid === 0) continue;
+    let p = off + 4;
+    if (afc === 3) p += 1 + buf[p]; // skip adaptation field
+    if (p + 14 > buf.length) continue;
+    if (buf[p] !== 0 || buf[p + 1] !== 0 || buf[p + 2] !== 1) continue;
+    const sid = buf[p + 3];
+    if (!((sid >= 0xC0 && sid <= 0xEF) || sid === 0xBD)) continue;
+    if (((buf[p + 7] & 0xC0) >> 6) === 0) continue; // no PTS
+    const q = p + 9;
+    if (q + 5 > buf.length || !(buf[q + 2] & 1) || !(buf[q + 4] & 1)) continue;
+    const hi3 = (buf[q] & 0x0E) >>> 1;
+    const mid15 = (buf[q + 1] << 7) | ((buf[q + 2] & 0xFE) >>> 1);
+    const low15 = (buf[q + 3] << 7) | ((buf[q + 4] & 0xFE) >>> 1);
+    const pts = Number((BigInt(hi3) << 30n) | (BigInt(mid15) << 15n) | BigInt(low15));
+    return pts / 90000; // seconds
+  }
+  return null;
+}
+
+// Fetch first N bytes of a URL (supports Range requests)
+async function fetchHead(url, bytes) {
+  const mod = url.startsWith('https') ? require('https') : require('http');
+  return new Promise((resolve, reject) => {
+    mod.get(url, { headers: { Range: `bytes=0-${bytes - 1}` } }, r => {
+      const chunks = []; r.on('data', c => chunks.push(c)); r.on('end', () => resolve(Buffer.concat(chunks)));
+    }).on('error', reject);
+    setTimeout(() => reject(new Error('timeout')), 5000);
+  });
+}
+
 async function fetchPdtFromUrl(hlsUrl) {
   try {
-    const https = require('https');
-    const http = require('http');
-    const get = hlsUrl.startsWith('https') ? https.get : http.get;
-    const manifest = await new Promise((resolve, reject) => {
-      get(hlsUrl, r => {
-        let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d));
-      }).on('error', reject);
-      setTimeout(reject, 5000);
-    });
+    const manifest = await fetchManifest(hlsUrl);
     const lines = manifest.split('\n');
     const pdtMatch = manifest.match(/#EXT-X-PROGRAM-DATE-TIME:(.+)/);
     const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
-    if (pdtMatch) {
-      const pdtMs = new Date(pdtMatch[1].trim()).getTime();
-      const mediaSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
-      // Compute average segment duration
-      let totalDur = 0, count = 0;
-      lines.filter(l => l.startsWith('#EXTINF')).forEach(l => { totalDur += parseFloat(l.split(':')[1]); count++; });
-      const avgSeg = count > 0 ? totalDur / count : 5;
-      // Stream start = PDT of first segment - (mediaSequence * avgSegmentDuration)
-      vlcPdtEpochMs = pdtMs - mediaSeq * avgSeg * 1000;
-      console.log(`  PDT: seq=${mediaSeq} avgSeg=${avgSeg.toFixed(1)}s streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
+    if (!pdtMatch) return;
+    const pdtMs = new Date(pdtMatch[1].trim()).getTime();
+    const mediaSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
+
+    // Find the first segment URL (line after the first #EXTINF)
+    let segUrl = null;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXTINF:') && i + 1 < lines.length) {
+        segUrl = lines[i + 1].trim();
+        break;
+      }
     }
+
+    if (segUrl) {
+      try {
+        // Fetch first 10KB of segment and extract PTS from MPEG-TS
+        const segBuf = await fetchHead(segUrl, 10240);
+        const segPts = extractFirstPts(segBuf);
+        if (segPts !== null) {
+          // Precise mapping: segment's PDT corresponds to segment's PTS
+          // vlcPdtEpochMs = PDT_of_segment - PTS_of_segment (in ms)
+          // Then: vlcDisplayTime = vlcPdtEpochMs + vlcGetTime * 1000
+          vlcPdtEpochMs = pdtMs - segPts * 1000;
+          console.log(`  PDT (PTS): seq=${mediaSeq} segPTS=${segPts.toFixed(1)}s → streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
+          return;
+        }
+      } catch (e) { console.error("  PTS extraction failed:", e.message); }
+    }
+
+    // Fallback: imprecise avgSegDuration method
+    let totalDur = 0, count = 0;
+    lines.filter(l => l.startsWith('#EXTINF')).forEach(l => { totalDur += parseFloat(l.split(':')[1]); count++; });
+    const avgSeg = count > 0 ? totalDur / count : 5;
+    vlcPdtEpochMs = pdtMs - mediaSeq * avgSeg * 1000;
+    console.log(`  PDT (fallback): seq=${mediaSeq} avgSeg=${avgSeg.toFixed(1)}s → streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
   } catch (e) { console.error("fetchPdt error:", e.message); }
 }
 app.get("/api/vlc-absolute-time", async (_req, res) => {
@@ -1818,15 +1877,21 @@ app.post("/api/watch-on-phone", async (_req, res) => {
         const tdMatch = m.match(/#EXT-X-TARGETDURATION:(\d+)/);
         if (tdMatch) segDuration = parseInt(tdMatch[1]);
       } catch {}
-      // Measure VLC's buffer delay: how far behind live edge VLC is displaying
-      // Uses vlcPdtEpochMs + vlcTimeNow (has precision error but bounded at ~1 segment for recent streams)
-      let vlcBufferDelay = 20; // fallback
-      if (vlcManifestLiveEdgeMs > 0 && vlcPdtEpochMs && vlcTimeNow() > 5) {
-        const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
-        const vlcDisplayMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
-        const measured = Math.round((liveEdgeNow - vlcDisplayMs) / 1000);
-        if (measured > 5 && measured < 120) vlcBufferDelay = measured;
-      }
+      // Compute live edge from the manifest we just fetched, then measure VLC's buffer delay
+      let vlcBufferDelay = 25; // conservative fallback
+      try {
+        const m2 = await fetchManifest(lastVlcHlsUrl);
+        const liveEdgeMs = hlsLiveEdgePdt(m2);
+        const _pdt = vlcPdtEpochMs, _vt = vlcTimeNow();
+        if (liveEdgeMs > 0 && _pdt && _vt > 2) {
+          const vlcDisplayMs = _pdt + _vt * 1000;
+          const measured = Math.round((liveEdgeMs - vlcDisplayMs) / 1000);
+          console.log(`  Buffer calc: liveEdge=${new Date(liveEdgeMs).toISOString()} vlcDisplay=${new Date(vlcDisplayMs).toISOString()} measured=${measured}s`);
+          if (measured > 5 && measured < 120) vlcBufferDelay = measured - 1;
+        } else {
+          console.log(`  Buffer calc SKIPPED: liveEdge=${liveEdgeMs > 0} pdt=${!!_pdt} vt=${_vt.toFixed(1)}`);
+        }
+      } catch (e) { console.log(`  Buffer calc error: ${e.message}`); }
       console.log(`Phone sync: segDur=${segDuration}s vlcBuffer=${vlcBufferDelay}s`);
       return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true, segDuration, vlcBufferDelay });
     }
@@ -1967,14 +2032,8 @@ app.post("/api/playpause", async (_req, res) => {
     try {
       await vlcPause();
       vlcPaused = !vlcPaused;
-      if (vlcPaused) {
-        vlcPausedAt = Date.now();
-      } else if (vlcPausedAt > 0) {
-        // Live edge moved forward while paused — increase vlcDvrBehind
-        const pauseDuration = (Date.now() - vlcPausedAt) / 1000;
-        vlcDvrBehind += pauseDuration;
-        vlcPausedAt = 0;
-      }
+      // Note: don't adjust vlcDvrBehind on pause/unpause — VLC's HLS demuxer
+      // catches back up to live edge on its own after unpausing
       if (windowMode === "floating" || windowMode === "maximize") {
         try {
           if (vlcPaused) {
