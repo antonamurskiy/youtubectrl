@@ -2138,7 +2138,92 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
-app.listen(PORT, "0.0.0.0", async () => {
+// ── WebSocket server for phone sync ──
+const http = require("http");
+const WebSocket = require("ws");
+const httpServer = http.createServer(app);
+const wss = new WebSocket.Server({ server: httpServer, path: "/ws/sync" });
+
+wss.on("connection", (ws) => {
+  console.log("  Phone sync: WebSocket connected");
+  ws.isAlive = true;
+  ws.on("pong", () => { ws.isAlive = true; });
+  ws.on("message", (msg) => {
+    try {
+      const data = JSON.parse(msg);
+      if (data.type === "phone-state") {
+        _phoneSyncDebug = { ...data, ts: Date.now() };
+      } else if (data.type === "vlc-rate" && typeof data.rate === "number") {
+        vlcRC(`rate ${data.rate}`).catch(() => {});
+      } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
+        mpvCommand(["set_property", "speed", data.speed]).catch(() => {});
+      }
+    } catch {}
+  });
+  ws.on("close", () => { console.log("  Phone sync: WebSocket disconnected"); });
+});
+
+// Heartbeat
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (!ws.isAlive) return ws.terminate();
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, 10000);
+
+// Push playback state to all connected phones
+let wsSyncInterval = null;
+function startWsSync() {
+  if (wsSyncInterval) return;
+  wsSyncInterval = setInterval(async () => {
+    if (wss.clients.size === 0) return;
+    try {
+      let state;
+      if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
+        const s = await vlcStatus();
+        if (s.length > 0 && vlcDvrWindow <= 0) vlcDvrWindow = s.length;
+        const dvrPos = Math.max(0, vlcDvrWindow - vlcDvrBehind);
+        // Absolute time for drift calculation
+        let absoluteMs = null;
+        if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
+          absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+        } else if (vlcDvrBehind >= 2 && vlcManifestLiveEdgeMs > 0) {
+          absoluteMs = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
+        }
+        state = {
+          type: "playback",
+          playing: true, isLive: true, player: "vlc",
+          position: dvrPos, duration: vlcDvrWindow,
+          paused: vlcPaused, absoluteMs,
+          url: nowPlaying, serverTs: Date.now()
+        };
+      } else if (activePlayer === "mpv" && nowPlaying) {
+        try {
+          const pos = await mpvCommand(["get_property", "time-pos"]);
+          const dur = await mpvCommand(["get_property", "duration"]);
+          const pause = await mpvCommand(["get_property", "pause"]);
+          state = {
+            type: "playback",
+            playing: true, isLive: false, player: "mpv",
+            position: pos?.data || 0, duration: dur?.data || 0,
+            paused: pause?.data || false,
+            url: nowPlaying, serverTs: Date.now()
+          };
+        } catch {
+          state = { type: "playback", playing: false };
+        }
+      } else {
+        state = { type: "playback", playing: false };
+      }
+      const msg = JSON.stringify(state);
+      wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+    } catch {}
+  }, 100); // 10x per second
+}
+
+httpServer.listen(PORT, "0.0.0.0", async () => {
+  startWsSync();
   console.log(`YouTubeCtrl running at http://localhost:${PORT}`);
   if (!API_KEY) console.warn("  WARNING: YOUTUBE_API_KEY not set in .env");
   if (!CLIENT_ID) console.warn("  WARNING: GOOGLE_CLIENT_ID not set in .env");
@@ -2206,6 +2291,7 @@ app.listen(PORT, "0.0.0.0", async () => {
             if (stdout.trim()) lastVlcHlsUrl = stdout.trim();
           } catch {}
         }
+        vlcDvrBehind = 0; // reset stale DVR offset from previous session
         // Only start DVR refresh on reconnect — do NOT call fetchPdtFromUrl with a freshly
         // fetched URL because the manifest's media sequence won't match VLC's existing PTS base.
         // PDT sync only works when VLC was spawned with that specific manifest.

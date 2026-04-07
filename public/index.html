@@ -1816,10 +1816,20 @@
               const delay = data.isLive ? 500 : 150;
               seekTimer = setTimeout(() => {
                 const phoneVid = document.getElementById('phoneVideo');
-                if (data.isLive && phoneVid && phoneVid.seekable?.length > 0) {
-                  const phoneStart = phoneVid.seekable.start(0);
-                  const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
-                  phoneVid.currentTime = phoneStart + pct * (phoneEnd - phoneStart);
+                if (phoneVid) {
+                  if (data.isLive && phoneVid.seekable?.length > 0) {
+                    const phoneStart = phoneVid.seekable.start(0);
+                    const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
+                    phoneVid.currentTime = phoneStart + pct * (phoneEnd - phoneStart);
+                  } else if (!data.isLive) {
+                    phoneVid.currentTime = pct * dur;
+                  }
+                }
+                // Reset playback rate to 1x before seeking (proportional sync may have changed it)
+                if (data.isLive) {
+                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) });
+                } else {
+                  fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 1.0 }) });
                 }
                 fetch('/api/seek', {
                   method: 'POST',
@@ -2038,156 +2048,94 @@
         mpvVideoHidden = true;
         fetch('/api/mpv-video', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hidden: true }) });
 
+        // ── WebSocket sync ──
         if (window._phoneSyncInterval) clearInterval(window._phoneSyncInterval);
-        window._driftSamples = [];
-        window._rateCalibrated = false;
-        window._liveDriftSamples = [];
-        window._liveSynced = false;
+        if (window._phoneSyncWs) { window._phoneSyncWs.close(); window._phoneSyncWs = null; }
         {
+          const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const ws = new WebSocket(`${wsProto}//${location.host}/ws/sync`);
+          window._phoneSyncWs = ws;
+          let liveState = 'done';
+          let syncReady = false;
+          let settleUntil = 0; // timestamp until which corrections are paused
+
           const vid2 = document.getElementById('phoneVideo');
-          let syncOffset = null;
-          let liveState = 'wait'; // wait → seek → settle → monitor
-          let settleTimer = null;
+          vid2.addEventListener('playing', () => { syncReady = true; }, { once: true });
 
-          // Wait for phone to actually render before doing anything
-          const waitForReal = () => {
-            const v = document.getElementById('phoneVideo');
-            if (!v) return;
-            let lastTime = v.currentTime;
-            const check = setInterval(async () => {
-              const v2 = document.getElementById('phoneVideo');
-              if (!v2) { clearInterval(check); return; }
-              if (v2.currentTime > 0 && v2.currentTime !== lastTime && v2.readyState >= 3) {
-                clearInterval(check);
-                try {
-                  const ac = new AbortController();
-                  setTimeout(() => ac.abort(), 3000);
-                  const pb = await fetch('/api/playback', { signal: ac.signal }).then(r => r.json());
-                  if (pb.position && v2) {
-                    syncOffset = pb.position - v2.currentTime;
-                    if (pb.isLive) liveState = 'seek'; // ready to seek VLC
-                  }
-                } catch {}
-              }
-              lastTime = v2.currentTime;
-            }, 500);
-          };
-          vid2.addEventListener('playing', waitForReal, { once: true });
+          function showDrift(drift) {
+            let el = document.getElementById('syncDrift');
+            if (!el) {
+              el = document.createElement('div');
+              el.id = 'syncDrift';
+              el.style.cssText = 'position:absolute;top:4px;left:4px;color:#0f0;font-size:11px;font-family:monospace;background:rgba(0,0,0,0.6);padding:2px 6px;pointer-events:none;z-index:1';
+              document.querySelector('#phonePlayer > div')?.appendChild(el);
+            }
+            const a = Math.abs(drift);
+            el.style.color = a < 0.3 ? '#0f0' : a < 1 ? '#ff0' : '#f33';
+            el.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
+          }
 
-          window._phoneSyncInterval = setInterval(async () => {
+          ws.onmessage = (e) => {
             try {
+              const pb = JSON.parse(e.data);
+              if (pb.type !== 'playback' || !pb.playing) return;
               const vid = document.getElementById('phoneVideo');
-              if (!vid) return;
-              const ac = new AbortController();
-              const t = setTimeout(() => ac.abort(), 3000);
-              const pb = await fetch('/api/playback', { signal: ac.signal }).then(r => r.json());
-              clearTimeout(t);
-              if (!pb.position) return;
+              if (!vid || !syncReady) return;
+
+              // Pause/resume sync
+              if (pb.paused && !vid.paused) vid.pause();
+              else if (!pb.paused && vid.paused) vid.play().catch(() => {});
+              if (pb.paused || vid.paused) return;
+
+              const settling = Date.now() < settleUntil;
 
               if (pb.isLive) {
-                // ── Live (VLC) sync via PDT ──
-                // Phone: getStartDate() + currentTime (sub-second, from HLS PDT)
-                // VLC: pdtEpoch + vlcTimeNow() (sub-second, from manifest PDT + interpolation)
-                if (pb.paused && !vid.paused) vid.pause();
-                else if (!pb.paused && vid.paused) vid.play().catch(() => {});
-                // When paused, reset VLC rate to 1x and skip sync
-                if (pb.paused) {
-                  if (window._liveBurstTimer) { clearTimeout(window._liveBurstTimer); window._liveBurstTimer = null; }
-                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) });
-                  if (liveState === 'settle') liveState = 'done';
-                  return;
-                }
-
+                // ── Live sync via PDT ──
                 let phoneAbsMs = null;
                 try {
                   const sd = vid.getStartDate();
                   if (sd && !isNaN(sd.getTime())) phoneAbsMs = sd.getTime() + vid.currentTime * 1000;
                 } catch {}
-                if (!phoneAbsMs) return;
+                if (!phoneAbsMs || !pb.absoluteMs) return;
 
-                const ac2 = new AbortController();
-                const t2 = setTimeout(() => ac2.abort(), 3000);
-                const vlcSync = await fetch('/api/vlc-absolute-time', { signal: ac2.signal }).then(r => r.json()).catch(() => ({}));
-                clearTimeout(t2);
-                if (!vlcSync.absoluteMs) return;
+                const drift = (pb.absoluteMs - phoneAbsMs) / 1000;
+                showDrift(drift);
+                ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
-                const drift = (vlcSync.absoluteMs - phoneAbsMs) / 1000;
-
-                fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ drift: +drift.toFixed(2), state: liveState })
-                });
-                // Show drift in phone player UI
-                let driftEl = document.getElementById('syncDrift');
-                if (!driftEl) {
-                  driftEl = document.createElement('div');
-                  driftEl.id = 'syncDrift';
-                  driftEl.style.cssText = 'position:absolute;top:4px;left:4px;color:#0f0;font-size:11px;font-family:monospace;background:rgba(0,0,0,0.6);padding:2px 6px;pointer-events:none;z-index:1';
-                  document.querySelector('#phonePlayer > div')?.appendChild(driftEl);
-                }
-                const absDrift = Math.abs(drift);
-                const color = absDrift < 0.3 ? '#0f0' : absDrift < 1 ? '#ff0' : '#f33';
-                driftEl.style.color = color;
-                driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
-
-                // Skip drift corrections when behind live — manifest-based absolute time isn't precise
-                // enough for sync. Phone was already seeked by the scrub handler.
+                // Skip corrections when behind live or settling
                 const behindLive = pb.duration - pb.position;
-                if (behindLive > 5) return;
+                if (behindLive > 5 || settling || isSeeking) return;
 
-                if (liveState === 'done' && !isSeeking && Math.abs(drift) > 2) {
-                  // Large drift: seek phone (snaps to ~2s keyframes)
+                if (Math.abs(drift) > 2) {
                   vid.currentTime = vid.currentTime + drift;
-                  liveState = 'settle';
-                  settleTimer = setTimeout(() => { liveState = 'done'; }, 3000);
-                } else if (liveState === 'done' && !isSeeking) {
-                  // Proportional rate control: continuously adjust VLC rate to counteract drift
-                  // rate = 1.0 - drift * gain (drift>0 = VLC ahead → slow down)
-                  const gain = 0.05; // 5% rate change per 1s of drift
-                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * gain));
-                  fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rate: +rate.toFixed(4) }) });
+                  settleUntil = Date.now() + 3000;
+                } else {
+                  // Proportional VLC rate control via WebSocket
+                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1));
+                  ws.send(JSON.stringify({ type: 'vlc-rate', rate: +rate.toFixed(4) }));
                 }
-                if (liveState === 'seek' || liveState === 'wait') liveState = 'done';
-                return;
-              }
+              } else {
+                // ── VOD sync ──
+                const drift = pb.position - vid.currentTime;
+                showDrift(drift);
+                ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(3), phone: +vid.currentTime.toFixed(1), mpv: +pb.position.toFixed(1) }));
 
-              // ── VOD (mpv) sync ──
-              if (syncOffset === null) return;
-              if (pb.paused && !vid.paused) vid.pause();
-              else if (!pb.paused && vid.paused) vid.play().catch(() => {});
-              if (pb.paused || vid.paused) return;
-              const target = pb.position;
-              const drift = target - vid.currentTime;
-              // Debug drift display
-              fetch('/api/phone-debug', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ drift: +drift.toFixed(3), syncOffset: +syncOffset.toFixed(1), target: +target.toFixed(1), phone: +vid.currentTime.toFixed(1), mpv: +pb.position.toFixed(1) })
-              });
-              let driftEl = document.getElementById('syncDrift');
-              if (!driftEl) {
-                driftEl = document.createElement('div');
-                driftEl.id = 'syncDrift';
-                driftEl.style.cssText = 'position:absolute;top:4px;left:4px;color:#0f0;font-size:11px;font-family:monospace;background:rgba(0,0,0,0.6);padding:2px 6px;pointer-events:none;z-index:1';
-                document.querySelector('#phonePlayer > div')?.appendChild(driftEl);
-              }
-              const absDrift = Math.abs(drift);
-              driftEl.style.color = absDrift < 0.1 ? '#0f0' : absDrift < 0.5 ? '#ff0' : '#f33';
-              driftEl.textContent = `${drift > 0 ? '+' : ''}${drift.toFixed(2)}s`;
+                if (settling || isSeeking) return;
 
-              if (Math.abs(drift) > 2) {
-                vid.currentTime = target;
-              } else if (Math.abs(drift) > 0.1 && !isSeeking) {
-                // Proportional speed control: adjust mpv rate to counteract drift
-                const gain = 0.05;
-                const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * gain));
-                fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ speed: +rate.toFixed(4) }) });
-              } else if (Math.abs(drift) <= 0.1) {
-                // Close enough — reset to 1x
-                fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ speed: 1.0 }) });
+                if (Math.abs(drift) > 5) {
+                  vid.currentTime = pb.position;
+                  settleUntil = Date.now() + 3000;
+                } else if (Math.abs(drift) > 0.5) {
+                  const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1));
+                  ws.send(JSON.stringify({ type: 'mpv-speed', speed: +rate.toFixed(4) }));
+                } else {
+                  ws.send(JSON.stringify({ type: 'mpv-speed', speed: 1.0 }));
+                }
               }
             } catch {}
-          }, 1000);
+          };
+
+          ws.onclose = () => { window._phoneSyncWs = null; };
         }
       } else if (data.youtubeUrl) {
         showToast('Opening YouTube');
@@ -2209,6 +2157,7 @@
 
   window.closePhonePlayer = function() {
     if (window._phoneSyncInterval) { clearInterval(window._phoneSyncInterval); window._phoneSyncInterval = null; }
+    if (window._phoneSyncWs) { window._phoneSyncWs.close(); window._phoneSyncWs = null; }
     // Reset VLC/mpv rate to 1x (proportional drift sync may have changed it)
     if (window._liveBurstTimer) { clearTimeout(window._liveBurstTimer); window._liveBurstTimer = null; }
     fetch('/api/vlc-rate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rate: 1.0 }) }).catch(() => {});
