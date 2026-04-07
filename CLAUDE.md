@@ -121,16 +121,21 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 ### Phone Mode (Watch on Phone)
 
 - Phone plays the same video as the desktop player, synced via polling
-- **VOD (mpv)**: phone gets direct YouTube MP4 URL, sync loop polls `/api/playback` every 1s, hard-seeks if drift > 2s. Follows desktop scrubs and pause/resume.
-- **Live (VLC) sync — display-only drift, manual offset buttons**:
-  - Phone gets HLS via proxy (`/api/phone-hls`) on Chrome (hls.js, CORS workaround) or YouTube URL directly on Safari (native HLS)
-  - **YouTube HLS segments can be 1s** (not always 2s) — `EXT-X-TARGETDURATION` varies per stream. hls.js `liveSyncDurationCount` is multiplied by target duration, so the actual seconds-behind-live depends on the stream. Always check the manifest.
-  - **VLC sits ~19-20s behind live edge** even with `--network-caching 1000 --clock-jitter 0 --low-delay`. This is much more than the theoretical ~8s (3 segments + caching). The HLS demuxer, decode pipeline, and display chain add significant hidden delay.
-  - **`vlcDvrBehind` is unreliable for sync** — it's manually tracked server-side and drifts. Phone sync currently uses behind-live comparison (`vlcBehind - phoneBehind`) for display only, with manual offset buttons for calibration.
-  - **No auto-correction for live** — rate control and seeking both cause more problems than they solve on live HLS. User adjusts offset buttons visually.
+- **VOD (mpv)**: phone gets direct YouTube MP4 URL, sync via interpolated position from WebSocket (1s updates).
+  - `clockOffset` (server-client clock diff) measured via ping/pong. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
+  - Drift = interpolated mpv position - phone currentTime. Hard-seek at 0.3s threshold with +0.5s seek latency compensation.
+  - Safari ignores `playbackRate` on YouTube MP4s — only hard-seeks work for correction.
+  - Follows desktop scrubs (>5s position jump detection) and pause/resume.
+- **Live (VLC) sync — calibrated drift with manual offset buttons**:
+  - Phone gets HLS via DVR-aware proxy (`/api/phone-hls`) on both Chrome (hls.js, proxied segments for CORS) and Safari (direct YouTube CDN segment URLs via `?direct=1`).
+  - **YouTube HLS segments can be 1s or 5s** — `EXT-X-TARGETDURATION` varies per stream. hls.js `liveSyncDurationCount` computed as `vlcBufferDelay / segDuration`.
+  - **VLC buffer delay varies per stream** — measured at phone startup via `liveEdgeMs - (vlcPdtEpochMs + vlcTimeNow())`. Fallback 20s. Measurement has precision error from `vlcPdtEpochMs` (cumulative `mediaSequence * avgSegDuration` error over millions of segments).
+  - **`vlcPdtEpochMs` precision error**: computed from `firstPDT - mediaSequence * avgSegDuration * 1000`. With millions of segments and imprecise duration, error can be 10-60s. This error is CONSTANT per stream session, so calibration absorbs it.
+  - Calibrated drift display: baseline offset captured on first measurement, drift tracked as change from baseline. 5-sample moving average for stability.
+  - Hard-seek at 5s drift for DVR scrubs. No rate correction (Safari ignores playbackRate on live HLS).
+  - Offset buttons (±1s, ±5s) seek phone directly for manual fine-tuning.
   - **VLC `--live-caching` has no effect on HLS** — it only applies to local capture devices. Only `--network-caching` matters for network streams.
   - VLC `get_time` returns integers; `vlcTimeNow()` interpolates sub-second precision
-  - Drift naturally grows ~0.02s/s due to clock differences between VLC and hls.js players
   - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect. On reconnect, if `lastVlcHlsUrl` is null, fetches it via yt-dlp.
   - **Two absolute time modes**: at live edge, uses original `vlcPdtEpochMs + vlcTimeNow()`. After DVR seeks (where VLC PTS resets), uses manifest-based: `vlcManifestLiveEdgeMs + elapsed - vlcDvrBehind * 1000`.
 - **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries. Fragmented MP4 via pipe doesn't play (needs Content-Length).

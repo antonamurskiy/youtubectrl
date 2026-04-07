@@ -1818,7 +1818,17 @@ app.post("/api/watch-on-phone", async (_req, res) => {
         const tdMatch = m.match(/#EXT-X-TARGETDURATION:(\d+)/);
         if (tdMatch) segDuration = parseInt(tdMatch[1]);
       } catch {}
-      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true, segDuration });
+      // Measure VLC's buffer delay: how far behind live edge VLC is displaying
+      // Uses vlcPdtEpochMs + vlcTimeNow (has precision error but bounded at ~1 segment for recent streams)
+      let vlcBufferDelay = 20; // fallback
+      if (vlcManifestLiveEdgeMs > 0 && vlcPdtEpochMs && vlcTimeNow() > 5) {
+        const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
+        const vlcDisplayMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+        const measured = Math.round((liveEdgeNow - vlcDisplayMs) / 1000);
+        if (measured > 5 && measured < 120) vlcBufferDelay = measured;
+      }
+      console.log(`Phone sync: segDur=${segDuration}s vlcBuffer=${vlcBufferDelay}s`);
+      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true, segDuration, vlcBufferDelay });
     }
 
     // VOD — direct URL (Safari plays these natively)

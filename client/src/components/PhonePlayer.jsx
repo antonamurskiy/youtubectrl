@@ -29,8 +29,6 @@ export default function PhonePlayer({ send }) {
       .then(data => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
-          // Use proxy for live (DVR-aware, serves segments at VLC's position)
-          const useHls = data.isLive && Hls.isSupported()
           // Safari native: use proxy with direct YouTube segment URLs (no extra hop)
           // hls.js (Chrome): use proxy with proxied segments (CORS workaround)
           const useHls = data.isLive && Hls.isSupported()
@@ -39,6 +37,8 @@ export default function PhonePlayer({ send }) {
             : data.streamUrl
           setStreamUrl(url)
 
+          // Store VLC buffer delay for DVR reloads
+          const vlcBufDelay = data.vlcBufferDelay || 19
           // Wait for VLC to start playing before loading phone video
           const waitForVlc = setInterval(() => {
             const pb = usePlaybackStore.getState()
@@ -49,12 +49,13 @@ export default function PhonePlayer({ send }) {
               const video = videoRef.current
               if (!video) return
               const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+              video._vlcBufDelay = vlcBufDelay
               if (data.isLive && Hls.isSupported()) {
                 if (video._hls) { video._hls.destroy(); video._hls = null }
-                // Compute liveSyncDurationCount based on actual segment duration
-                // VLC sits ~19s behind live — match that regardless of segment size
+                // Compute liveSyncDurationCount based on actual segment duration + VLC buffer
                 const segDur = data.segDuration || 2
-                const syncCount = Math.round(19 / segDur)
+                const vlcBuf = data.vlcBufferDelay || 19
+                const syncCount = Math.round(vlcBuf / segDur)
                 const hls = new Hls({
                   liveSyncDurationCount: syncCount,
                   liveMaxLatencyDurationCount: syncCount + 6,
@@ -70,12 +71,12 @@ export default function PhonePlayer({ send }) {
               } else {
                 video.src = fullUrl
                 if (data.isLive) {
-                  // Native Safari HLS: wait for loadedmetadata then seek behind live to match VLC
+                  // Native Safari HLS: seek behind live to match VLC's measured buffer delay
+                  const vlcBuf = data.vlcBufferDelay || 20
                   video.addEventListener('loadedmetadata', () => {
                     if (video.seekable?.length > 0) {
-                      // VLC is ~19s behind live — match that
                       const seekableEnd = video.seekable.end(video.seekable.length - 1)
-                      video.currentTime = Math.max(0, seekableEnd - 19)
+                      video.currentTime = Math.max(0, seekableEnd - vlcBuf)
                     }
                     video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
                   }, { once: true })
@@ -167,8 +168,9 @@ export default function PhonePlayer({ send }) {
             video.src = `/api/phone-hls?direct=1&_t=${Date.now()}`
             video.addEventListener('loadedmetadata', () => {
               if (video.seekable?.length > 0) {
-                // DVR reload: offset slightly less than live (VLC rebuffers faster after DVR seek)
-                video.currentTime = video.seekable.end(video.seekable.length - 1) - 21
+                // DVR reload: use measured VLC buffer delay + 2s for rebuffer
+                const pb2 = usePlaybackStore.getState()
+                video.currentTime = video.seekable.end(video.seekable.length - 1) - (video._vlcBufDelay || 21)
               }
               video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
             }, { once: true })
@@ -178,7 +180,8 @@ export default function PhonePlayer({ send }) {
         // PDT-based absolute time sync
         // Interpolate VLC time forward since last server update to avoid sawtooth
         const clockOffset = useSyncStore.getState().clockOffset || 0
-        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() - pb.serverTs - clockOffset, 2000)) : 0
+        // clockOffset = serverClock - clientClock, so clientNow + clockOffset ≈ serverNow
+        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) : 0
         const vlcAbsMs = pb.absoluteMs ? pb.absoluteMs + elapsed : null
         let phoneAbsMs = null
 
@@ -197,11 +200,11 @@ export default function PhonePlayer({ send }) {
           // Calibrate on first measurement — vlcPdtEpochMs has precision error so we
           // measure the baseline offset and track drift relative to it
           if (calibOffsetRef.current === null) {
-            calibOffsetRef.current = rawOffset
+            calibOffsetRef.current = rawOffset / 1000 // store in seconds
             setDrift('calibrated')
             return
           }
-          const rawDrift = (rawOffset - calibOffsetRef.current) / 1000 + userOffsetRef.current
+          const rawDrift = rawOffset / 1000 - calibOffsetRef.current + userOffsetRef.current
           if (Math.abs(rawDrift) > 300) return
           // Smooth with 5-sample moving average to filter seekable.end() jitter
           driftSamplesRef.current.push(rawDrift)
@@ -226,11 +229,11 @@ export default function PhonePlayer({ send }) {
           }
           const rawDiff = vlcBehind - phoneBehind
           if (calibOffsetRef.current === null) {
-            calibOffsetRef.current = rawDiff * 1000 // store in ms for consistency
+            calibOffsetRef.current = rawDiff // store in seconds
             setDrift('calibrated')
             return
           }
-          const rawDrift = rawDiff - calibOffsetRef.current / 1000 + userOffsetRef.current
+          const rawDrift = rawDiff - calibOffsetRef.current + userOffsetRef.current
           if (Math.abs(rawDrift) > 300) return
           driftSamplesRef.current.push(rawDrift)
           if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
@@ -246,23 +249,20 @@ export default function PhonePlayer({ send }) {
           }
         }
       } else {
-        // VOD sync — compensate for stale server position by adding elapsed time since poll
+        // VOD sync — interpolate mpv position to compensate for 1s WS staleness
         const clockOffset = useSyncStore.getState().clockOffset || 0
-        const elapsed = pb.serverTs ? (Date.now() - pb.serverTs - clockOffset) / 1000 : 0
-        const estimatedPos = pb.position + Math.max(0, Math.min(elapsed, 2)) // cap at 2s to avoid garbage
-        const drift = estimatedPos - video.currentTime
+        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
+        const mpvPos = pb.position + elapsed
+        const rawDiff = mpvPos - video.currentTime
+
+        // Direct drift — no calibration needed with correct interpolation
+        const drift = rawDiff
         setDrift(`drift: ${drift.toFixed(1)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
-        if (Math.abs(drift) > 2) {
-          video.currentTime = estimatedPos
-          video.playbackRate = 1.0
-        } else if (Math.abs(drift) > 0.3) {
-          // Adjust phone playback rate to close the gap
-          // drift > 0 = phone behind → speed up phone; drift < 0 = phone ahead → slow down
-          video.playbackRate = Math.max(0.9, Math.min(1.1, 1.0 + drift * 0.1))
-        } else if (video.playbackRate !== 1.0) {
-          video.playbackRate = 1.0
+        // Hard-seek when drift > 0.3s (playbackRate doesn't work on Safari)
+        if (Math.abs(drift) > 0.3) {
+          video.currentTime = mpvPos + 0.5 // compensates for seek execution latency
         }
       }
     }, 1000)
@@ -303,13 +303,13 @@ export default function PhonePlayer({ send }) {
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: '#111', fontSize: '12px', fontFamily: 'monospace' }}>
         <span id="drift-display" style={{ color: '#0f0' }}>drift: --</span>
-        {isLive && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <button onClick={() => window._nudgeOffset?.(-0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>-0.5</button>
-            <span id="offset-display" style={{ color: '#ff0' }}>offset: 0.0s</span>
-            <button onClick={() => window._nudgeOffset?.(0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>+0.5</button>
-          </div>
-        )}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-5</button>
+          <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-1</button>
+          <span id="offset-display" style={{ color: '#ff0', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
+          <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+1</button>
+          <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+5</button>
+        </div>
         <button onClick={handleClose} style={{ padding: '6px 12px', background: '#333', color: '#f33', border: '1px solid #555' }}>CLOSE</button>
       </div>
     </div>
