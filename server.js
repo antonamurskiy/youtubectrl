@@ -596,6 +596,7 @@ let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
 let activePlayer = null; // 'mpv' | 'vlc' | null
 let vlcPaused = false;
+let vlcPausedAt = 0; // timestamp when VLC was paused (for DVR behind correction)
 let vlcDvrWindow = 0; // last known DVR window size from get_length
 let vlcDvrBehind = 0; // seconds behind live edge (0 = at live edge)
 let lastVlcHlsUrl = null; // stored for fMP4 relay
@@ -632,7 +633,7 @@ async function vlcCommand(cmd) { return vlcRC(cmd); }
 function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
-  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0; vlcManifestCalibOffset = 0;
+  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcPausedAt = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0; vlcManifestCalibOffset = 0;
   vlcTimeModel.lastInt = 0; vlcTimeModel.lastIntAt = 0; vlcTimeModel.prevInt = 0; vlcTimeModel.prevIntAt = 0;
 }
 
@@ -671,8 +672,9 @@ function spawnVlc(hlsUrl) {
     "--extraintf", "cli",
     "--rc-host", `127.0.0.1:${VLC_RC_PORT}`,
     "--no-video-title-show", "--no-fullscreen", "--video-on-top",
-    "--network-caching", "5000",
-    "--live-caching", "5000",
+    "--network-caching", "1000",
+    "--clock-jitter", "0",
+    "--low-delay",
     hlsUrl,
   ], { stdio: "ignore" });
   vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
@@ -1287,13 +1289,13 @@ app.get("/api/phone-hls", async (_req, res) => {
         durSinceLastPdt += dur;
       }
     }
-    // Keep only the last ~30 seconds of segments
+    // Keep only the last ~120 seconds of segments (enough for hls.js to refresh)
     let keepDur = 0;
     let keepFrom = segLines.length;
     for (let i = segLines.length - 1; i >= 0; i--) {
       keepDur += segLines[i].dur;
       keepFrom = i;
-      if (keepDur >= 30) break;
+      if (keepDur >= 120) break;
     }
     if (keepFrom >= segLines.length) return res.status(500).send("No segments");
     // Build clean minimal manifest
@@ -1546,6 +1548,24 @@ app.get("/api/history", async (_req, res) => {
   try {
     const videos = await getYouTubeHistory(token);
     if (videos.length) {
+      // Enrich with YouTube Data API for missing durations
+      const needEnrich = videos.filter(v => !v.duration).map(v => v.id).filter(Boolean);
+      if (needEnrich.length) {
+        try {
+          const enriched = await enrichVideos(needEnrich, token);
+          const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+          for (const v of videos) {
+            const e = enrichMap[v.id];
+            if (e) {
+              v.duration = e.duration || v.duration;
+              v.channel = e.channel || v.channel;
+              v.channelId = e.channelId || v.channelId;
+              v.views = e.views || v.views;
+              if (e.live) v.live = true;
+            }
+          }
+        } catch {}
+      }
       // Merge local progress data (more accurate than YouTube's startPercent)
       for (const v of videos) {
         const h = historyMap.get(v.url);
@@ -1778,7 +1798,14 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       }
       // Give both URLs — Safari uses YouTube directly (native HLS, no CORS issue),
       // Chrome uses proxy (hls.js can't fetch YouTube due to CORS)
-      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true });
+      // Include target duration so phone can compute liveSyncDurationCount dynamically
+      let segDuration = 2;
+      try {
+        const m = await fetchManifest(lastVlcHlsUrl);
+        const tdMatch = m.match(/#EXT-X-TARGETDURATION:(\d+)/);
+        if (tdMatch) segDuration = parseInt(tdMatch[1]);
+      } catch {}
+      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true, segDuration });
     }
 
     // VOD — direct URL (Safari plays these natively)
@@ -1917,6 +1944,14 @@ app.post("/api/playpause", async (_req, res) => {
     try {
       await vlcPause();
       vlcPaused = !vlcPaused;
+      if (vlcPaused) {
+        vlcPausedAt = Date.now();
+      } else if (vlcPausedAt > 0) {
+        // Live edge moved forward while paused — increase vlcDvrBehind
+        const pauseDuration = (Date.now() - vlcPausedAt) / 1000;
+        vlcDvrBehind += pauseDuration;
+        vlcPausedAt = 0;
+      }
       if (windowMode === "floating" || windowMode === "maximize") {
         try {
           if (vlcPaused) {
@@ -2287,16 +2322,13 @@ function startWsSync() {
         // Absolute time for drift calculation
         let absoluteMs = null;
         const vlcT = vlcTimeNow();
-        if (vlcManifestLiveEdgeMs > 0) {
-          // Use manifest live edge (accurate, refreshed every 5s) instead of vlcPdtEpochMs
-          // (which has cumulative precision error over thousands of segments)
+        // Use vlcPdtEpochMs + vlcTime — this reflects what VLC is actually displaying
+        // Note: has cumulative precision error but phone calibrates against it
+        if (vlcPdtEpochMs && vlcT > 2) {
+          absoluteMs = vlcPdtEpochMs + vlcT * 1000;
+        } else if (vlcManifestLiveEdgeMs > 0) {
           const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
           absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
-        } else if (vlcDvrBehind < 2 && vlcPdtEpochMs && vlcT > 2) {
-          // Fallback to PDT + vlcTime
-          absoluteMs = vlcPdtEpochMs + vlcT * 1000;
-        } else if (vlcDvrBehind >= 2 && vlcManifestLiveEdgeMs > 0) {
-          absoluteMs = vlcManifestLiveEdgeMs + vlcManifestCalibOffset + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
         }
         const vlcRealBehind = vlcDvrBehind;
         state = {

@@ -104,7 +104,8 @@ export default function VideoCard({ video, isPlaying }) {
   const durationStr = formatDuration(video.duration || video.lengthSeconds)
   const viewsStr = formatViews(video.views || video.viewCount)
   const agoStr = timeAgo(video.publishedAt || video.uploaded)
-  const watchPct = video.watchProgress || video.startPercent || 0
+  const watchPct = video.watchProgress || video.startPercent ||
+    (video.savedPosition > 0 && video.savedDuration > 0 ? (video.savedPosition / video.savedDuration) * 100 : 0)
 
   return (
     <>
@@ -118,8 +119,11 @@ export default function VideoCard({ video, isPlaying }) {
       >
         <div className="thumb-wrap">
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" />}
-          {(video.isLive || video.live) && <span className="live-badge">LIVE</span>}
-          {durationStr && !video.isLive && !video.live && (
+          {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
+          {(video.upcoming || video.duration === 'SOON') && !video.isLive && !video.live && (
+            <span className="live-badge" style={{ background: '#555' }}>SOON</span>
+          )}
+          {durationStr && !video.isLive && !video.live && !video.upcoming && video.duration !== 'SOON' && video.duration !== 'LIVE' && (
             <span className="duration-badge">{durationStr}</span>
           )}
           {watchPct > 0 && (

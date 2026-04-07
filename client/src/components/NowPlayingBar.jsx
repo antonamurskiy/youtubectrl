@@ -278,7 +278,7 @@ export default function NowPlayingBar({ send }) {
   }, [pb.position])
 
   const skipForward = useCallback(() => {
-    const newPos = Math.min(duration, pb.position + 30)
+    const newPos = Math.min(duration, pb.position + 10)
     fetch('/api/seek', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -351,7 +351,7 @@ export default function NowPlayingBar({ send }) {
           }
         </span>
         <span className="np-time">{formatTime(duration)}</span>
-        <button className="np-skip-btn" onClick={skipForward}>+30</button>
+        <button className="np-skip-btn" onClick={skipForward}>+10</button>
       </div>
 
       {/* Button row */}

@@ -16,7 +16,17 @@ pkill -x mpv       # Kill all mpv instances
 
 ## Architecture
 
-**Single server (`server.js`) + single-page frontend (`public/index.html`), no build step.**
+**Server (`server.js`) + React frontend (`client/`) with Vite build step.**
+
+### Frontend Stack
+- React + Zustand (state management) + Vite (build)
+- Source: `client/src/` — components, hooks, stores
+- Build: `cd client && npm run build` → outputs to `client/dist/`
+- Server serves `client/dist/` (built React app) + `public/` (static assets like `silent.m4a`)
+- Key components: `VideoCard`, `VideoGrid`, `NowPlayingBar`, `PhonePlayer`, `SecretMenu`, `SearchBar`
+- Key hooks: `useSync` (WebSocket playback state), `useMediaSession` (iOS lock screen controls), `useDriftSync` (phone sync)
+- Key stores: `playback.js` (Zustand — playing/position/duration/title etc), `ui.js`, `sync.js`
+- Duration strings from server are pre-formatted ("16:27", "1:02:30") — frontend passes through, only formats raw seconds
 
 ### Content Sources (three-tier fallback to minimize API quota)
 
@@ -69,7 +79,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Hide on pause / show on resume: `osascript` to set `visible of process "VLC"` (same as mpv)
 - **VLC `seek` command is broken for live HLS DVR** — hangs/buffers indefinitely. Do NOT use `vlcSeek()` for live streams.
 - **DVR scrubbing uses reload-based seeking**: instead of VLC's `seek`, reload the stream via an HLS proxy (`/api/vlc-hls-offset`) that serves the YouTube manifest with segments trimmed from the end. `clear` + `add /tmp/vlc-next.m3u` reloads VLC at the desired offset.
-- **DVR position tracked server-side** (`vlcDvrBehind`): VLC's `get_time` PTS is unreliable for live HLS — resets to a different base after every reload. Do NOT use `get_time` for position tracking in live streams.
+- **DVR position tracked server-side** (`vlcDvrBehind`): VLC's `get_time` PTS is unreliable for live HLS — resets to a different base after every reload. Do NOT use `get_time` for position tracking in live streams. **`vlcDvrBehind` itself is also unreliable for phone sync** — it's manually tracked and drifts. Phone sync should use PDT-based absolute time (`pb.absoluteMs`) instead.
 - **VLC `get_length` reports local buffer, not real DVR window**: after a trimmed reload, `get_length` shrinks. Use `vlcDvrWindow` which is refreshed from the real YouTube manifest every 5s (`startDvrRefresh()`).
 - **YouTube HLS `playlist_duration` is signed** — cannot modify the URL to request a larger DVR window. The manifest contains whatever YouTube provides (often 30s for some streams, 2+ hours for others).
 - **YouTube HLS manifests can have discontinuities** — multiple `#EXT-X-PROGRAM-DATE-TIME` tags with time gaps. When computing live edge PDT, use the LAST PDT tag + durations after it (not first PDT + total duration).
@@ -112,18 +122,17 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 - Phone plays the same video as the desktop player, synced via polling
 - **VOD (mpv)**: phone gets direct YouTube MP4 URL, sync loop polls `/api/playback` every 1s, hard-seeks if drift > 2s. Follows desktop scrubs and pause/resume.
-- **Live (VLC) sync via EXT-X-PROGRAM-DATE-TIME**:
-  - Phone gets the same HLS URL as VLC (same format `301/300/96/95/94/93`), plays natively on iOS Safari
-  - Drift measured by comparing absolute wall-clock content times:
-    - Phone: `video.getStartDate().getTime() + currentTime * 1000` (Safari exposes HLS PDT)
-    - VLC: `streamStartEpochMs + vlcTimeNow() * 1000` (server parses manifest PDT + MEDIA-SEQUENCE to compute stream start)
-  - `streamStartEpochMs = pdtOfFirstManifestSegment - mediaSequence * avgSegmentDuration * 1000` — critical because YouTube DVR manifests have MEDIA-SEQUENCE > 0 (DVR window shifts) but VLC's `get_time` is PTS from the original stream start (segment 0)
-  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect. On reconnect, if `lastVlcHlsUrl` is null, fetches it via yt-dlp.
-  - **Two absolute time modes**: at live edge, uses original `vlcPdtEpochMs + vlcTimeNow()` (accurate, accounts for VLC's ~10s buffering from `--network-caching 5000 --live-caching 5000`). After DVR seeks (where VLC PTS resets), uses manifest-based: `vlcManifestLiveEdgeMs + elapsed - vlcDvrBehind * 1000`. The manifest live edge is computed from the last `#EXT-X-PROGRAM-DATE-TIME` tag + segment durations after it.
-  - **Drift sync suppressed during seeks**: `vlcSeekBusy` flag causes `/api/vlc-absolute-time` to return empty, preventing drift corrections during VLC reload. Frontend `isSeeking` flag (set for both click and touch seeks) also blocks drift corrections for 15s on live.
-  - Phone seeks to match VLC when drift > 1s; 3s settle period after each correction
+- **Live (VLC) sync — display-only drift, manual offset buttons**:
+  - Phone gets HLS via proxy (`/api/phone-hls`) on Chrome (hls.js, CORS workaround) or YouTube URL directly on Safari (native HLS)
+  - **YouTube HLS segments can be 1s** (not always 2s) — `EXT-X-TARGETDURATION` varies per stream. hls.js `liveSyncDurationCount` is multiplied by target duration, so the actual seconds-behind-live depends on the stream. Always check the manifest.
+  - **VLC sits ~19-20s behind live edge** even with `--network-caching 1000 --clock-jitter 0 --low-delay`. This is much more than the theoretical ~8s (3 segments + caching). The HLS demuxer, decode pipeline, and display chain add significant hidden delay.
+  - **`vlcDvrBehind` is unreliable for sync** — it's manually tracked server-side and drifts. Phone sync currently uses behind-live comparison (`vlcBehind - phoneBehind`) for display only, with manual offset buttons for calibration.
+  - **No auto-correction for live** — rate control and seeking both cause more problems than they solve on live HLS. User adjusts offset buttons visually.
+  - **VLC `--live-caching` has no effect on HLS** — it only applies to local capture devices. Only `--network-caching` matters for network streams.
   - VLC `get_time` returns integers; `vlcTimeNow()` interpolates sub-second precision
-  - Drift naturally grows ~0.02s/s due to clock differences between VLC and Safari HLS players
+  - Drift naturally grows ~0.02s/s due to clock differences between VLC and hls.js players
+  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect. On reconnect, if `lastVlcHlsUrl` is null, fetches it via yt-dlp.
+  - **Two absolute time modes**: at live edge, uses original `vlcPdtEpochMs + vlcTimeNow()`. After DVR seeks (where VLC PTS resets), uses manifest-based: `vlcManifestLiveEdgeMs + elapsed - vlcDvrBehind * 1000`.
 - **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries. Fragmented MP4 via pipe doesn't play (needs Content-Length).
 - **Live stream server-side detection**: if frontend doesn't send `isLive` flag (e.g., playing from History tab), server checks via `yt-dlp --print is_live`
 - Phone player is `position:fixed` on `document.body` — secret menu hides it when open (z-index stacking doesn't work reliably across Safari's position:fixed contexts)
@@ -132,25 +141,23 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - fMP4 relay (`/api/phone-live-stream`): ffmpeg remuxes HLS→fragmented MP4 with `-bsf:a aac_adtstoasc`. Works in Chrome (achieved 0.001s drift with rate sync) but not Safari (no MSE for streaming fMP4).
 - iOS lock screen media controls via Media Session API — silent audio (`public/silent.m4a`, truly silent, volume=1) keeps the Now Playing widget alive. Pausing from app or lock screen pauses the silent audio to stop the timer.
 
-### Frontend
+### Frontend (React)
 
-- Vanilla JS, no framework. All in `public/index.html`
+- React + Zustand + Vite. Source in `client/src/`, build output in `client/dist/`
 - Responsive: mobile list layout (<768px) + desktop grid layout (768px+) with hover preview
 - Brutalist DOS aesthetic: JetBrains Mono, black bg, gray text
-- Now-playing bar: fixed bottom, polls `/api/playback` via `setTimeout` chaining (not `setInterval` — prevents overlapping polls). `AbortController` with 5s timeout on poll fetch.
-- `isSeeking` flag prevents poll from overwriting user's drag position. Set for both click and touch seeks. Held until poll confirms position within 3s of seek target; 15s timeout for live streams (reload takes longer).
-- Load generation counter (`loadGen`) discards stale responses from interleaved tab/search loads
+- Now-playing bar (`NowPlayingBar.jsx`): fixed bottom, state from WebSocket (`useSync` hook) via Zustand playback store
+- WebSocket (`/ws/sync`): server pushes playback state every 1s (position, duration, title, channel, monitor, windowMode, paused, isLive, player)
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
 - Tabs: Home, Live, History
-- Secret menu (tap "ytctrl" logo): volume slider (system volume), toggle resolution
-- FABs: top-right (hamburger → secret menu), bottom-right (refresh, long-press → tab switcher)
-- Long-press context menu on video cards: "More from [channel]" (yt-dlp channel scrape), "Copy link"
+- Secret menu (tap "ytctrl" logo): volume slider (system volume), toggle resolution, refresh cookies
+- Long-press context menu on video cards: "More from [channel]", "Copy link" — position clamped to viewport
 - Seek preview: storyboard thumbnails from YouTube sprite sheets + time bubble above thumb while dragging. Live streams show time-behind-live (e.g., `-0:15`) instead of absolute time.
 - Current position marker (white line) shown during scrub, fades out after release
 - Home feed paginated: 24 videos per page, infinite scroll loads more
-- Event delegation for video card clicks (one handler on grid, not per-card)
-- All polling pauses when tab is hidden (visibility API), phone sync interval persists (no-ops when vid paused in background), immediate re-sync on tab return
+- iOS Media Session API (`useMediaSession` hook): silent audio loop (`public/silent.m4a`) for lock screen Now Playing widget with play/pause/seek controls and artwork
+- Video badges: `duration` field can be pre-formatted string ("16:27"), "LIVE", or "SOON" — VideoCard handles all three
 - Cookies exported from Firefox to `cookies.txt` on server startup (requires Mac to be unlocked)
 - `POST /api/refresh-cookies` to re-export if cookies expire
 - Firefox must be installed and logged into YouTube
