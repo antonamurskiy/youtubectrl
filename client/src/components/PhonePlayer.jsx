@@ -8,6 +8,7 @@ import { useDriftSync } from '../hooks/useDriftSync'
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
   const [streamUrl, setStreamUrl] = useState(null)
+  const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
 
   const pb = usePlaybackStore()
@@ -16,7 +17,8 @@ export default function PhonePlayer({ send }) {
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
 
-  const { hlsRef, getPlayingDate, seekTo, getSeekableEnd } = useHlsPlayer(videoRef, pb.isLive ? streamUrl : null)
+  // hls.js for live streams, direct src for VOD
+  const { hlsRef, getPlayingDate, seekTo, getSeekableEnd } = useHlsPlayer(videoRef, isLive ? streamUrl : null)
 
   // Use drift sync for live and VOD
   useDriftSync(videoRef, getPlayingDate, send)
@@ -30,7 +32,11 @@ export default function PhonePlayer({ send }) {
       .then(r => r.json())
       .then(data => {
         if (data.streamUrl) {
-          setStreamUrl(data.streamUrl)
+          setIsLive(!!data.isLive)
+          // Safari: YouTube URL (native HLS, no CORS). Chrome: proxy URL (hls.js needs same-origin)
+          const canNative = videoRef.current?.canPlayType?.('application/vnd.apple.mpegurl')
+          const url = data.isLive && canNative ? data.streamUrl : (data.proxyUrl || data.streamUrl)
+          setStreamUrl(url)
           // For VOD, set src directly on video element
           if (!data.isLive && videoRef.current) {
             videoRef.current.src = data.streamUrl
@@ -61,6 +67,7 @@ export default function PhonePlayer({ send }) {
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
     setPhoneOpen(false)
     setStreamUrl(null)
+    setIsLive(false)
 
     // Stop video
     if (videoRef.current) {
@@ -78,7 +85,8 @@ export default function PhonePlayer({ send }) {
         ref={videoRef}
         playsInline
         autoPlay
-        muted={false}
+        muted
+        controls
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: '#000' }}
       />
       <div className="phone-player-controls">
@@ -86,7 +94,7 @@ export default function PhonePlayer({ send }) {
           {loading ? 'Loading...' : (
             <>
               drift: {drift.toFixed(3)}s
-              {pb.isLive && ' | LIVE'}
+              {isLive && ' | LIVE'}
             </>
           )}
         </div>

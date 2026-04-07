@@ -8,32 +8,36 @@ export function useHlsPlayer(videoRef, src) {
     const video = videoRef.current
     if (!video || !src) return
 
+    // Resolve relative URLs to absolute (Safari native HLS needs full URL)
+    const absoluteSrc = src.startsWith('/') ? `${location.origin}${src}` : src
+
     // Cleanup previous instance
     if (hlsRef.current) {
       hlsRef.current.destroy()
       hlsRef.current = null
     }
 
-    if (Hls.isSupported()) {
-      // Chrome, Firefox, etc. — use hls.js for proper DVR support
+    // Safari: native HLS (bypasses CORS, best performance)
+    // Chrome: hls.js (only works with same-origin URLs like our proxy)
+    const canNative = video.canPlayType('application/vnd.apple.mpegurl')
+    if (canNative) {
+      video.src = absoluteSrc
+      video.addEventListener('loadedmetadata', () => {
+        video.play().catch(() => {})
+      }, { once: true })
+    } else if (Hls.isSupported()) {
       const hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
         enableWorker: true,
         lowLatencyMode: false,
       })
-      hls.loadSource(src)
+      hls.loadSource(absoluteSrc)
       hls.attachMedia(video)
       hls.on(Hls.Events.MANIFEST_PARSED, () => {
         video.play().catch(() => {})
       })
       hlsRef.current = hls
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      // Safari — native HLS (also supports hls.js playingDate equivalent via getStartDate)
-      video.src = src
-      video.addEventListener('loadedmetadata', () => {
-        video.play().catch(() => {})
-      }, { once: true })
     }
 
     return () => {

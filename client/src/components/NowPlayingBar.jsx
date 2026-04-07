@@ -296,6 +296,64 @@ export default function NowPlayingBar({ send }) {
 
   return (
     <div className="now-playing">
+      {/* Progress bar — on top of everything */}
+      <div
+        className="np-progress-bar"
+        ref={barRef}
+        onPointerDown={handlePointerDownFixed}
+      >
+        <div className="np-progress-fill" style={{ width: `${pct}%` }} />
+        <div
+          className={`np-progress-thumb${!pb.paused ? ' playing' : ''}`}
+          style={{ left: `${pct}%` }}
+        />
+        {currentPosVisible && (
+          <div
+            className="np-current-pos visible"
+            style={{ left: `${duration > 0 ? (pb.position / duration) * 100 : 0}%` }}
+          />
+        )}
+        {seekPreview && (
+          <div
+            className="seek-preview visible"
+            style={{ left: `${seekPreview.x}px` }}
+          >
+            {frame && (
+              <div className="seek-preview-thumb">
+                <div style={{
+                  width: frame.bgWidth,
+                  height: frame.bgHeight,
+                  backgroundImage: `url(${frame.url})`,
+                  backgroundPosition: `${frame.bgX}px ${frame.bgY}px`,
+                  transform: `scale(${200 / (storyboard?.width || 160)})`,
+                  transformOrigin: '0 0',
+                }} />
+              </div>
+            )}
+            <div className="seek-preview-time">
+              {pb.isLive
+                ? ((1 - seekPreview.time / duration) * duration < 2 ? 'LIVE' : `-${formatTime(duration - seekPreview.time)}`)
+                : formatTime(seekPreview.time)
+              }
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Time row — right below progress bar */}
+      <div className="np-sub-row">
+        <button className="np-skip-btn" onClick={skipBack}>-10</button>
+        <span className="np-time">{formatTime(position)}</span>
+        <span className="np-time" style={{ flex: 1, textAlign: 'center' }}>
+          {pb.isLive
+            ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
+            : ''
+          }
+        </span>
+        <span className="np-time">{formatTime(duration)}</span>
+        <button className="np-skip-btn" onClick={skipForward}>+30</button>
+      </div>
+
       {/* Button row */}
       <div className="np-btn-row">
         <button
@@ -352,63 +410,6 @@ export default function NowPlayingBar({ send }) {
         </button>
       </div>
 
-      {/* Progress */}
-      <div className="np-controls">
-        <div
-          className="np-progress-bar"
-          ref={barRef}
-          onPointerDown={handlePointerDownFixed}
-        >
-          <div className="np-progress-fill" style={{ width: `${pct}%` }} />
-          <div
-            className={`np-progress-thumb${!pb.paused ? ' playing' : ''}`}
-            style={{ left: `${pct}%` }}
-          />
-          {currentPosVisible && (
-            <div
-              className="np-current-pos visible"
-              style={{ left: `${duration > 0 ? (pb.position / duration) * 100 : 0}%` }}
-            />
-          )}
-
-          {/* Seek preview */}
-          {seekPreview && (
-            <div
-              className="seek-preview visible"
-              style={{ left: `${seekPreview.x}px` }}
-            >
-              {frame && (
-                <div className="seek-preview-thumb">
-                  <div style={{
-                    width: frame.bgWidth,
-                    height: frame.bgHeight,
-                    backgroundImage: `url(${frame.url})`,
-                    backgroundPosition: `${frame.bgX}px ${frame.bgY}px`,
-                    transform: `scale(${200 / (storyboard?.width || 160)})`,
-                    transformOrigin: '0 0',
-                  }} />
-                </div>
-              )}
-              <div className="seek-preview-time">
-                {formatTime(seekPreview.time)}
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="np-sub-row">
-          <button className="np-skip-btn" onClick={skipBack}>-10</button>
-          <span className="np-time">{formatTime(position)}</span>
-          <span className="np-time" style={{ flex: 1, textAlign: 'center' }}>
-            {pb.isLive
-              ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
-              : ''
-            }
-          </span>
-          <span className="np-time">{formatTime(duration)}</span>
-          <button className="np-skip-btn" onClick={skipForward}>+30</button>
-        </div>
-      </div>
     </div>
   )
 }

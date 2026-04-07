@@ -34,24 +34,25 @@ function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
   const phoneAbsMs = getPlayingDate()
   if (!phoneAbsMs || !pb.absoluteMs) return
 
-  const rawDrift = (pb.absoluteMs - phoneAbsMs) / 1000
-
-  // Calibrate baseline on first stable measurement
+  const drift = (pb.absoluteMs - phoneAbsMs) / 1000
   const store = useSyncStore.getState()
-  if (store.baseline === null) {
-    store.setBaseline(rawDrift)
-    return
-  }
-
-  const drift = rawDrift - store.baseline
   store.setDrift(drift)
+
+  // Send debug to server
+  send({ type: 'phone-state', drift: +drift.toFixed(2), behindLive: +behindLive.toFixed(0) })
 
   // Skip corrections when behind live (phone already seeked, VLC PTS unreliable)
   if (behindLive > 5) return
 
-  // Proportional VLC rate control
+  // Throttle corrections to 1x/sec
+  const now = Date.now()
+  if (now - (window._lastRateSend || 0) < 1000) return
+  window._lastRateSend = now
+
   if (Math.abs(drift) > 0.1) {
-    const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.05))
+    // VLC rate control (phone playbackRate ignored on live HLS by Safari)
+    // Max convergence ~0.1s/sec at rate 1.1 — limited by live segment delivery
+    const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1))
     send({ type: 'vlc-rate', rate: +rate.toFixed(4) })
   } else {
     send({ type: 'vlc-rate', rate: 1.0 })
@@ -61,6 +62,7 @@ function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
 function syncVod(pb, video, send, sync) {
   const drift = pb.position - video.currentTime
   useSyncStore.getState().setDrift(drift)
+  send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +pb.position.toFixed(1), phone: +video.currentTime.toFixed(1) })
 
   // Pause/resume
   if (pb.paused && !video.paused) video.pause()

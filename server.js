@@ -1261,6 +1261,42 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
   }
 });
 
+// Lightweight HLS proxy for phone — only last 30s of segments (full manifest is 5MB+)
+app.get("/api/phone-hls", async (_req, res) => {
+  if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
+  try {
+    const manifest = await fetchManifest(lastVlcHlsUrl);
+    const lines = manifest.split('\n');
+    // Find all segment entries (EXTINF + URL pairs)
+    const segLines = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('#EXTINF:')) {
+        segLines.push({ idx: i, dur: parseFloat(lines[i].split(':')[1]) });
+      }
+    }
+    // Keep only the last ~30 seconds of segments
+    let keepDur = 0;
+    let keepFrom = segLines.length;
+    for (let i = segLines.length - 1; i >= 0; i--) {
+      keepDur += segLines[i].dur;
+      keepFrom = i;
+      if (keepDur >= 30) break;
+    }
+    // Build trimmed manifest: header lines + last N segments
+    const headerEnd = segLines.length > 0 ? segLines[0].idx : lines.length;
+    const header = lines.slice(0, headerEnd);
+    // Update media sequence to match the first kept segment
+    const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+    const origSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
+    const newSeq = origSeq + keepFrom;
+    const headerStr = header.join('\n').replace(/#EXT-X-MEDIA-SEQUENCE:\d+/, `#EXT-X-MEDIA-SEQUENCE:${newSeq}`);
+    const segments = lines.slice(segLines[keepFrom].idx).join('\n');
+    res.type('application/vnd.apple.mpegurl').send(headerStr + '\n' + segments);
+  } catch (e) {
+    res.status(500).send("Phone HLS error: " + e.message);
+  }
+});
+
 // VLC absolute time via HLS PDT — for phone sync
 let vlcPdtEpochMs = 0;
 let syncOffsetMs = 0; // tunable offset for drift calibration (milliseconds)
@@ -1696,8 +1732,9 @@ app.post("/api/watch-on-phone", async (_req, res) => {
         );
         lastVlcHlsUrl = stdout.trim().split("\n")[0];
       }
-      // Phone plays through same proxy as VLC — when user scrubs, both get the same trimmed manifest
-      return res.json({ streamUrl: `/api/vlc-hls-offset`, seconds, videoId, isLive: true });
+      // Give both URLs — Safari uses YouTube directly (native HLS, no CORS issue),
+      // Chrome uses proxy (hls.js can't fetch YouTube due to CORS)
+      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true });
     }
 
     // VOD — direct URL (Safari plays these natively)
@@ -2240,7 +2277,7 @@ function startWsSync() {
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}
-  }, 100); // 10x per second
+  }, 500); // 2x per second
 }
 
 httpServer.listen(PORT, "0.0.0.0", async () => {

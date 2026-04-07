@@ -54,7 +54,7 @@ export default function VideoCard({ video, isPlaying }) {
         url: videoUrl,
         title: video.title,
         channel: video.channel,
-        isLive: video.isLive || false,
+        isLive: video.isLive || video.live || false,
       }),
     }).catch(() => addToast('Play failed'))
   }, [videoUrl, video.title, video.channel, video.isLive, addToast])
@@ -116,8 +116,8 @@ export default function VideoCard({ video, isPlaying }) {
       >
         <div className="thumb-wrap">
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" />}
-          {video.isLive && <span className="live-badge">LIVE</span>}
-          {durationStr && !video.isLive && (
+          {(video.isLive || video.live) && <span className="live-badge">LIVE</span>}
+          {durationStr && !video.isLive && !video.live && (
             <span className="duration-badge">{durationStr}</span>
           )}
           {watchPct > 0 && (

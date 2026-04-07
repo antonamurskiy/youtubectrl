@@ -45,7 +45,7 @@ function App() {
           </div>
           <SearchBar />
           <div className="header-status">
-            {connected && <div className="status-dot" />}
+            <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
           </div>
         </header>
 
