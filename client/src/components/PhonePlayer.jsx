@@ -267,14 +267,13 @@ export default function PhonePlayer({ send }) {
         const mpvPos = pb.position + elapsed
         const rawDiff = mpvPos - video.currentTime
 
-        // Direct drift — no calibration needed with correct interpolation
-        const drift = rawDiff
+        const drift = rawDiff + userOffsetRef.current
         setDrift(`drift: ${drift.toFixed(1)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
-        // Hard-seek when drift > 0.3s (playbackRate doesn't work on Safari)
+        // Hard-seek to stay synced (playbackRate doesn't work on Safari)
         if (Math.abs(drift) > 0.3) {
-          video.currentTime = mpvPos + 0.5 // compensates for seek execution latency
+          video.currentTime = mpvPos + 0.5 // +0.5 compensates for seek latency
         }
       }
     }, 1000)
