@@ -29,9 +29,9 @@ export default function PhonePlayer({ send }) {
       .then(data => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
-          // hls.js (Chrome) needs proxy for CORS, native Safari plays YouTube directly
+          // Use proxy for live (DVR-aware, serves segments at VLC's position)
           const useHls = data.isLive && Hls.isSupported()
-          const url = useHls ? (data.proxyUrl || data.streamUrl) : data.streamUrl
+          const url = data.isLive ? (data.proxyUrl || data.streamUrl) : data.streamUrl
           setStreamUrl(url)
 
           // Wait for VLC to start playing before loading phone video
@@ -141,6 +141,34 @@ export default function PhonePlayer({ send }) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive) {
+        // Detect DVR seeks by large position jumps
+        const lastVlcPos = video._vlcLastPos || pb.position
+        video._vlcLastPos = pb.position
+        const posJump = Math.abs(pb.position - lastVlcPos)
+        if (posJump > 10) {
+          // VLC position jumped — DVR scrub detected, reload phone stream
+          setDrift(`DVR jump: ${posJump.toFixed(0)}s, reloading...`)
+          send({ type: 'phone-state', debug: `DVR jump=${posJump.toFixed(0)} old=${lastVlcPos.toFixed(0)} new=${pb.position.toFixed(0)}` })
+          calibOffsetRef.current = null
+          driftSamplesRef.current = []
+          readyRef.current = false
+          if (video._hls) {
+            video._hls.stopLoad()
+            video._hls.loadSource(`/api/phone-hls?_t=${Date.now()}`)
+            video._hls.startLoad()
+            setTimeout(() => { readyRef.current = true; readyAtRef.current = Date.now() }, 3000)
+          } else {
+            video.src = ''
+            video.src = `/api/phone-hls?_t=${Date.now()}`
+            video.addEventListener('loadedmetadata', () => {
+              if (video.seekable?.length > 0) {
+                video.currentTime = video.seekable.end(video.seekable.length - 1) - 19
+              }
+              video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
+            }, { once: true })
+          }
+          return
+        }
         // PDT-based absolute time sync
         // Interpolate VLC time forward since last server update to avoid sawtooth
         const clockOffset = useSyncStore.getState().clockOffset || 0

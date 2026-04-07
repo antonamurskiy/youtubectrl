@@ -1289,10 +1289,20 @@ app.get("/api/phone-hls", async (_req, res) => {
         durSinceLastPdt += dur;
       }
     }
-    // Keep only the last ~120 seconds of segments (enough for hls.js to refresh)
+    // Trim from end based on vlcDvrBehind, then keep ~120s window
+    // This makes the phone manifest match VLC's DVR position
+    let trimEnd = segLines.length;
+    if (vlcDvrBehind > 2) {
+      let trimDur = 0;
+      for (let i = segLines.length - 1; i >= 0; i--) {
+        trimDur += segLines[i].dur;
+        trimEnd = i;
+        if (trimDur >= vlcDvrBehind) break;
+      }
+    }
     let keepDur = 0;
-    let keepFrom = segLines.length;
-    for (let i = segLines.length - 1; i >= 0; i--) {
+    let keepFrom = trimEnd;
+    for (let i = trimEnd - 1; i >= 0; i--) {
       keepDur += segLines[i].dur;
       keepFrom = i;
       if (keepDur >= 120) break;
@@ -1308,7 +1318,7 @@ app.get("/api/phone-hls", async (_req, res) => {
     // Minimal header + EXTINF+URL pairs with proxied segment URLs for CORS
     let out = `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:${td}\n#EXT-X-MEDIA-SEQUENCE:${newSeq}\n`;
     if (keepPdt) out += `#EXT-X-PROGRAM-DATE-TIME:${new Date(keepPdt).toISOString()}\n`;
-    for (let i = keepFrom; i < segLines.length; i++) {
+    for (let i = keepFrom; i < trimEnd; i++) {
       const seg = segLines[i];
       out += lines[seg.idx] + '\n'; // #EXTINF
       const segUrl = lines[seg.idx + 1]?.trim();
@@ -2288,6 +2298,7 @@ wss.on("connection", (ws) => {
         ws.send(JSON.stringify({ type: "pong", serverTs: Date.now(), clientTs: data.clientTs }));
       } else if (data.type === "phone-state") {
         _phoneSyncDebug = { ...data, ts: Date.now() };
+        if (data.debug) console.log("  Phone DVR:", data.debug);
       } else if (data.type === "vlc-rate" && typeof data.rate === "number") {
         vlcRC(`rate ${data.rate}`).catch(() => {});
       } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
@@ -2340,7 +2351,8 @@ function startWsSync() {
           url: nowPlaying, serverTs: Date.now(),
           title: historyMap.get(nowPlaying)?.title || "",
           channel: historyMap.get(nowPlaying)?.channel || "",
-          monitor: currentMonitor, windowMode: windowMode || "floating"
+          monitor: currentMonitor, windowMode: windowMode || "floating",
+          seeking: vlcSeekBusy
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
         try {
