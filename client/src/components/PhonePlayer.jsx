@@ -6,7 +6,7 @@ import { useUIStore } from '../stores/ui'
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
-  const userOffsetRef = useRef(0)
+  const userOffsetRef = useRef(18)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -29,27 +29,32 @@ export default function PhonePlayer({ send }) {
           const url = data.isLive ? (data.proxyUrl || data.streamUrl) : data.streamUrl
           setStreamUrl(url)
 
-          // Defer setup to next tick so React has rendered the video element
-          setTimeout(() => {
-            const video = videoRef.current
-            if (!video) { console.error('PHONE: no video ref'); return }
-            const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-            if (data.isLive && Hls.isSupported()) {
-              if (video._hls) { video._hls.destroy(); video._hls = null }
-              const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 })
-              hls.loadSource(fullUrl)
-              hls.attachMedia(video)
-              hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                video.play().catch(e => console.error('PHONE play error:', e))
-              })
-              hls.on(Hls.Events.ERROR, (_, d) => console.error('HLS error:', d.type, d.details))
-              video._hls = hls
-            } else {
-              video.src = fullUrl
-              if (data.seconds) video.currentTime = data.seconds
-              video.play().catch(e => console.error('PHONE play error:', e))
-            }
-          }, 100)
+          // Wait for VLC to start playing before loading phone video
+          const waitForVlc = setInterval(() => {
+            const pb = usePlaybackStore.getState()
+            if (!pb.playing || pb.paused) return
+            clearInterval(waitForVlc)
+
+            setTimeout(() => {
+              const video = videoRef.current
+              if (!video) return
+              const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+              if (data.isLive && Hls.isSupported()) {
+                if (video._hls) { video._hls.destroy(); video._hls = null }
+                const hls = new Hls({ liveSyncDurationCount: 3, liveMaxLatencyDurationCount: 6 })
+                hls.loadSource(fullUrl)
+                hls.attachMedia(video)
+                hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                  video.play().catch(() => {})
+                })
+                video._hls = hls
+              } else {
+                video.src = fullUrl
+                if (data.seconds) video.currentTime = data.seconds
+                video.play().catch(() => {})
+              }
+            }, 100)
+          }, 500)
         }
         setLoading(false)
       })
@@ -64,6 +69,24 @@ export default function PhonePlayer({ send }) {
     const setDrift = (text) => { const el = document.getElementById('drift-display'); if (el) el.textContent = text }
 
     window._nudgeOffset = (delta) => {
+      // Pause phone while VLC seeks, resume when VLC plays
+      const v = videoRef.current
+      if (v) v.pause()
+      fetch('/api/seek-relative', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ offset: delta })
+      }).then(() => {
+        // Wait for VLC to resume playing then unpause phone
+        const check = setInterval(() => {
+          const pb = usePlaybackStore.getState()
+          if (pb.playing && !pb.paused) {
+            clearInterval(check)
+            if (videoRef.current) videoRef.current.play().catch(() => {})
+          }
+        }, 200)
+        setTimeout(() => clearInterval(check), 10000) // safety timeout
+      }).catch(() => {})
       userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
       const el = document.getElementById('offset-display')
       if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
@@ -99,18 +122,8 @@ export default function PhonePlayer({ send }) {
         setDrift(`drift: ${drift.toFixed(1)}s (vlc:-${vlcBehind.toFixed(0)} ph:-${phoneBehind.toFixed(0)})`)
         send({ type: 'phone-state', drift: +drift.toFixed(2), vlcBehind: +vlcBehind.toFixed(0), phoneBehind: +phoneBehind.toFixed(0) })
 
-        if (behindLive > 5) return
-
-        const now = Date.now()
-        if (now - lastRateSend < 1000) return
-        lastRateSend = now
-
-        if (Math.abs(drift) > 0.1) {
-          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1))
-          send({ type: 'vlc-rate', rate: +rate.toFixed(4) })
-        } else {
-          send({ type: 'vlc-rate', rate: 1.0 })
-        }
+        // No VLC rate control — vlcBehind is inaccurate, rate changes just break playback
+        // User adjusts offset buttons to calibrate visually
       } else {
         // VOD sync
         const drift = pb.position - video.currentTime
@@ -166,7 +179,7 @@ export default function PhonePlayer({ send }) {
         {isLive && (
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <button onClick={() => window._nudgeOffset?.(-0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>-0.5</button>
-            <span id="offset-display" style={{ color: '#ff0' }}>offset: 0.0s</span>
+            <span id="offset-display" style={{ color: '#ff0' }}>offset: 18.0s</span>
             <button onClick={() => window._nudgeOffset?.(0.5)} style={{ padding: '6px 12px', background: '#333', color: '#fff', border: '1px solid #555' }}>+0.5</button>
           </div>
         )}

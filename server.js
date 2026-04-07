@@ -1159,8 +1159,8 @@ app.post("/api/seek-relative", async (req, res) => {
   if (typeof offset !== "number") return res.status(400).json({ error: "Invalid offset" });
   try {
     if (activePlayer === "vlc") {
-      const s = await vlcStatus();
-      await vlcSeek(Math.max(0, (s.time || 0) + offset));
+      // Use VLC's native seek for small offsets (no reload)
+      await vlcRC(`seek ${offset > 0 ? '+' : ''}${offset}`);
       return res.json({ ok: true });
     }
     await mpvCommand(["seek", offset, "relative"]);
