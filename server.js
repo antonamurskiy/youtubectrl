@@ -627,7 +627,7 @@ async function vlcCommand(cmd) { return vlcRC(cmd); }
 function killVlc() {
   if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
   try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
-  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0;
+  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0; vlcManifestCalibOffset = 0;
 }
 
 function vlcAerospace(cmd) {
@@ -1211,7 +1211,14 @@ function startDvrRefresh() {
       const dur = hlsTotalDuration(m);
       if (dur > 0) vlcDvrWindow = dur;
       const liveEdge = hlsLiveEdgePdt(m);
-      if (liveEdge > 0) { vlcManifestLiveEdgeMs = liveEdge; vlcManifestFetchedAt = Date.now(); }
+      if (liveEdge > 0) {
+        vlcManifestLiveEdgeMs = liveEdge; vlcManifestFetchedAt = Date.now();
+        // Calibrate manifest-based time against accurate PDT+vlcTime while at live edge
+        if (vlcPdtEpochMs && vlcDvrBehind < 2 && vlcTimeNow() > 0) {
+          const pdtAbsMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
+          vlcManifestCalibOffset = pdtAbsMs - liveEdge;
+        }
+      }
     } catch {}
   }, 5000);
 }
@@ -1255,6 +1262,7 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
 let vlcPdtEpochMs = 0;
 let vlcManifestLiveEdgeMs = 0; // PDT of last segment in manifest (= live edge content time)
 let vlcManifestFetchedAt = 0; // wall-clock when manifest was last fetched
+let vlcManifestCalibOffset = 0; // offset between PDT-based and manifest-based absolute time (calibrated at live edge)
 // Fetch PDT from an HLS URL (called once at VLC spawn)
 async function fetchPdtFromUrl(hlsUrl) {
   try {
@@ -1673,14 +1681,17 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
 
     if (activePlayer === "vlc") {
-      // Live — give phone the HLS URL directly (Safari plays HLS natively)
-      const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
-        { timeout: 15000 }
-      );
-      const hlsUrl = stdout.trim().split("\n")[0];
-      lastVlcHlsUrl = hlsUrl;
-      return res.json({ streamUrl: hlsUrl, seconds, videoId, isLive: true });
+      // Live — give phone the HLS proxy URL (same feed as VLC for DVR sync)
+      // Ensure we have the YouTube HLS URL for the proxy to fetch from
+      if (!lastVlcHlsUrl) {
+        const { stdout } = await execFileP(
+          "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
+          { timeout: 15000 }
+        );
+        lastVlcHlsUrl = stdout.trim().split("\n")[0];
+      }
+      // Phone plays through same proxy as VLC — when user scrubs, both get the same trimmed manifest
+      return res.json({ streamUrl: `/api/vlc-hls-offset`, seconds, videoId, isLive: true });
     }
 
     // VOD — direct URL (Safari plays these natively)
@@ -2189,7 +2200,7 @@ function startWsSync() {
         if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
           absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
         } else if (vlcDvrBehind >= 2 && vlcManifestLiveEdgeMs > 0) {
-          absoluteMs = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
+          absoluteMs = vlcManifestLiveEdgeMs + vlcManifestCalibOffset + (Date.now() - vlcManifestFetchedAt) - vlcDvrBehind * 1000;
         }
         state = {
           type: "playback",

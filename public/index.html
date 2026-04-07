@@ -1817,10 +1817,13 @@
               seekTimer = setTimeout(() => {
                 const phoneVid = document.getElementById('phoneVideo');
                 if (phoneVid) {
-                  if (data.isLive && phoneVid.seekable?.length > 0) {
-                    const phoneStart = phoneVid.seekable.start(0);
-                    const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
-                    phoneVid.currentTime = phoneStart + pct * (phoneEnd - phoneStart);
+                  if (data.isLive) {
+                    // Reload phone from same proxy as VLC — both get same trimmed manifest
+                    // Small delay to let VLC reload first (server updates vlcDvrBehind)
+                    setTimeout(() => {
+                      const pv = document.getElementById('phoneVideo');
+                      if (pv) { pv.src = '/api/vlc-hls-offset'; pv.play().catch(() => {}); }
+                    }, 1500);
                   } else if (!data.isLive) {
                     phoneVid.currentTime = pct * dur;
                   }
@@ -2102,7 +2105,8 @@
                 showDrift(drift);
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
-                // Skip corrections when behind live or settling
+                // Skip corrections when behind live — manifest-based absolute time after DVR seeks
+                // isn't accurate enough (VLC PTS resets on reload, can correct wrong direction)
                 const behindLive = pb.duration - pb.position;
                 if (behindLive > 5 || settling || isSeeking) return;
 
