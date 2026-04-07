@@ -1818,12 +1818,10 @@
                 const phoneVid = document.getElementById('phoneVideo');
                 if (phoneVid) {
                   if (data.isLive) {
-                    // Reload phone from same proxy as VLC — both get same trimmed manifest
-                    // Small delay to let VLC reload first (server updates vlcDvrBehind)
-                    setTimeout(() => {
-                      const pv = document.getElementById('phoneVideo');
-                      if (pv) { pv.src = '/api/vlc-hls-offset'; pv.play().catch(() => {}); }
-                    }, 1500);
+                    // Don't reload phone video — Chrome's HLS stalls on trimmed manifests.
+                    // Just reset offset so sync re-calibrates once VLC PTS stabilizes.
+                    window._livePositionOffset = null;
+                    window._syncSettleUntil = Date.now() + 5000;
                   } else if (!data.isLive) {
                     phoneVid.currentTime = pct * dur;
                   }
@@ -2059,12 +2057,8 @@
           const ws = new WebSocket(`${wsProto}//${location.host}/ws/sync`);
           window._phoneSyncWs = ws;
           let liveState = 'done';
-          let syncReady = false;
           let settleUntil = 0; // timestamp until which corrections are paused
-          let livePositionOffset = null; // initial (serverPos - phoneTime), for Chrome position-based sync
-
-          const vid2 = document.getElementById('phoneVideo');
-          vid2.addEventListener('playing', () => { syncReady = true; }, { once: true });
+          window._livePositionOffset = null;
 
           function showDrift(drift) {
             let el = document.getElementById('syncDrift');
@@ -2084,14 +2078,14 @@
               const pb = JSON.parse(e.data);
               if (pb.type !== 'playback' || !pb.playing) return;
               const vid = document.getElementById('phoneVideo');
-              if (!vid || !syncReady) return;
+              if (!vid || vid.readyState < 2 || vid.currentTime < 0.5) return;
 
               // Pause/resume sync
               if (pb.paused && !vid.paused) vid.pause();
               else if (!pb.paused && vid.paused) vid.play().catch(() => {});
               if (pb.paused || vid.paused) return;
 
-              const settling = Date.now() < settleUntil;
+              const settling = Date.now() < settleUntil || Date.now() < (window._syncSettleUntil || 0);
 
               if (pb.isLive) {
                 // ── Live sync ──
@@ -2103,17 +2097,25 @@
                   const sd = vid.getStartDate();
                   if (sd && !isNaN(sd.getTime())) phoneAbsMs = sd.getTime() + vid.currentTime * 1000;
                 } catch {}
-                if (phoneAbsMs && pb.absoluteMs) {
+                const usePdt = !!(phoneAbsMs && pb.absoluteMs);
+                if (usePdt) {
                   drift = (pb.absoluteMs - phoneAbsMs) / 1000;
                 } else if (pb.vlcTime) {
                   // Chrome: track drift using VLC's advancing time
-                  const rawOffset = pb.vlcTime - vid.currentTime;
-                  // Only calibrate once video is actually playing (avoid capturing while buffering)
-                  if (livePositionOffset === null && vid.currentTime > 3 && vid.readyState >= 3) {
-                    livePositionOffset = rawOffset;
+                  // Filter out VLC PTS jumps after reload (>10s change per tick = bad)
+                  if (window._lastVlcTime != null && Math.abs(pb.vlcTime - window._lastVlcTime) > 10) {
+                    // VLC PTS jumped (reload) — reset calibration and skip
+                    window._lastVlcTime = pb.vlcTime;
+                    window._livePositionOffset = null;
+                    return;
                   }
-                  if (livePositionOffset === null) return;
-                  drift = rawOffset - livePositionOffset;
+                  window._lastVlcTime = pb.vlcTime;
+                  const rawOffset = pb.vlcTime - vid.currentTime;
+                  if (window._livePositionOffset === null && vid.currentTime > 1 && vid.readyState >= 2) {
+                    window._livePositionOffset = rawOffset;
+                  }
+                  if (window._livePositionOffset === null) return;
+                  drift = rawOffset - window._livePositionOffset;
                 } else {
                   return;
                 }
@@ -2121,14 +2123,15 @@
                 showDrift(drift);
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
-                // Skip corrections when behind live — manifest-based absolute time after DVR seeks
-                // isn't accurate enough (VLC PTS resets on reload, can correct wrong direction)
                 const behindLive = pb.duration - pb.position;
-                if (behindLive > 5 || settling || isSeeking) return;
+                // PDT-based sync: skip when behind live (inaccurate after VLC reload)
+                // Position-based sync (Chrome): always active (relative tracking works after reloads)
+                if (usePdt && behindLive > 5) return;
+                if (settling || isSeeking) return;
 
                 if (Math.abs(drift) > 2) {
                   vid.currentTime = vid.currentTime + drift;
-                  livePositionOffset = null; // re-calibrate after seek
+                  window._livePositionOffset = null; // re-calibrate after seek
                   settleUntil = Date.now() + 3000;
                 } else if (Math.abs(drift) > 0.1) {
                   // Proportional VLC rate control — lower gain to prevent oscillation
