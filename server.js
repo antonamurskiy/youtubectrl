@@ -1132,6 +1132,8 @@ app.post("/api/seek", async (req, res) => {
       }
       await vlcRC("clear");
       await vlcRC("add /tmp/vlc-next.m3u");
+      // Reset time model — VLC PTS changes base after reload
+      vlcTimeModel.lastInt = 0; vlcTimeModel.lastIntAt = 0; vlcTimeModel.prevInt = 0; vlcTimeModel.prevIntAt = 0;
       // Give VLC time to rebuffer before allowing next seek
       setTimeout(() => { vlcSeekBusy = false; }, 3000);
       return res.json({ ok: true });
@@ -2208,7 +2210,7 @@ function startWsSync() {
         state = {
           type: "playback",
           playing: true, isLive: true, player: "vlc",
-          position: dvrPos, duration: vlcDvrWindow, vlcTime: vlcTimeNow(),
+          position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time,
           paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
           url: nowPlaying, serverTs: Date.now()
         };

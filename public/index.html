@@ -1820,6 +1820,7 @@
                   if (data.isLive) {
                     window._livePositionOffset = null;
                     window._syncSettleUntil = Date.now() + 5000;
+                    window._dvrCorrected = false; // allow one correction after settle
                     // Safari: seek phone within DVR seekable range
                     if (phoneVid.seekable?.length > 0) {
                       const phoneEnd = phoneVid.seekable.end(phoneVid.seekable.length - 1);
@@ -2128,9 +2129,19 @@
                 ws.send(JSON.stringify({ type: 'phone-state', drift: +drift.toFixed(2), state: settling ? 'settle' : 'done' }));
 
                 const behindLive = pb.duration - pb.position;
-                // Skip corrections when behind live — phone already seeked to same DVR offset,
-                // and VLC PTS is unreliable after reload. Re-enables when back at live edge.
-                if (behindLive > 5 || settling || isSeeking) return;
+                // When behind live: allow ONE correction after settle to fix phone seek errors,
+                // then pause (VLC PTS unreliable for continuous correction after reload)
+                if (settling || isSeeking) return;
+                if (behindLive > 5) {
+                  // One-shot correction using PDT if available (Safari)
+                  if (usePdt && Math.abs(drift) > 3 && !window._dvrCorrected) {
+                    vid.currentTime = vid.currentTime + drift;
+                    window._dvrCorrected = true;
+                    settleUntil = Date.now() + 3000;
+                  }
+                  return;
+                }
+                window._dvrCorrected = false; // reset when back at live edge
 
                 if (Math.abs(drift) > 2) {
                   vid.currentTime = vid.currentTime + drift;
