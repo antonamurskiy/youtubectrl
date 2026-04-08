@@ -57,6 +57,7 @@ export default function VideoCard({ video, isPlaying }) {
         title: video.title,
         channel: video.channel,
         isLive: video.isLive || video.live || false,
+        watchPct: video.startPercent || 0,
       }),
     }).catch(() => addToast('Play failed'))
   }, [videoUrl, video.title, video.channel, video.isLive, addToast])

@@ -976,7 +976,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--audio-samplerate=48000`, `--autosync=30`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -1950,7 +1950,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
       mpvProcess = spawn("mpv", [
         `--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
-        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, nowPlaying,
+        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--audio-samplerate=48000`, `--autosync=30`, nowPlaying,
       ], { stdio: "ignore" });
       activePlayer = "mpv";
       windowMode = "floating";
