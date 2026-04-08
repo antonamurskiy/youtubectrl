@@ -5,6 +5,65 @@ import VideoCard from './VideoCard'
 
 const PAGE_SIZE = 24
 
+function ShortCard({ short }) {
+  const [previewing, setPreviewing] = useState(false)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const cardRef = useRef(null)
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+
+  // Mobile: scroll-based preview
+  useEffect(() => {
+    if (!isMobile || !cardRef.current) return
+    const observer = new IntersectionObserver(
+      ([entry]) => setPreviewing(entry.isIntersecting),
+      { rootMargin: '-20% 0px -20% 0px', threshold: 0 }
+    )
+    observer.observe(cardRef.current)
+    return () => observer.disconnect()
+  }, [isMobile])
+
+  useEffect(() => {
+    if (!previewing || previewUrl) return
+    fetch(`/api/preview-url?id=${short.id}`)
+      .then(r => r.json())
+      .then(d => { if (d.url) setPreviewUrl(d.url) })
+      .catch(() => {})
+  }, [previewing, short.id, previewUrl])
+
+  return (
+    <div
+      ref={cardRef}
+      className="shorts-card"
+      onMouseEnter={() => { if (!isMobile) setPreviewing(true) }}
+      onMouseLeave={() => { if (!isMobile) setPreviewing(false) }}
+      onClick={() => {
+        fetch('/api/play', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${short.id}`, title: short.title }),
+        }).catch(() => {})
+      }}
+    >
+      <div className="shorts-thumb-wrap">
+        <img src={short.thumbnail} alt="" loading="lazy" />
+        {previewing && previewUrl && (
+          <video
+            src={previewUrl}
+            muted
+            loop
+            playsInline
+            autoPlay
+            preload="auto"
+            style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        )}
+      </div>
+      <div className="shorts-title">{short.title}</div>
+      <div className="shorts-views">{short.views}</div>
+    </div>
+  )
+}
+
 function SkeletonCards() {
   return Array.from({ length: 6 }, (_, i) => (
     <div className="skeleton-card" key={i}>
@@ -21,6 +80,7 @@ function SkeletonCards() {
 export default function VideoGrid() {
   const activeTab = useUIStore(s => s.activeTab)
   const searchQuery = useUIStore(s => s.searchQuery)
+  const channelQuery = useUIStore(s => s.channelQuery)
   const loadGen = useUIStore(s => s.loadGen)
   const nextLoadGen = useUIStore(s => s.nextLoadGen)
   const refreshKey = useUIStore(s => s.refreshKey)
@@ -28,6 +88,7 @@ export default function VideoGrid() {
   const nowPlayingUrl = usePlaybackStore(s => s.url)
 
   const [videos, setVideos] = useState([])
+  const [shorts, setShorts] = useState([])
   const [loading, setLoading] = useState(false)
   const [hasMore, setHasMore] = useState(false)
   const [nextPage, setNextPage] = useState(null)
@@ -50,8 +111,14 @@ export default function VideoGrid() {
     const tab = activeTab === 'search' ? 'search' : activeTab
 
     switch (tab) {
+      case 'rec':
+        url = `/api/home?feed=recommended${page ? `&page=${page}` : ''}`
+        break
+      case 'subs':
+        url = `/api/home?feed=subscriptions${page ? `&page=${page}` : ''}`
+        break
       case 'home':
-        url = `/api/home?limit=${PAGE_SIZE}${page ? `&pageToken=${page}` : ''}`
+        url = `/api/home${page ? `?page=${page}` : ''}`
         break
       case 'live':
         url = '/api/live'
@@ -63,8 +130,14 @@ export default function VideoGrid() {
         if (!searchQuery) return setLoading(false)
         url = `/api/search?q=${encodeURIComponent(searchQuery)}`
         break
+      case 'channel':
+        if (!channelQuery) return setLoading(false)
+        url = channelQuery.id
+          ? `/api/channel?id=${encodeURIComponent(channelQuery.id)}`
+          : `/api/channel?name=${encodeURIComponent(channelQuery.name)}`
+        break
       default:
-        url = '/api/home'
+        url = '/api/home?feed=recommended'
     }
 
     try {
@@ -81,15 +154,19 @@ export default function VideoGrid() {
         setVideos(prev => [...prev, ...items])
       } else {
         setVideos(items)
+        setShorts(data.shorts || [])
         setSectionLabel(
           tab === 'search' ? `Search: ${searchQuery}` :
+          tab === 'rec' ? 'Recommended' :
+          tab === 'subs' ? 'Subscriptions' :
           tab === 'home' ? 'Home' :
           tab === 'live' ? 'Live' :
-          tab === 'history' ? 'History' : ''
+          tab === 'history' ? 'History' :
+          tab === 'channel' ? (channelQuery?.name || 'Channel') : ''
         )
       }
 
-      setHasMore(tab === 'home' && !!token)
+      setHasMore((tab === 'home' || tab === 'rec' || tab === 'subs') && !!token)
       setNextPage(token)
     } catch (err) {
       console.error('Failed to fetch videos:', err)
@@ -98,17 +175,17 @@ export default function VideoGrid() {
         setLoading(false)
       }
     }
-  }, [activeTab, searchQuery])
+  }, [activeTab, searchQuery, channelQuery])
 
   // Re-fetch when tab, search, or refreshKey changes
   useEffect(() => {
     genRef.current += 1
     fetchVideos()
-  }, [activeTab, searchQuery, refreshKey, fetchVideos])
+  }, [activeTab, searchQuery, channelQuery, refreshKey, fetchVideos])
 
   // Infinite scroll for home tab
   useEffect(() => {
-    if (!hasMore || loading || activeTab !== 'home') return
+    if (!hasMore || loading || !['home', 'rec', 'subs'].includes(activeTab)) return
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -116,7 +193,7 @@ export default function VideoGrid() {
           fetchVideos(nextPage)
         }
       },
-      { rootMargin: '200px' }
+      { rootMargin: '800px' }
     )
 
     const el = loadMoreRef.current
@@ -138,7 +215,7 @@ export default function VideoGrid() {
           </div>
         )}
 
-        {videos.map((video, i) => (
+        {videos.slice(0, PAGE_SIZE).map((video, i) => (
           <VideoCard
             key={video.url || video.videoId || i}
             video={video}
@@ -149,6 +226,32 @@ export default function VideoGrid() {
           />
         ))}
       </div>
+
+      {shorts.length > 0 && (
+        <div className="shorts-section">
+          <div className="shorts-label">Shorts</div>
+          <div className="shorts-row">
+            {shorts.map((s) => (
+              <ShortCard key={s.id} short={s} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {videos.length > PAGE_SIZE && (
+        <div className="video-grid">
+          {videos.slice(PAGE_SIZE).map((video, i) => (
+            <VideoCard
+              key={video.url || video.videoId || `p${i}`}
+              video={video}
+              isPlaying={nowPlayingUrl && (
+                nowPlayingUrl === video.url ||
+                nowPlayingUrl.includes(video.videoId)
+              )}
+            />
+          ))}
+        </div>
+      )}
 
       {hasMore && (
         <div className="loading" ref={loadMoreRef}>

@@ -444,6 +444,30 @@ app.get("/api/channel-videos", async (req, res) => {
   }
 });
 
+// Video preview URL — low quality stream for thumbnail preview
+const previewCache = new Map();
+app.get("/api/preview-url", async (req, res) => {
+  const id = req.query.id;
+  if (!id) return res.json({ url: null });
+  if (previewCache.has(id)) return res.json({ url: previewCache.get(id) });
+  try {
+    const { stdout } = await execFileP("yt-dlp", [
+      "--cookies", COOKIES_FILE, "-f", "134/133/160/18",
+      "--get-url", `https://www.youtube.com/watch?v=${id}`,
+    ], { timeout: 10000 });
+    const url = stdout.trim();
+    if (url) previewCache.set(id, url);
+    // Cap cache at 50 entries
+    if (previewCache.size > 50) {
+      const first = previewCache.keys().next().value;
+      previewCache.delete(first);
+    }
+    res.json({ url: url || null });
+  } catch {
+    res.json({ url: null });
+  }
+});
+
 app.get("/api/search", async (req, res) => {
   const query = req.query.q;
   if (!query) return res.json({ videos: [], nextPageToken: null });
@@ -483,6 +507,56 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
+// Channel videos — sorted by recency via yt-dlp
+app.get("/api/channel", async (req, res) => {
+  const channelId = req.query.id;
+  const channelName = req.query.name;
+  if (!channelId && !channelName) return res.json({ videos: [] });
+  try {
+    const url = channelId
+      ? `https://www.youtube.com/channel/${channelId}/videos`
+      : `https://www.youtube.com/@${channelName.replace(/\s+/g, '')}/videos`;
+    const { stdout } = await execFileP("yt-dlp", [
+      "--cookies", COOKIES_FILE, "--flat-playlist", "--dump-json", "--no-warnings",
+      "-I", "1:30", url,
+    ], { timeout: 20000, maxBuffer: 10 * 1024 * 1024 });
+    const videos = stdout.trim().split("\n").filter(Boolean).map(line => {
+      const v = JSON.parse(line);
+      return {
+        id: v.id, title: v.title,
+        thumbnail: v.thumbnails?.[v.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+        duration: v.duration_string || (v.duration ? fmtSecs(v.duration) : ""),
+        channel: v.channel || v.uploader,
+        views: v.view_count || 0,
+        url: `https://www.youtube.com/watch?v=${v.id}`,
+      };
+    });
+    // Enrich with YouTube Data API for dates
+    const ids = videos.map(v => v.id).filter(Boolean);
+    if (ids.length) {
+      try {
+        const token = await getAccessToken();
+        const enriched = await enrichVideos(ids, token);
+        const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+        for (const v of videos) {
+          const e = enrichMap[v.id];
+          if (e) {
+            v.duration = e.duration || v.duration;
+            v.views = e.views || v.views;
+            v.uploadedAt = e.uploadedAt || "";
+            v.channelId = e.channelId || "";
+            if (e.live) v.live = true;
+          }
+        }
+      } catch {}
+    }
+    res.json({ videos });
+  } catch (err) {
+    console.error("Channel fetch failed:", err.message);
+    res.json({ videos: [] });
+  }
+});
+
 // Home feed — yt-dlp scrapes recommended + subscriptions, deduped
 async function getHomeFeed() {
   const parseVideos = (stdout) => stdout.trim().split("\n").filter(Boolean).map((line) => {
@@ -508,7 +582,7 @@ async function getHomeFeed() {
 
   // Fetch both feeds in parallel
   const [rec, subs] = await Promise.all([
-    execFileP("yt-dlp", ytdlpArgs("recommended", 50), opts).then(r => parseVideos(r.stdout)).catch(() => []),
+    execFileP("yt-dlp", ytdlpArgs("recommended", 150), opts).then(r => parseVideos(r.stdout)).catch(() => []),
     execFileP("yt-dlp", ytdlpArgs("subscriptions", 100), opts).then(r => parseVideos(r.stdout)).catch(() => []),
   ]);
 
@@ -530,16 +604,242 @@ async function getHomeFeed() {
   return videos;
 }
 
+// Fetch a single feed type (recommended or subscriptions)
+async function getSingleFeed(feedType, count = 50) {
+  const parseVideos = (stdout) => stdout.trim().split("\n").filter(Boolean).map((line) => {
+    const v = JSON.parse(line);
+    return {
+      id: v.id, title: v.title,
+      thumbnail: v.thumbnails?.[v.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
+      duration: v.duration_string || (v.duration ? fmtSecs(v.duration) : ""),
+      channel: v.channel || v.uploader, views: v.view_count || 0,
+      url: `https://www.youtube.com/watch?v=${v.id}`,
+    };
+  });
+  const { stdout } = await execFileP("yt-dlp", [
+    "--cookies", COOKIES_FILE, "--flat-playlist", "--dump-json", "--no-warnings",
+    "-I", `1:${count}`, `https://www.youtube.com/feed/${feedType}`,
+  ], { timeout: 25000, maxBuffer: 10 * 1024 * 1024 });
+  return parseVideos(stdout);
+}
+
+// Browse API for recommended feed with continuation support
+let recContinuation = null;
+async function browseRecommended(continuation = null) {
+  const { cookieStr, cookieMap } = parseCookieFile();
+  const sapisid = cookieMap["SAPISID"] || cookieMap["__Secure-3PAPISID"];
+  if (!sapisid) throw new Error("No SAPISID cookie");
+  const headers = {
+    "Content-Type": "application/json",
+    "Cookie": cookieStr,
+    "Authorization": sapisidHash(sapisid, "https://www.youtube.com"),
+    "Origin": "https://www.youtube.com",
+    "X-Origin": "https://www.youtube.com",
+  };
+  const body = continuation
+    ? { continuation, context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00" } } }
+    : { browseId: "FEwhat_to_watch", context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00" } } };
+  const res = await fetch("https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false", {
+    method: "POST", headers, body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`${res.status}`);
+  const data = await res.json();
+  const videos = [];
+  const shorts = [];
+  let nextContinuation = null;
+  function extract(obj, depth) {
+    if (depth > 30) return;
+    if (typeof obj !== "object" || !obj) return;
+    if (Array.isArray(obj)) { obj.forEach(i => extract(i, depth + 1)); return; }
+    if (obj.continuationItemRenderer) {
+      nextContinuation = obj.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
+      return;
+    }
+    if (obj.richItemRenderer?.content?.videoRenderer) {
+      const vr = obj.richItemRenderer.content.videoRenderer;
+      const durText = vr.lengthText?.simpleText || "";
+      if (durText) {
+        const dp = durText.split(':').map(Number);
+        const totalS = dp.length === 3 ? dp[0]*3600+dp[1]*60+dp[2] : dp[0]*60+dp[1];
+        if (totalS <= 180) {
+          shorts.push({ id: vr.videoId, title: vr.title?.runs?.[0]?.text || "", channel: vr.shortBylineText?.runs?.[0]?.text || "", views: vr.viewCountText?.simpleText || "", thumbnail: vr.thumbnail?.thumbnails?.[vr.thumbnail?.thumbnails?.length-1]?.url || `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`, url: `https://www.youtube.com/shorts/${vr.videoId}`, isShort: true });
+          return;
+        }
+      }
+      const bestThumb = vr.thumbnail?.thumbnails?.[vr.thumbnail?.thumbnails?.length-1]?.url || `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`;
+      videos.push({
+        id: vr.videoId, title: vr.title?.runs?.[0]?.text || "",
+        thumbnail: bestThumb,
+        duration: durText,
+        channel: vr.shortBylineText?.runs?.[0]?.text || "",
+        views: parseInt((vr.viewCountText?.simpleText?.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,
+        url: `https://www.youtube.com/watch?v=${vr.videoId}`,
+      });
+      return;
+    }
+    if (obj.richItemRenderer?.content?.lockupViewModel) {
+      const lv = obj.richItemRenderer.content.lockupViewModel;
+      const id = lv.contentId || "";
+      if (id && !id.startsWith("RD")) {
+        const meta = lv.metadata?.lockupMetadataViewModel;
+        const title = meta?.title?.content || "";
+        const rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || [];
+        const allTexts = rows.flatMap(r => r.metadataParts?.map(p => p.text?.content).filter(Boolean) || []);
+        const channel = allTexts[0] || "";
+        const viewsText = allTexts.find(t => /views|watching/i.test(t)) || "";
+        const agoText = allTexts.find(t => /ago|streamed/i.test(t)) || "";
+        const lvJson = JSON.stringify(lv);
+        const durAccessibility = lvJson.match(/"label":"((\d+) hours?, )?((\d+) minutes?, )?((\d+) seconds?)"/i);
+        let duration = "";
+        if (durAccessibility) {
+          const h = parseInt(durAccessibility[2]) || 0;
+          const m = parseInt(durAccessibility[4]) || 0;
+          const s = parseInt(durAccessibility[6]) || 0;
+          duration = h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
+        }
+        const isLive = /watching/i.test(viewsText);
+        const scheduledText = allTexts.find(t => /scheduled/i.test(t)) || "";
+        const isUpcoming = /waiting|scheduled/i.test(viewsText + scheduledText);
+        // Parse views: "2.7K views", "5.3K watching", "640,166 views"
+        let views = 0;
+        const vMatch = viewsText.match(/([\d,.]+)\s*([KMB])?/i);
+        if (vMatch) {
+          views = parseFloat(vMatch[1].replace(/,/g, ''));
+          if (vMatch[2] === 'K') views *= 1000;
+          else if (vMatch[2] === 'M') views *= 1000000;
+          else if (vMatch[2] === 'B') views *= 1000000000;
+          views = Math.round(views);
+        }
+        // Extract channelId from browse endpoint
+        const chanIdMatch = lvJson.match(/"browseId":"(UC[\w-]+)"/);
+        const channelId = chanIdMatch?.[1] || "";
+        const ciSources = lv.contentImage?.thumbnailViewModel?.image?.sources;
+        const thumb = ciSources?.[ciSources.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+        const uploadedAt = agoText || scheduledText || "";
+        // Detect shorts: duration under 61s and not live/upcoming
+        let totalSecs = 0;
+        if (durAccessibility) {
+          totalSecs = (parseInt(durAccessibility[2]) || 0) * 3600 + (parseInt(durAccessibility[4]) || 0) * 60 + (parseInt(durAccessibility[6]) || 0);
+        }
+        if (totalSecs > 0 && totalSecs <= 180 && !isLive && !isUpcoming) {
+          shorts.push({ id, title, channel, views: viewsText, thumbnail: thumb, url: `https://www.youtube.com/shorts/${id}`, isShort: true });
+        } else {
+          videos.push({ id, title, channel, channelId, thumbnail: thumb, duration: isLive ? "LIVE" : (isUpcoming ? "SOON" : duration), views, uploadedAt, url: `https://www.youtube.com/watch?v=${id}`, live: isLive, upcoming: isUpcoming, concurrentViewers: isLive ? views : undefined });
+        }
+      }
+      return;
+    }
+    if (obj.shortsLockupViewModel) {
+      const sv = obj.shortsLockupViewModel;
+      const id = sv.onNavigateCommand?.innertubeCommand?.reelWatchEndpoint?.videoId
+        || sv.entityId?.replace('shorts-shelf-item-', '') || "";
+      if (id) {
+        shorts.push({
+          id, title: sv.overlayMetadata?.primaryText?.content || "",
+          views: sv.overlayMetadata?.secondaryText?.content || "",
+          thumbnail: sv.thumbnail?.sources?.[sv.thumbnail?.sources?.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hq720.jpg`,
+          url: `https://www.youtube.com/shorts/${id}`,
+          isShort: true,
+        });
+      }
+      return;
+    }
+    if (obj.videoRenderer) {
+      const vr = obj.videoRenderer;
+      const durText = vr.lengthText?.simpleText || "";
+      // Filter shorts (≤60s) into shorts array
+      if (durText) {
+        const dp = durText.split(':').map(Number);
+        const totalS = dp.length === 3 ? dp[0]*3600+dp[1]*60+dp[2] : dp[0]*60+dp[1];
+        if (totalS <= 180) {
+          shorts.push({ id: vr.videoId, title: vr.title?.runs?.[0]?.text || "", channel: vr.shortBylineText?.runs?.[0]?.text || "", views: vr.viewCountText?.simpleText || "", thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hq720.jpg`, url: `https://www.youtube.com/shorts/${vr.videoId}`, isShort: true });
+          return;
+        }
+      }
+      videos.push({
+        id: vr.videoId, title: vr.title?.runs?.[0]?.text || "",
+        thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hq720.jpg`,
+        duration: durText,
+        channel: vr.shortBylineText?.runs?.[0]?.text || "",
+        views: parseInt((vr.viewCountText?.simpleText?.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,
+        url: `https://www.youtube.com/watch?v=${vr.videoId}`,
+      });
+      return;
+    }
+    Object.values(obj).forEach(v => extract(v, depth + 1));
+  }
+  extract(data, 0);
+  recContinuation = nextContinuation;
+  return { videos, shorts, hasMore: !!nextContinuation };
+}
+
 // Cache raw home feed so pagination doesn't re-fetch
 let homeFeedCache = [];
+let homeFeedType = null;
+let recShortsCache = [];
 
 app.get("/api/home", async (req, res) => {
   const page = parseInt(req.query.page) || 0;
+  const feed = req.query.feed || 'home'; // 'home' (mixed), 'recommended', 'subscriptions'
   const pageSize = 24;
   try {
-    // Fetch fresh feed on page 0, use cache for subsequent pages
-    if (page === 0) {
-      homeFeedCache = await getHomeFeed();
+    // Recommended uses browse API with continuation for infinite scroll, falls back to yt-dlp
+    if (feed === 'recommended') {
+      // Always fetch fresh — browse API for initial, continuation for more
+      if (page === 0 || homeFeedType !== feed) {
+        recContinuation = null;
+        try {
+          const result = await browseRecommended();
+          if (result.videos.length < 5) throw new Error("too few results");
+          homeFeedCache = result.videos;
+          recShortsCache = result.shorts || [];
+        } catch {
+          homeFeedCache = await getSingleFeed('recommended', 150);
+          recContinuation = null;
+        }
+        homeFeedType = feed;
+      }
+      // Fetch continuations until we have enough videos for this page
+      while (recContinuation && (page + 1) * pageSize > homeFeedCache.length) {
+        try {
+          const result = await browseRecommended(recContinuation);
+          if (!result.videos.length) break;
+          homeFeedCache = [...homeFeedCache, ...result.videos];
+        } catch { break; }
+      }
+      const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
+      const hasMore = (page + 1) * pageSize < homeFeedCache.length || !!recContinuation;
+      // Return immediately with browse data, enrich in background
+      const videos = slice.map(v => {
+        const h = historyMap.get(v.url);
+        if (h?.position > 0 && h?.duration > 0) { v.savedPosition = h.position; v.savedDuration = h.duration; }
+        return v;
+      });
+      const resp = { videos, hasMore, nextPageToken: hasMore ? String(page + 1) : null };
+      if (page === 0 && recShortsCache.length) resp.shorts = recShortsCache;
+      res.json(resp);
+      // Enrich cache in background for next load
+      const ids = slice.map(v => v.id).filter(Boolean);
+      if (ids.length) {
+        getAccessToken().then(token => enrichVideos(ids, token)).then(enriched => {
+          const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+          for (const v of homeFeedCache) {
+            const e = enrichMap[v.id];
+            if (e) { v.channel = e.channel || v.channel; v.channelId = e.channelId; v.views = e.views || v.views; v.uploadedAt = e.uploadedAt || ""; v.duration = e.duration || v.duration; v.live = e.live || false; }
+          }
+        }).catch(() => {});
+      }
+      return;
+    }
+
+    // Other feeds use yt-dlp
+    if (page === 0 || homeFeedType !== feed) {
+      homeFeedType = feed;
+      if (feed === 'subscriptions') {
+        homeFeedCache = await getSingleFeed('subscriptions', 100);
+      } else {
+        homeFeedCache = await getHomeFeed();
+      }
     }
     const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
     const hasMore = (page + 1) * pageSize < homeFeedCache.length;
@@ -557,14 +857,14 @@ app.get("/api/home", async (req, res) => {
           const merged = e ? { ...v, channel: e.channel || v.channel, channelId: e.channelId, views: e.views || v.views, uploadedAt: e.uploadedAt || "", duration: e.duration || v.duration, live: e.live || false, concurrentViewers: e.concurrentViewers } : v;
           if (h?.position > 0 && h?.duration > 0) { merged.savedPosition = h.position; merged.savedDuration = h.duration; }
           return merged;
-        }), hasMore });
+        }), hasMore, nextPageToken: hasMore ? String(page + 1) : null });
       } catch {}
     }
     res.json({ videos: slice.map(v => {
       const h = historyMap.get(v.url);
       if (h?.position > 0 && h?.duration > 0) { v.savedPosition = h.position; v.savedDuration = h.duration; }
       return v;
-    }), hasMore });
+    }), hasMore, nextPageToken: hasMore ? String(page + 1) : null });
   } catch (err) {
     console.error("Home feed failed:", err.message);
     res.json([]);
@@ -947,6 +1247,18 @@ app.post("/api/play", async (req, res) => {
                 execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
                 execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
               } else if (windowMode === "floating") {
+                try {
+                  const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
+                  const [wx] = posStr.split(", ").map(Number);
+                  const screens = getScreenOrigins();
+                  const screen = screens.find(s => wx >= s.x && wx < s.x + s.w) || screens.find(s => s.isMain) || screens[0];
+                  const w = Math.round(screen.w * 0.38);
+                  const h = Math.round(w * 9 / 16);
+                  const posX = screen.x + screen.w - w - 12;
+                  const posY = screen.y + 38;
+                  execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
+                  execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`, { stdio: "ignore" });
+                } catch {}
                 await floatTopRight(wid);
               }
             }
@@ -1648,7 +1960,7 @@ async function getYouTubeHistory(token) {
       videos.push({
         id: vr.videoId,
         title: vr.title?.runs?.[0]?.text || "",
-        thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`,
+        thumbnail: `https://i.ytimg.com/vi/${vr.videoId}/hq720.jpg`,
         duration: vr.lengthText?.simpleText || "",
         channel: vr.shortBylineText?.runs?.[0]?.text || "",
         views: parseInt((vr.viewCountText?.simpleText?.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,

@@ -1,8 +1,9 @@
 import { create } from 'zustand'
 
 export const useUIStore = create((set) => ({
-  activeTab: 'home',
+  activeTab: 'rec',
   searchQuery: '',
+  channelQuery: null, // { id, name } for channel tab
   secretMenuOpen: false,
   toasts: [],
   loadGen: 0, // generation counter to discard stale responses
@@ -12,6 +13,7 @@ export const useUIStore = create((set) => ({
 
   setTab: (tab) => set({ activeTab: tab }),
   setSearch: (q) => set({ searchQuery: q }),
+  setChannel: (ch) => set({ channelQuery: ch, activeTab: 'channel' }),
   toggleSecretMenu: () => set((s) => ({ secretMenuOpen: !s.secretMenuOpen })),
   addToast: (msg) => set((s) => {
     const id = Date.now()

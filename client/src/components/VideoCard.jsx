@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
 
 function formatDuration(val) {
@@ -38,11 +38,45 @@ function timeAgo(dateStr) {
 export default function VideoCard({ video, isPlaying }) {
   const addToast = useUIStore(s => s.addToast)
   const [contextMenu, setContextMenu] = useState(null)
+  const [previewing, setPreviewing] = useState(false)
   const longPressTimer = useRef(null)
   const longPressTriggered = useRef(false)
+  const cardRef = useRef(null)
 
+  const videoId = video.videoId || video.id || video.url?.match(/v=([\w-]+)/)?.[1]
   const thumbnail = video.thumbnail ||
-    (video.videoId ? `https://i.ytimg.com/vi/${video.videoId}/hqdefault.jpg` : '')
+    (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : '')
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const previewRef = useRef(null)
+
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
+
+  // Mobile: IntersectionObserver for scroll-based preview
+  useEffect(() => {
+    if (!isMobile || !cardRef.current || !videoId || video.isLive || video.live) return
+    const observer = new IntersectionObserver(
+      ([entry]) => setPreviewing(entry.isIntersecting),
+      { rootMargin: '-30% 0px -30% 0px', threshold: 0 }
+    )
+    observer.observe(cardRef.current)
+    return () => observer.disconnect()
+  }, [videoId, video.isLive, video.live, isMobile])
+
+  // Desktop: hover-based preview
+  const handleMouseEnter = useCallback(() => {
+    if (!isMobile && videoId && !video.isLive && !video.live) setPreviewing(true)
+  }, [isMobile, videoId, video.isLive, video.live])
+  const handleMouseLeave = useCallback(() => {
+    if (!isMobile) setPreviewing(false)
+  }, [isMobile])
+
+  useEffect(() => {
+    if (!previewing || !videoId || previewUrl || video.isLive || video.live) return
+    fetch(`/api/preview-url?id=${videoId}`)
+      .then(r => r.json())
+      .then(d => { if (d.url) setPreviewUrl(d.url) })
+      .catch(() => {})
+  }, [previewing, videoId, previewUrl, video.isLive, video.live])
 
   const videoUrl = video.url || (video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : '')
 
@@ -87,10 +121,7 @@ export default function VideoCard({ video, isPlaying }) {
 
   const handleMoreFromChannel = useCallback(() => {
     if (video.channelId || video.channel) {
-      // Search for more from this channel
-      const q = video.channel || video.channelId
-      useUIStore.getState().setSearch(q)
-      useUIStore.getState().setTab('search')
+      useUIStore.getState().setChannel({ id: video.channelId, name: video.channel })
     }
     setContextMenu(null)
   }, [video.channelId, video.channel])
@@ -111,8 +142,11 @@ export default function VideoCard({ video, isPlaying }) {
   return (
     <>
       <div
+        ref={cardRef}
         className={`video-card${isPlaying ? ' playing' : ''}`}
         onClick={handlePlay}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
         <div
           className="thumb-wrap"
@@ -121,10 +155,22 @@ export default function VideoCard({ video, isPlaying }) {
           onTouchCancel={handleTouchEnd}
           onContextMenu={handleContextMenuEvent}
         >
-          {thumbnail && <img src={thumbnail} alt="" loading="lazy" />}
+          {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
+          {previewing && previewUrl && (
+            <video
+              ref={previewRef}
+              src={previewUrl}
+              muted
+              loop
+              playsInline
+              autoPlay
+              preload="auto"
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+            />
+          )}
           {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
           {(video.upcoming || video.duration === 'SOON') && !video.isLive && !video.live && (
-            <span className="live-badge" style={{ background: '#555' }}>SOON</span>
+            <span className="live-badge" style={{ background: 'var(--text-dim)' }}>SOON</span>
           )}
           {durationStr && !video.isLive && !video.live && !video.upcoming && video.duration !== 'SOON' && video.duration !== 'LIVE' && (
             <span className="duration-badge">{durationStr}</span>
@@ -165,7 +211,8 @@ export default function VideoCard({ video, isPlaying }) {
                 const maxY = window.innerHeight - bottomBar - rect.height
                 // Position above the tap point, clamped to viewport
                 let y = contextMenu.y - rect.height - 8
-                if (y < 8) y = 8
+                const safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 48
+                if (y < safeTop) y = safeTop
                 if (y > maxY) y = maxY
                 el.style.top = `${y}px`
                 el.style.left = `${Math.min(Math.max(contextMenu.x - rect.width / 2, 8), maxX)}px`

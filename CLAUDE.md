@@ -34,9 +34,22 @@ pkill -x mpv       # Kill all mpv instances
 |---|---|---|
 | `/api/search` | youtube-sr scraper | YouTube Data API search (100 units!) |
 | `/api/trending` | youtube-sr search | YouTube Data API mostPopular (1 unit) |
-| `/api/home` | yt-dlp recommended + subscriptions (Firefox cookies) | YouTube Data API enrichment (1 unit/50 videos) |
+| `/api/home?feed=recommended` | YouTube browse API (`FEwhat_to_watch`, cookies) with continuation for infinite scroll | yt-dlp fallback (23 videos, no pagination) |
+| `/api/home?feed=subscriptions` | yt-dlp subscriptions feed (Firefox cookies) | — |
 | `/api/live` | yt-dlp home feed (live items) + youtube-sr | YouTube Data API enrichment |
 | `/api/history` | YouTube browse API (cookies) + local `.history.json` | — |
+| `/api/preview-url?id=VIDEO_ID` | yt-dlp `--get-url` for format 134/133/160/18 (360p/240p/144p) | — |
+
+**Browse API for recommended feed**:
+- Uses YouTube innertube browse API with `browseId: "FEwhat_to_watch"` + `?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8`
+- **CRITICAL: only `.youtube.com` domain cookies work** — including `.google.com` cookies causes `CookieMismatch` redirect. `parseCookieFile()` already filters to youtube.com.
+- Response contains both `richItemRenderer > videoRenderer` (with full metadata) and `richItemRenderer > lockupViewModel` (newer format — extract title, channel, views, duration from nested metadata)
+- Duration extracted from accessibility label regex: `"label":"(N hours?, )?(N minutes?, )?(N seconds?)"`
+- Views extracted from metadata text: "2.7K views", "5.3K watching" etc
+- Continuation tokens from `continuationItemRenderer > continuationEndpoint > continuationCommand > token`
+- Shorts separated: `shortsLockupViewModel` items + videos ≤180s duration → `shorts` array in response
+- Shorts section rendered as horizontal scrollable row after first 24 videos
+- Background enrichment via YouTube Data API (non-blocking, updates cache for next load)
 
 YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Always prefer youtube-sr for search.
 
@@ -51,7 +64,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 ### mpv Playback
 
-- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies=cookies.txt`
+- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies=cookies.txt` + `--audio-samplerate=48000` + `--autosync=30` (prevents A/V drift on long playback)
 - Unix domain socket sends JSON commands: `{"command": ["get_property", "time-pos"]}`
 - mpv keeps the socket open — read first complete JSON line with `request_id`, then close
 - New videos loaded via `loadfile` IPC command (reuses existing window/position) — only spawns new mpv if no existing player
@@ -60,7 +73,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - Videos only added to history after confirming they loaded (duration > 0); removed if mpv crashes within 5s
 - `progressInterval` uses a generation counter (`progressGen`) to prevent overlapping intervals from rapid play requests
 - `startProgressTracking(url)` captures the URL at setup time to prevent saving progress to the wrong video
-- Cross-device resume: `watchPct` from YouTube history API → mpv `--start=N%` (percentage-based seek)
+- Cross-device resume: local `.history.json` position takes priority; falls back to `watchPct` from YouTube history API → mpv `--start=N%` (percentage-based seek). Frontend sends `video.startPercent` in play request.
 
 ### VLC Playback (Live Streams)
 
@@ -143,26 +156,33 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 - React + Zustand + Vite. Source in `client/src/`, build output in `client/dist/`
 - Responsive: mobile list layout (<768px) + desktop grid layout (768px+) with hover preview
-- Brutalist DOS aesthetic: JetBrains Mono, black bg, gray text
-- Now-playing bar (`NowPlayingBar.jsx`): fixed bottom, uses `useShallow` selector for granular re-renders
+- **Afterglow terminal theme**: `--bg: #282828`, `--text: #ebdbb2` (warm cream), `--text-dim: #a89984`, `--green: #8ec07c`, `--red: #ac4142`, `--yellow: #e5b567`, `--blue: #6c99bb`. All colors as CSS variables in `:root`. Context menus use darker `#151515` bg.
+- **Two font sizes** via CSS variables: `--font-lg: 14px` (primary), `--font-sm: 14px` on desktop / `10px` on mobile (currently same everywhere)
+- **All SVG icons**: 16x16, stroke-based, `strokeLinecap="square"` + `strokeLinejoin="miter"` for consistent brutalist style
+- Now-playing bar (`NowPlayingBar.jsx`): fixed bottom, uses `useShallow` selector for granular re-renders. Shows channel name + (player) instead of "Now playing".
 - WebSocket (`/ws/sync`): server pushes playback state every 1s (position, duration, title, channel, monitor, windowMode, visible, paused, isLive, player, macStatus). Clock offset recalibrated every 5min.
 - **Status dots** in header (4 dots, tap opens secret menu): WebSocket, Ethernet (en3), Mac lock, Screen on/off
 - **Mac status**: polled server-side every 10s (`refreshMacStatus`), cached in `_macStatusCache`, included in WS broadcast (no client-side HTTP polling)
-- **Now-playing bar icons**: eye icon (green=visible/red=hidden, tap toggles mpv visibility), terminal icon (green=cmux focused/gray=not, tap toggles cmux/mpv focus)
+- **Now-playing bar icons**: eye icon (green=visible/red `#d05050`=hidden, tap toggles mpv visibility), terminal icon with window frame (green=cmux focused/gray=not, tap toggles cmux/mpv focus)
 - **Refresh FAB**: fixed bottom-right above now-playing bar, long-press opens secret menu
-- **Secret menu** (tap logo, status dots, or long-press refresh): volume slider (persists in UI store), mute toggle (red bg when muted), audio output selector (SwitchAudioSource), toggle resolution, refresh cookies, focus cmux, lock Mac, close
+- **Secret menu** (status dots or long-press refresh): labeled status indicators (WS, ETH, UNLK, SCR), volume slider (persists in UI store, ignores events >20px outside area), mute toggle (red when muted), audio output selector (SwitchAudioSource), toggle resolution, refresh cookies, focus cmux, lock Mac, close. Uses darker `#151515` background.
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
-- Tabs: Home, Live, History (search bar before tabs in header)
-- Long-press context menu on video cards: "More from [channel]", "Copy link" — position clamped to viewport
+- **Search bar replaces logo** in header — left-aligned text, no background
+- **Tabs**: Rec (recommended), Subs (subscriptions), Live, History
+- **Long-press context menu on thumbnails only** (not whole card): "More from [channel]", "Copy link", "Close" — positioned above tap point, clamped to viewport, clear of bottom bar. Thumbnails have `-webkit-touch-callout: none` to prevent iOS selection.
+- **Video preview on scroll/hover**: IntersectionObserver (mobile, center 40% of viewport) or mouseEnter (desktop) triggers `/api/preview-url` fetch → inline muted `<video>` overlay on thumbnail. Preview URL cached server-side (50 entries). Live videos excluded.
+- **Shorts section**: horizontal scrollable row inserted after first 24 videos. Videos ≤180s auto-detected as shorts. Dedicated `shortsLockupViewModel` items also collected. ShortCard component with hover preview.
 - Seek preview: storyboard thumbnails from YouTube sprite sheets (page URL template `M$M.jpg`, proper `backgroundSize` scaling) + time bubble. Live streams show time-behind-live.
-- Home feed paginated: 24 videos per page, infinite scroll loads more
+- Recommended feed: infinite scroll with 800px rootMargin prefetch, 24 videos per page via browse API continuation
 - Video badges: `duration` field can be pre-formatted string ("16:27"), "LIVE", or "SOON" — VideoCard handles all three
+- **Thumbnail fallback**: uses `hq720.jpg` URLs from browse API; `onError` falls back to `hqdefault.jpg`
 - History enriches all videos via YouTube API (duration, uploadedAt, channel, live status)
 - Cookies exported from Firefox to `cookies.txt` on server startup (requires Mac to be unlocked)
 - Firefox must be installed and logged into YouTube
 - **Maximize detection on reconnect**: checks mpv window width vs screen width heuristic
 - **cmux focus toggle**: aerospace-based, exits maximize when focusing cmux, restores on mpv focus. `phoneActive` synced to keep eye icon consistent.
+- **Window resize on loadfile**: floating mode re-applies 38% width, 16:9 aspect, top-right position via AppleScript after video loads (prevents vertical shorts from stretching window). Maximize/fullscreen modes re-apply aerospace fullscreen.
 
 ## Key Files
 

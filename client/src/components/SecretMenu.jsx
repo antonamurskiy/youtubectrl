@@ -22,7 +22,7 @@ export default function SecretMenu() {
   useEffect(() => {
     // Get initial mute state
     try {
-      fetch('/api/volume-status').then(r => r.json()).then(d => { setMuted(!!d.muted); if (d.volume != null) setVolume(d.volume) }).catch(() => {})
+      fetch('/api/volume-status').then(r => r.json()).then(d => { setMuted(!!d.muted); if (d.volume != null && !draggingRef.current) setVolume(d.volume) }).catch(() => {})
     } catch {}
     fetch('/api/audio-outputs').then(r => r.json()).then(d => {
       setAudioOutputs(d.outputs || [])
@@ -34,8 +34,10 @@ export default function SecretMenu() {
     const el = volAreaRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
-    const y = Math.max(0, Math.min(clientY - rect.top, rect.height))
-    const vol = Math.round(100 - (y / rect.height) * 100)
+    const y = clientY - rect.top
+    if (y < -20 || y > rect.height + 20) return // ignore events far outside
+    const clamped = Math.max(0, Math.min(y, rect.height))
+    const vol = Math.round(100 - (clamped / rect.height) * 100)
     setVolume(vol)
     fetch('/api/volume', {
       method: 'POST',
@@ -46,15 +48,20 @@ export default function SecretMenu() {
 
   const handlePointerDown = useCallback((e) => {
     e.preventDefault()
+    e.stopPropagation()
     draggingRef.current = true
     updateVolume(e.clientY)
-    const handleMove = (ev) => { if (draggingRef.current) updateVolume(ev.clientY) }
-    const handleUp = () => {
+    const handleMove = (ev) => {
+      ev.preventDefault()
+      if (draggingRef.current) updateVolume(ev.clientY)
+    }
+    const handleUp = (ev) => {
+      ev.preventDefault()
       draggingRef.current = false
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
     }
-    document.addEventListener('pointermove', handleMove)
+    document.addEventListener('pointermove', handleMove, { passive: false })
     document.addEventListener('pointerup', handleUp)
   }, [updateVolume])
 
@@ -81,7 +88,7 @@ export default function SecretMenu() {
           ].map(({ on, label }) => (
             <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <div className={`status-dot ${on ? 'connected' : 'disconnected'}`} />
-              <span style={{ fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.5px' }}>{label}</span>
+              <span style={{ fontSize: 'var(--font-lg)', color: 'var(--text-dim)' }}>{label}</span>
             </div>
           ))}
         </div>
@@ -97,7 +104,7 @@ export default function SecretMenu() {
         <button
           className="secret-menu-item"
           style={{
-            color: muted ? '#f33' : 'var(--text)',
+            color: muted ? 'var(--red)' : 'var(--text)',
             background: muted ? 'rgba(255,50,50,0.1)' : 'none',
           }}
           onClick={() => {

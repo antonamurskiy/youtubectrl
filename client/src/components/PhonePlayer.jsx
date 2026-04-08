@@ -346,18 +346,18 @@ export default function PhonePlayer({ send }) {
         autoPlay
         muted
         controls
-        style={{ width: '100%', maxHeight: '30vh', display: 'block', background: '#000' }}
+        style={{ width: '100%', maxHeight: '30vh', display: 'block', background: 'var(--bg)' }}
       />
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: '#111', fontSize: '12px', fontFamily: 'monospace' }}>
-        <span ref={driftDisplayRef} style={{ color: '#0f0' }}>drift: --</span>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
+        <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-5</button>
-          <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>-1</button>
-          <span ref={offsetDisplayRef} style={{ color: '#ff0', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
-          <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+1</button>
-          <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: '#333', color: '#fff', border: '1px solid #555', fontSize: '10px' }}>+5</button>
+          <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
+          <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
+          <span ref={offsetDisplayRef} style={{ color: 'var(--yellow)', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
+          <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
+          <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
-        <button onClick={handleClose} style={{ padding: '6px 12px', background: '#333', color: '#f33', border: '1px solid #555' }}>CLOSE</button>
+        <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>
     </div>
   )
