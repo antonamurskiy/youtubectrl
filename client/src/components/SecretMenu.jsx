@@ -5,12 +5,22 @@ export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const addToast = useUIStore(s => s.addToast)
   const [volume, setVolume] = useState(50)
+  const [audioOutputs, setAudioOutputs] = useState([])
+  const [currentOutput, setCurrentOutput] = useState('')
+  const [showOutputs, setShowOutputs] = useState(false)
+  const [muted, setMuted] = useState(false)
   const volAreaRef = useRef(null)
   const draggingRef = useRef(false)
 
-  // Fetch current volume on mount
   useEffect(() => {
-    // No dedicated GET endpoint for volume in the original, default to 50
+    // Get initial mute state
+    try {
+      fetch('/api/volume-status').then(r => r.json()).then(d => setMuted(!!d.muted)).catch(() => {})
+    } catch {}
+    fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+      setAudioOutputs(d.outputs || [])
+      setCurrentOutput(d.current || '')
+    }).catch(() => {})
   }, [])
 
   const updateVolume = useCallback((clientY) => {
@@ -20,7 +30,6 @@ export default function SecretMenu() {
     const y = Math.max(0, Math.min(clientY - rect.top, rect.height))
     const vol = Math.round(100 - (y / rect.height) * 100)
     setVolume(vol)
-
     fetch('/api/volume', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -32,43 +41,30 @@ export default function SecretMenu() {
     e.preventDefault()
     draggingRef.current = true
     updateVolume(e.clientY)
-
-    const handleMove = (ev) => {
-      if (draggingRef.current) updateVolume(ev.clientY)
-    }
+    const handleMove = (ev) => { if (draggingRef.current) updateVolume(ev.clientY) }
     const handleUp = () => {
       draggingRef.current = false
       document.removeEventListener('pointermove', handleMove)
       document.removeEventListener('pointerup', handleUp)
     }
-
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
   }, [updateVolume])
 
-  const handleToggleResolution = useCallback(() => {
-    fetch('/api/toggle-resolution', { method: 'POST' })
-      .then(() => addToast('Resolution toggled'))
-      .catch(() => addToast('Toggle failed'))
-    toggleSecretMenu()
-  }, [addToast, toggleSecretMenu])
-
-  const handleRefreshCookies = useCallback(() => {
-    fetch('/api/refresh-cookies', { method: 'POST' })
-      .then(() => addToast('Cookies refreshed'))
-      .catch(() => addToast('Refresh failed'))
-    toggleSecretMenu()
-  }, [addToast, toggleSecretMenu])
+  const switchOutput = useCallback((name) => {
+    fetch('/api/audio-output', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    }).then(() => { setCurrentOutput(name); addToast(`→ ${name}`) })
+      .catch(() => addToast('Switch failed'))
+    setShowOutputs(false)
+  }, [addToast])
 
   return (
     <>
-      {/* Backdrop */}
-      <div
-        style={{ position: 'fixed', inset: 0, zIndex: 599 }}
-        onClick={toggleSecretMenu}
-      />
+      <div style={{ position: 'fixed', inset: 0, zIndex: 599 }} onClick={toggleSecretMenu} />
       <div className="secret-menu">
-        {/* Volume slider area */}
         <div
           className="secret-menu-item vol-area"
           ref={volAreaRef}
@@ -78,13 +74,50 @@ export default function SecretMenu() {
           <div className="vol-label">{volume}%</div>
         </div>
 
-        <button className="secret-menu-item" onClick={() => { fetch('/api/mute', { method: 'POST' }).then(() => addToast('Mute toggled')).catch(() => addToast('Mute failed')) }}>
-          Toggle mute
+        <button
+          className="secret-menu-item"
+          style={{
+            color: muted ? '#f33' : 'var(--text)',
+            background: muted ? 'rgba(255,50,50,0.1)' : 'none',
+          }}
+          onClick={() => {
+            fetch('/api/mute', { method: 'POST' }).then(r => r.json()).then(d => { setMuted(d.muted); addToast(d.muted ? 'Muted' : 'Unmuted') }).catch(() => addToast('Mute failed'))
+          }}
+        >
+          {muted ? 'Muted ●' : 'Mute'}
         </button>
-        <button className="secret-menu-item" onClick={handleToggleResolution}>
+
+        <button className="secret-menu-item" onClick={() => setShowOutputs(!showOutputs)}>
+          Audio: {currentOutput || '...'}
+        </button>
+        {showOutputs && audioOutputs.map(name => (
+          <button
+            key={name}
+            className="secret-menu-item"
+            style={{ paddingLeft: 24, color: name === currentOutput ? 'var(--accent)' : 'var(--text)' }}
+            onClick={() => switchOutput(name)}
+          >
+            {name === currentOutput ? '● ' : '  '}{name}
+          </button>
+        ))}
+
+        <button className="secret-menu-item" onClick={() => {
+          fetch('/api/focus-cmux', { method: 'POST' }).then(() => addToast('cmux focused')).catch(() => addToast('Focus failed'))
+          toggleSecretMenu()
+        }}>
+          Focus cmux
+        </button>
+
+        <button className="secret-menu-item" onClick={() => {
+          fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
+          toggleSecretMenu()
+        }}>
           Toggle resolution
         </button>
-        <button className="secret-menu-item" onClick={handleRefreshCookies}>
+        <button className="secret-menu-item" onClick={() => {
+          fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
+          toggleSecretMenu()
+        }}>
           Refresh cookies
         </button>
         <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>

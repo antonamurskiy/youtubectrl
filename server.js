@@ -119,6 +119,41 @@ fs.watch(path.join(__dirname, "public"), { recursive: true }, () => { lastModifi
 fs.watch(path.join(__dirname, "server.js"), () => { lastModified = Date.now(); });
 app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
 
+app.get("/api/audio-outputs", (_req, res) => {
+  try {
+    const all = execSync("SwitchAudioSource -a -t output", { encoding: "utf8" }).trim().split("\n");
+    const current = execSync("SwitchAudioSource -c -t output", { encoding: "utf8" }).trim();
+    res.json({ outputs: all, current });
+  } catch { res.json({ outputs: [], current: "" }); }
+});
+
+app.post("/api/audio-output", (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "Missing name" });
+  try {
+    execSync(`SwitchAudioSource -s "${name.replace(/"/g, '\\"')}"`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Switch failed" }); }
+});
+
+app.post("/api/focus-cmux", (_req, res) => {
+  try {
+    execSync(`osascript -e 'tell application "cmux" to activate'`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Focus failed" }); }
+});
+
+app.get("/api/mac-status", (_req, res) => {
+  try {
+    const locked = execSync(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`, { encoding: "utf8", timeout: 2000 }).includes("Yes");
+    const displayInfo = execSync(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`, { encoding: "utf8", timeout: 3000 });
+    const screenOff = displayInfo.includes("Yes");
+    res.json({ locked, screenOff });
+  } catch {
+    res.json({ locked: false, screenOff: false });
+  }
+});
+
 // Serve React build if available, fall back to public/
 const clientDist = path.join(__dirname, "client", "dist");
 if (fs.existsSync(clientDist)) {
@@ -1726,6 +1761,14 @@ app.post("/api/refresh-cookies", async (_req, res) => {
 });
 
 // Mute toggle
+app.get("/api/volume-status", (_req, res) => {
+  try {
+    const muteState = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim();
+    const vol = execSync(`osascript -e 'output volume of (get volume settings)'`, { encoding: "utf8" }).trim();
+    res.json({ muted: muteState === "true", volume: parseInt(vol) || 0 });
+  } catch { res.json({ muted: false, volume: 50 }); }
+});
+
 app.post("/api/mute", (_req, res) => {
   try {
     const muteState = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim();

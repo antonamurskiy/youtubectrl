@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useUIStore } from './stores/ui'
@@ -25,6 +25,14 @@ function App() {
   const refresh = useUIStore(s => s.refresh)
   const longPressRef = useRef(null)
   const didLongPressRef = useRef(false)
+  const [macStatus, setMacStatus] = useState({ locked: false, screenOff: false })
+
+  useEffect(() => {
+    const poll = () => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {})
+    poll()
+    const id = setInterval(poll, 10000)
+    return () => clearInterval(id)
+  }, [])
 
   const tabs = ['home', 'live', 'history']
 
@@ -50,7 +58,9 @@ function App() {
             ))}
           </div>
           <div className="header-status" onClick={toggleSecretMenu}>
-            <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} />
+            <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} title="WebSocket" />
+            <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
+            <div className={`status-dot ${macStatus.screenOff ? 'disconnected' : 'connected'}`} title="Screen" />
           </div>
         </header>
 

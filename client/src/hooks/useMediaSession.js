@@ -33,12 +33,15 @@ export function useMediaSession() {
 
     // Register action handlers
     navigator.mediaSession.setActionHandler('play', () => {
-      fetch('/api/playpause', { method: 'POST' })
+      // Only send playpause if mpv is actually paused
+      const pb = usePlaybackStore.getState()
+      if (pb.paused) fetch('/api/playpause', { method: 'POST' })
       audio.play().catch(() => {})
       navigator.mediaSession.playbackState = 'playing'
     })
     navigator.mediaSession.setActionHandler('pause', () => {
-      fetch('/api/playpause', { method: 'POST' })
+      const pb = usePlaybackStore.getState()
+      if (!pb.paused) fetch('/api/playpause', { method: 'POST' })
       audio.pause()
       navigator.mediaSession.playbackState = 'paused'
     })

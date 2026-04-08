@@ -139,6 +139,38 @@ export default function PhonePlayer({ send }) {
       // Always show debug status
       setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!video?._hls}`)
       if (!video || !readyRef.current) return
+
+      // Detect video switch on desktop — reload phone stream with full state reset
+      if (pb.url && video._syncUrl && video._syncUrl !== pb.url) {
+        setDrift('video switched, reloading...')
+        video._syncUrl = pb.url
+        readyRef.current = false
+        readyAtRef.current = 0
+        lastSeekRef.current = 0
+        calibOffsetRef.current = null
+        driftSamplesRef.current = []
+        userOffsetRef.current = 0
+        const el = offsetDisplayRef.current
+        if (el) el.textContent = '0.0s'
+        // Re-fetch phone stream URL for new video
+        fetch('/api/watch-on-phone', { method: 'POST' })
+          .then(r => r.json())
+          .then(data => {
+            if (data.streamUrl) {
+              const fullUrl = data.streamUrl.startsWith('/') ? `${location.origin}${data.streamUrl}` : data.streamUrl
+              if (video._hls) { video._hls.destroy(); video._hls = null }
+              video.src = fullUrl
+              setTimeout(() => {
+                const newPb = usePlaybackStore.getState()
+                video.currentTime = newPb.position || data.seconds || 0
+                video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
+              }, 2000)
+            }
+          }).catch(() => {})
+        return
+      }
+      if (!video._syncUrl) video._syncUrl = pb.url
+
       const settleMs = Date.now() - readyAtRef.current
       if (settleMs < 5000) {
         setDrift(`settling ${((5000 - settleMs) / 1000).toFixed(0)}s...`)
@@ -271,9 +303,10 @@ export default function PhonePlayer({ send }) {
         setDrift(`drift: ${drift.toFixed(1)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
-        // Hard-seek with cooldown — works for both MP4 and HLS
+        // Hard-seek: immediate first correction, then 5s cooldown for HLS stability
         const now3 = Date.now()
-        if (Math.abs(drift) > 0.2 && now3 - lastSeekRef.current > 5000) {
+        const cooldown = lastSeekRef.current === 0 ? 0 : 5000
+        if (Math.abs(drift) > 0.2 && now3 - lastSeekRef.current > cooldown) {
           video.currentTime = mpvPos + 0.5
           lastSeekRef.current = now3
         }
