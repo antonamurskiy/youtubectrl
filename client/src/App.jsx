@@ -105,7 +105,7 @@ function App() {
 
       {terminalOpen && (
         <Suspense fallback={null}>
-          <Terminal onClose={() => setTerminalOpen(false)} />
+          <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} />
         </Suspense>
       )}
       {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}

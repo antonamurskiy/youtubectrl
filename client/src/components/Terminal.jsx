@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export default function TerminalModal({ onClose }) {
+export default function TerminalModal({ onClose, hasNowPlaying }) {
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -49,24 +49,31 @@ export default function TerminalModal({ onClose }) {
     xtermRef.current = term
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${location.host}/ws/terminal`)
-    wsRef.current = ws
+    const reconnectRef = { current: null }
 
-    ws.onopen = () => {
-      // Send initial size
-      const { cols, rows } = term
-      ws.send(`\x01r${cols},${rows}`)
+    function connectWs() {
+      const ws = new WebSocket(`${proto}//${location.host}/ws/terminal`)
+      wsRef.current = ws
+
+      ws.onopen = () => {
+        const { cols, rows } = term
+        ws.send(`\x01r${cols},${rows}`)
+      }
+      ws.onmessage = (e) => term.write(e.data)
+      ws.onclose = () => {
+        term.write('\r\n[reconnecting...]\r\n')
+        reconnectRef.current = setTimeout(connectWs, 500)
+      }
+      ws.onerror = () => ws.close()
+
+      term.onData((data) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(data)
+      })
+      term.onResize(({ cols, rows }) => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(`\x01r${cols},${rows}`)
+      })
     }
-    ws.onmessage = (e) => term.write(e.data)
-    ws.onclose = () => term.write('\r\n[disconnected]\r\n')
-
-    term.onData((data) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(data)
-    })
-
-    term.onResize(({ cols, rows }) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(`\x01r${cols},${rows}`)
-    })
+    connectWs()
 
     const handleResize = () => fitAddon.fit()
     window.addEventListener('resize', handleResize)
@@ -82,7 +89,7 @@ export default function TerminalModal({ onClose }) {
         const kbH = totalH - vvH
         if (kbH > 100) {
           // Keyboard open: panel fills from top to above keyboard + now-playing
-          panel.style.bottom = `${kbH - 80}px`
+          panel.style.bottom = `${kbH - 40}px`
           panel.style.paddingBottom = '0px'
         } else {
           // Keyboard closed: panel fills to above now-playing bar
@@ -96,15 +103,41 @@ export default function TerminalModal({ onClose }) {
     }
 
     return () => {
+      if (reconnectRef.current) clearTimeout(reconnectRef.current)
       window.removeEventListener('resize', handleResize)
-      ws.close()
+      if (wsRef.current) wsRef.current.close()
       term.dispose()
     }
   }, [])
 
+  const sendKey = (key) => {
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN) ws.send(key)
+  }
+
   return (
-    <div className="terminal-panel">
+    <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
       <div className="terminal-container" ref={termRef} />
+      <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
+        <button onClick={() => sendKey('\x01')}>^A</button>
+        <button onClick={() => sendKey('\x03')}>^C</button>
+        <button onClick={() => sendKey('\x0c')}>^L</button>
+        <button onClick={() => sendKey('\x04')}>^D</button>
+        <button onClick={() => sendKey('\x1a')}>^Z</button>
+        <button onClick={() => sendKey('\x1b')}>esc</button>
+        <button onClick={() => sendKey('\t')}>tab</button>
+        <button onClick={() => sendKey('\x1b[A')}>↑</button>
+        <button onClick={() => sendKey('\x1b[B')}>↓</button>
+        <button onClick={() => sendKey('\x1b[C')}>→</button>
+        <button onClick={() => sendKey('\x1b[D')}>←</button>
+        <button onClick={() => sendKey('\x1b[H')}>home</button>
+        <button onClick={() => sendKey('\x1b[F')}>end</button>
+        <button onClick={() => sendKey('\x1b[5~')}>pgUp</button>
+        <button onClick={() => sendKey('\x1b[6~')}>pgDn</button>
+        <button onClick={() => sendKey('|')}>|</button>
+        <button onClick={() => sendKey('/')}>/ </button>
+        <button onClick={() => sendKey('~')}>~</button>
+      </div>
     </div>
   )
 }
