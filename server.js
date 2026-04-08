@@ -136,22 +136,54 @@ app.post("/api/audio-output", (req, res) => {
   } catch { res.status(500).json({ error: "Switch failed" }); }
 });
 
+app.post("/api/toggle-visibility", async (_req, res) => {
+  try {
+    if (activePlayer === "mpv") {
+      phoneActive = !phoneActive;
+      if (phoneActive) {
+        execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+      } else {
+        execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        if (wid) {
+          execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+          if (windowMode === "maximize") execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+          else try { await mpvCommand(["set_property", "ontop", true]); } catch {}
+        }
+      }
+    }
+    res.json({ ok: true, visible: !phoneActive });
+  } catch { res.status(500).json({ error: "Failed" }); }
+});
+
 app.post("/api/focus-cmux", (_req, res) => {
   try {
-    execSync(`osascript -e 'tell application "cmux" to activate'`, { stdio: "ignore" });
+    const front = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim();
+    if (front === "cmux") {
+      // Focus mpv
+      const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+      if (mpvWid) {
+        execSync(`aerospace focus --window-id ${mpvWid}`, { stdio: "ignore" });
+        if (windowMode === "maximize") execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${mpvWid}`, { stdio: "ignore" });
+      }
+    } else {
+      // Focus cmux (mpv stays visible)
+      const cmuxWid = execSync("aerospace list-windows --all | grep cmux | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+      if (cmuxWid) {
+        if (windowMode === "maximize") {
+          const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+          if (mpvWid) execSync(`aerospace fullscreen off --window-id ${mpvWid}`, { stdio: "ignore" });
+        }
+        execSync(`aerospace focus --window-id ${cmuxWid}`, { stdio: "ignore" });
+      }
+    }
+    setTimeout(refreshMacStatus, 300); // update cached frontApp
     res.json({ ok: true });
   } catch { res.status(500).json({ error: "Focus failed" }); }
 });
 
 app.get("/api/mac-status", (_req, res) => {
-  try {
-    const locked = execSync(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`, { encoding: "utf8", timeout: 2000 }).includes("Yes");
-    const displayInfo = execSync(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`, { encoding: "utf8", timeout: 3000 });
-    const screenOff = displayInfo.includes("Yes");
-    res.json({ locked, screenOff });
-  } catch {
-    res.json({ locked: false, screenOff: false });
-  }
+  res.json(_macStatusCache);
 });
 
 // Serve React build if available, fall back to public/
@@ -2442,6 +2474,16 @@ setInterval(() => {
 
 // Push playback state to all connected phones
 let wsSyncInterval = null;
+// Cached mac status — refreshed every 10s to avoid expensive shell calls per WS tick
+let _macStatusCache = { locked: false, screenOff: false, frontApp: '' };
+let _macStatusInterval = null;
+function refreshMacStatus() {
+  try { _macStatusCache.locked = execSync(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`, { encoding: "utf8", timeout: 2000 }).includes("Yes"); } catch { _macStatusCache.locked = false; }
+  try { _macStatusCache.screenOff = execSync(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`, { encoding: "utf8", timeout: 3000 }).includes("Yes"); } catch { _macStatusCache.screenOff = false; }
+  try { _macStatusCache.frontApp = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim(); } catch { _macStatusCache.frontApp = ''; }
+}
+refreshMacStatus();
+_macStatusInterval = setInterval(refreshMacStatus, 10000);
 function startWsSync() {
   if (wsSyncInterval) return;
   wsSyncInterval = setInterval(async () => {
@@ -2473,7 +2515,7 @@ function startWsSync() {
           url: nowPlaying, serverTs: Date.now(),
           title: historyMap.get(nowPlaying)?.title || "",
           channel: historyMap.get(nowPlaying)?.channel || "",
-          monitor: currentMonitor, windowMode: windowMode || "floating",
+          monitor: currentMonitor, windowMode: windowMode || "floating", visible: !phoneActive,
           seeking: vlcSeekBusy
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
@@ -2489,7 +2531,7 @@ function startWsSync() {
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",
             channel: historyMap.get(nowPlaying)?.channel || "",
-            monitor: currentMonitor, windowMode: windowMode || "floating"
+            monitor: currentMonitor, windowMode: windowMode || "floating", visible: !phoneActive
           };
         } catch {
           state = { type: "playback", playing: false };
@@ -2497,6 +2539,7 @@ function startWsSync() {
       } else {
         state = { type: "playback", playing: false };
       }
+      state.macStatus = _macStatusCache;
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}
@@ -2539,7 +2582,19 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
         activePlayer = "mpv";
         // Detect window mode
         const fs = await mpvCommand(["get_property", "fullscreen"]).catch(() => ({ data: false }));
-        windowMode = fs?.data ? "fullscreen" : "floating";
+        if (fs?.data) {
+          windowMode = "fullscreen";
+        } else {
+          // Check if mpv fills screen (aerospace maximize = no outer gaps fullscreen)
+          try {
+            const size = execSync(`osascript -e 'tell application "System Events" to get size of first window of process "mpv"'`, { encoding: "utf8" }).trim();
+            const [w] = size.split(", ").map(Number);
+            const screenW = parseInt(execSync(`system_profiler SPDisplaysDataType | grep Resolution | head -1 | grep -oE '[0-9]+'`, { encoding: "utf8" }).trim());
+            windowMode = (w >= screenW - 100) ? "maximize" : "floating";
+          } catch {
+            windowMode = "floating";
+          }
+        }
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode);
         await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
         // Start progress tracking for reconnected player

@@ -78,11 +78,11 @@ const Icons = {
   ),
 }
 
-export default function NowPlayingBar({ send }) {
+export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const pb = usePlaybackStore(useShallow(s => ({
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, paused: s.paused, playing: s.playing,
-    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title,
+    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, visible: s.visible,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
@@ -304,12 +304,33 @@ export default function NowPlayingBar({ send }) {
       <div className="np-sub-row">
         <button className="np-skip-btn" onClick={skipBack}>-10</button>
         <span className="np-time">{formatTime(position)}</span>
+        <button
+          className="np-skip-btn"
+          style={{ color: pb.visible === false ? '#f33' : (pb.visible ? '#0f0' : '#555'), opacity: 0.8 }}
+          onClick={() => fetch('/api/toggle-visibility', { method: 'POST' }).catch(() => {})}
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+            {!pb.visible
+              ? <><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></>
+              : <><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></>
+            }
+          </svg>
+        </button>
         <span className="np-time" style={{ flex: 1, textAlign: 'center' }}>
           {pb.isLive
             ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
             : ''
           }
         </span>
+        <button
+          className="np-skip-btn"
+          style={{ color: frontApp === 'cmux' ? '#0f0' : '#555', opacity: 0.8 }}
+          onClick={() => fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {})}
+        >
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+        </button>
         <span className="np-time">{formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>
       </div>

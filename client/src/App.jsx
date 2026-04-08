@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useUIStore } from './stores/ui'
@@ -27,11 +27,13 @@ function App() {
   const didLongPressRef = useRef(false)
   const [macStatus, setMacStatus] = useState({ locked: false, screenOff: false })
 
+  // macStatus comes from WS playback state (no separate polling needed)
+  const macStatusFromWs = usePlaybackStore(s => s.macStatus)
   useEffect(() => {
-    const poll = () => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {})
-    poll()
-    const id = setInterval(poll, 10000)
-    return () => clearInterval(id)
+    if (macStatusFromWs) setMacStatus(macStatusFromWs)
+  }, [macStatusFromWs])
+  const refreshMacStatus = useCallback(() => {
+    setTimeout(() => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {}), 500)
   }, [])
 
   const tabs = ['home', 'live', 'history']
@@ -89,7 +91,7 @@ function App() {
         </svg>
       </button>
 
-      {playing && <NowPlayingBar send={send} />}
+      {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}
       {secretMenuOpen && <SecretMenu />}
 
       <Toast />
