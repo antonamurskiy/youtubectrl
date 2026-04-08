@@ -271,9 +271,11 @@ export default function PhonePlayer({ send }) {
         setDrift(`drift: ${drift.toFixed(1)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
-        // Hard-seek to stay synced (playbackRate doesn't work on Safari)
-        if (Math.abs(drift) > 0.1) {
-          video.currentTime = mpvPos + 0.5 // +0.5 compensates for seek latency
+        // Hard-seek with cooldown — works for both MP4 and HLS
+        const now3 = Date.now()
+        if (Math.abs(drift) > 0.2 && now3 - lastSeekRef.current > 5000) {
+          video.currentTime = mpvPos + 0.5
+          lastSeekRef.current = now3
         }
       }
     }, 1000)

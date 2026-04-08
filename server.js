@@ -1835,6 +1835,7 @@ app.get("/api/phone-live-stream", async (_req, res) => {
 
 // Watch on phone — get stream URL for phone playback
 let phoneSwitchedFromVlc = false; // track if we switched VLC→mpv for phone sync
+let phoneActive = false; // phone sync is active — don't show mpv window on unpause
 function killPhoneStream() {
   if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} phoneFmp4Process = null; }
 }
@@ -1873,7 +1874,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { const pos = await mpvCommand(["get_property", "time-pos"]); seconds = Math.floor(pos?.data || 0); } catch {}
     }
     if (activePlayer === "mpv") {
-      // Hide mpv window
+      phoneActive = true;
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
@@ -1906,6 +1907,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
   phoneSwitchedFromVlc = false;
+  phoneActive = false;
   if (activePlayer === "mpv") {
     // VOD — restore mpv window
     try {
@@ -2056,7 +2058,7 @@ app.post("/api/playpause", async (_req, res) => {
         const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
         if (paused) {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
-        } else {
+        } else if (!phoneActive) {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
           if (wid && windowMode === "maximize") {
             execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
@@ -2369,6 +2371,7 @@ wss.on("connection", (ws) => {
       } else if (data.type === "phone-state") {
         _phoneSyncDebug = { ...data, ts: Date.now() };
         if (data.debug) console.log("  Phone DVR:", data.debug);
+        if (data.mpvPos !== undefined) console.log(`  Sync: drift=${data.drift} mpv=${data.mpvPos} ph=${data.phonePos} el=${data.elapsed}`);
       } else if (data.type === "vlc-rate" && typeof data.rate === "number") {
         vlcRC(`rate ${data.rate}`).catch(() => {});
       } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
