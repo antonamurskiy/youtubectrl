@@ -2762,13 +2762,64 @@ app.post("/api/toggle-resolution", async (_req, res) => {
 const http = require("http");
 const WebSocket = require("ws");
 const httpServer = http.createServer(app);
-const wss = new WebSocket.Server({ server: httpServer, path: "/ws/sync" });
+const wss = new WebSocket.Server({ noServer: true });
+
+// ── WebSocket terminal (xterm.js ↔ tmux attach) ──
+let pty;
+try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
+const wssTerm = new WebSocket.Server({ noServer: true });
+
+httpServer.on("upgrade", (req, socket, head) => {
+  if (req.url === "/ws/sync") {
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
+  } else if (req.url === "/ws/terminal") {
+    wssTerm.handleUpgrade(req, socket, head, (ws) => wssTerm.emit("connection", ws, req));
+  } else {
+    socket.destroy();
+  }
+});
+wssTerm.on("connection", (ws) => {
+  console.log("  Terminal: WebSocket connected");
+  if (!pty) { ws.send("[terminal not available]\r\n"); ws.close(); return; }
+  let shell;
+  try {
+    shell = pty.spawn("/opt/homebrew/bin/tmux", ["new-session", "-A", "-t", "0"], {
+    name: "xterm-256color",
+    cols: 54,
+    rows: 25,
+    cwd: process.env.HOME,
+    env: { ...process.env, TERM: "xterm-256color" },
+  });
+  shell.onData((data) => {
+    try { ws.send(data); } catch {}
+  });
+  ws.on("message", (msg) => {
+    const str = msg.toString();
+    if (str.startsWith("\x01r")) {
+      const [cols, rows] = str.slice(2).split(",").map(Number);
+      if (cols > 0 && rows > 0) shell.resize(cols, rows);
+    } else {
+      shell.write(str);
+    }
+  });
+  ws.on("close", () => {
+    console.log("  Terminal: WebSocket disconnected");
+    shell.kill();
+  });
+  shell.onExit(() => { try { ws.close(); } catch {} });
+  } catch (e) {
+    console.error("  Terminal: PTY spawn failed:", e.message);
+    ws.send(`[terminal error: ${e.message}]\r\n`);
+    ws.close();
+  }
+});
 
 wss.on("connection", (ws) => {
   console.log("  Phone sync: WebSocket connected");
   startWsSync();
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
+  ws.on("error", (err) => { console.error("  WS error:", err.message); });
   ws.on("message", (msg) => {
     try {
       const data = JSON.parse(msg);

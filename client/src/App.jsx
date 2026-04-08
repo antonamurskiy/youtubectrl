@@ -10,6 +10,8 @@ import PhonePlayer from './components/PhonePlayer'
 import SecretMenu from './components/SecretMenu'
 import SearchBar from './components/SearchBar'
 import Toast from './components/Toast'
+import { lazy, Suspense } from 'react'
+const Terminal = lazy(() => import('./components/Terminal'))
 import './App.css'
 
 function App() {
@@ -22,6 +24,8 @@ function App() {
   const playing = usePlaybackStore(s => s.playing)
   const connected = useSyncStore(s => s.connected)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
+  const terminalOpen = useSyncStore(s => s.terminalOpen)
+  const setTerminalOpen = useSyncStore(s => s.setTerminalOpen)
   const refresh = useUIStore(s => s.refresh)
   const longPressRef = useRef(null)
   const didLongPressRef = useRef(false)
@@ -99,6 +103,11 @@ function App() {
         )}
       </button>
 
+      {terminalOpen && (
+        <Suspense fallback={null}>
+          <Terminal onClose={() => setTerminalOpen(false)} />
+        </Suspense>
+      )}
       {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}
       {secretMenuOpen && <SecretMenu />}
 
