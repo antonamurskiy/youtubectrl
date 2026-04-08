@@ -272,7 +272,7 @@ export default function PhonePlayer({ send }) {
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
         // Hard-seek to stay synced (playbackRate doesn't work on Safari)
-        if (Math.abs(drift) > 0.3) {
+        if (Math.abs(drift) > 0.1) {
           video.currentTime = mpvPos + 0.5 // +0.5 compensates for seek latency
         }
       }

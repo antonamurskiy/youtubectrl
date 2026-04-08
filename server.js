@@ -1844,6 +1844,7 @@ app.get("/api/phone-live-stream", async (_req, res) => {
 });
 
 // Watch on phone — get stream URL for phone playback
+let phoneSwitchedFromVlc = false; // track if we switched VLC→mpv for phone sync
 function killPhoneStream() {
   if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} phoneFmp4Process = null; }
 }
@@ -1865,38 +1866,37 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
 
     if (activePlayer === "vlc") {
-      // Live — give phone the HLS proxy URL (same feed as VLC for DVR sync)
-      // Ensure we have the YouTube HLS URL for the proxy to fetch from
-      if (!lastVlcHlsUrl) {
-        const { stdout } = await execFileP(
-          "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
-          { timeout: 15000 }
-        );
-        lastVlcHlsUrl = stdout.trim().split("\n")[0];
-      }
-      // Give both URLs — Safari uses YouTube directly (native HLS, no CORS issue),
-      // Chrome uses proxy (hls.js can't fetch YouTube due to CORS)
-      // Include target duration so phone can compute liveSyncDurationCount dynamically
-      let segDuration = 2;
-      let vlcBufferDelay = 25; // conservative fallback
+      // Switch VLC → mpv for perfect phone sync (mpv exposes precise time-pos)
+      console.log("Phone sync: switching VLC → mpv for precise sync");
+      phoneSwitchedFromVlc = true;
+      killVlc();
+      // Spawn mpv with the same URL — mpv handles HLS live via yt-dlp
+      try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+      await new Promise(r => setTimeout(r, 200));
+      try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
+      const mpvArgs = [
+        `--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
+        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, nowPlaying,
+      ];
+      mpvProcess = spawn("mpv", mpvArgs, { stdio: "ignore" });
+      activePlayer = "mpv";
+      windowMode = "floating";
+      // Hide mpv window (phone is the display)
+      setTimeout(() => {
+        try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
+      }, 2000);
+      // Wait for mpv to start and get position
+      await new Promise(r => setTimeout(r, 3000));
       try {
-        const m = await fetchManifest(lastVlcHlsUrl);
-        const tdMatch = m.match(/#EXT-X-TARGETDURATION:(\d+)/);
-        if (tdMatch) segDuration = parseInt(tdMatch[1]);
-        // Compute live edge from the same manifest, then measure VLC's buffer delay
-        const liveEdgeMs = hlsLiveEdgePdt(m);
-        const _pdt = vlcPdtEpochMs, _vt = vlcTimeNow();
-        if (liveEdgeMs > 0 && _pdt && _vt > 2) {
-          const vlcDisplayMs = _pdt + _vt * 1000;
-          const measured = Math.round((liveEdgeMs - vlcDisplayMs) / 1000);
-          console.log(`  Buffer calc: liveEdge=${new Date(liveEdgeMs).toISOString()} vlcDisplay=${new Date(vlcDisplayMs).toISOString()} measured=${measured}s`);
-          if (measured > 5 && measured < 120) vlcBufferDelay = measured - 1;
-        } else {
-          console.log(`  Buffer calc SKIPPED: liveEdge=${liveEdgeMs > 0} pdt=${!!_pdt} vt=${_vt.toFixed(1)}`);
-        }
-      } catch (e) { console.log(`  Buffer calc error: ${e.message}`); }
-      console.log(`Phone sync: segDur=${segDuration}s vlcBuffer=${vlcBufferDelay}s`);
-      return res.json({ streamUrl: lastVlcHlsUrl, proxyUrl: '/api/phone-hls', seconds, videoId, isLive: true, segDuration, vlcBufferDelay });
+        const pos = await mpvCommand(["get_property", "time-pos"]);
+        seconds = Math.floor(pos?.data || 0);
+      } catch {}
+      // Phone gets direct YouTube MP4/stream URL (same as VOD path)
+      // mpv position sync handles the rest
+    }
+    if (activePlayer === "mpv") {
+      // Hide mpv window
+      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
     // VOD — direct URL (Safari plays these natively)
@@ -1927,8 +1927,15 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
-  // Restore mpv window visibility
-  if (activePlayer === "mpv") {
+  if (phoneSwitchedFromVlc && activePlayer === "mpv" && lastVlcHlsUrl) {
+    // Switch mpv back to VLC for DVR capability
+    console.log("Phone sync: switching mpv → VLC (restoring DVR)");
+    if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
+    if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+    spawnVlc(lastVlcHlsUrl);
+    phoneSwitchedFromVlc = false;
+  } else if (activePlayer === "mpv") {
+    // VOD — restore mpv window
     try {
       execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
       if (windowMode === "maximize") {
