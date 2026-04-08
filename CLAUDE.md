@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv (VODs) or VLC (live streams with DVR). Single-user, runs on the local network.
+YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv. VLC is available for DVR scrubbing on live streams. Single-user, runs on the local network at `yuzu.local:3000`.
 
 ## Commands
 
@@ -120,52 +120,49 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 ### Phone Mode (Watch on Phone)
 
-- Phone plays the same video as the desktop player, synced via polling
-- **VOD (mpv)**: phone gets direct YouTube MP4 URL, sync via interpolated position from WebSocket (1s updates).
-  - `clockOffset` (server-client clock diff) measured via ping/pong. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
-  - Drift = interpolated mpv position - phone currentTime. Hard-seek at 0.3s threshold with +0.5s seek latency compensation.
-  - Safari ignores `playbackRate` on YouTube MP4s — only hard-seeks work for correction.
+- Phone plays the same video as the desktop player, synced via mpv position
+- **All streams use mpv** — live streams play via mpv (not VLC) for precise `time-pos` sync. VLC only used when explicitly switching for DVR via `/api/switch-to-vlc`.
+- **Unified sync path (VOD + live)**:
+  - Phone gets direct YouTube URL from `yt-dlp --get-url` (MP4 for VODs, HLS for live)
+  - `clockOffset` (server-client clock diff) measured via ping/pong, recalibrated every 5min. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
+  - Drift = interpolated mpv position - phone currentTime. Hard-seek at 0.2s threshold with 5s cooldown, +0.5s seek latency compensation.
+  - Safari ignores `playbackRate` on both MP4s and live HLS — only hard-seeks work.
   - Follows desktop scrubs (>5s position jump detection) and pause/resume.
-- **Live (VLC) sync — calibrated drift with manual offset buttons**:
-  - Phone gets HLS via DVR-aware proxy (`/api/phone-hls`) on both Chrome (hls.js, proxied segments for CORS) and Safari (direct YouTube CDN segment URLs via `?direct=1`).
-  - **YouTube HLS segments can be 1s or 5s** — `EXT-X-TARGETDURATION` varies per stream. hls.js `liveSyncDurationCount` computed as `vlcBufferDelay / segDuration`.
-  - **VLC buffer delay varies per stream** — measured at phone startup via `liveEdgeMs - (vlcPdtEpochMs + vlcTimeNow())`. Fallback 20s. Measurement has precision error from `vlcPdtEpochMs` (cumulative `mediaSequence * avgSegDuration` error over millions of segments).
-  - **`vlcPdtEpochMs` precision error**: computed from `firstPDT - mediaSequence * avgSegDuration * 1000`. With millions of segments and imprecise duration, error can be 10-60s. This error is CONSTANT per stream session, so calibration absorbs it.
-  - Calibrated drift display: baseline offset captured on first measurement, drift tracked as change from baseline. 5-sample moving average for stability.
-  - Hard-seek at 5s drift for DVR scrubs. No rate correction (Safari ignores playbackRate on live HLS).
-  - Offset buttons (±1s, ±5s) seek phone directly for manual fine-tuning.
-  - **VLC `--live-caching` has no effect on HLS** — it only applies to local capture devices. Only `--network-caching` matters for network streams.
-  - VLC `get_time` returns integers; `vlcTimeNow()` interpolates sub-second precision
-  - `fetchPdtFromUrl()` called once at VLC spawn and on reconnect. On reconnect, if `lastVlcHlsUrl` is null, fetches it via yt-dlp.
-  - **Two absolute time modes**: at live edge, uses original `vlcPdtEpochMs + vlcTimeNow()`. After DVR seeks (where VLC PTS resets), uses manifest-based: `vlcManifestLiveEdgeMs + elapsed - vlcDvrBehind * 1000`.
-- **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries. Fragmented MP4 via pipe doesn't play (needs Content-Length).
-- **Live stream server-side detection**: if frontend doesn't send `isLive` flag (e.g., playing from History tab), server checks via `yt-dlp --print is_live`
-- Phone player is `position:fixed` on `document.body` — secret menu hides it when open (z-index stacking doesn't work reliably across Safari's position:fixed contexts)
-- Video swap: when switching videos with phone active, re-hides mpv video and updates phone `src` in-place
-- `closePhonePlayer()` restores mpv video track (`vid=auto`), clears sync interval, kills ffmpeg relay
-- fMP4 relay (`/api/phone-live-stream`): ffmpeg remuxes HLS→fragmented MP4 with `-bsf:a aac_adtstoasc`. Works in Chrome (achieved 0.001s drift with rate sync) but not Safari (no MSE for streaming fMP4).
-- iOS lock screen media controls via Media Session API — silent audio (`public/silent.m4a`, truly silent, volume=1) keeps the Now Playing widget alive. Pausing from app or lock screen pauses the silent audio to stop the timer.
+  - Detects video switch on desktop (`pb.url` change) — full state reset + stream reload with 2s settle.
+- **`phoneActive` flag**: tracks whether phone sync is active. Prevents mpv window from showing on unpause. Synced with eye icon visibility toggle and cmux focus toggle.
+- **mpv window hidden** during phone sync via AppleScript `set visible of process "mpv" to false` (not `vid=no` which drops audio). Restored on phone close with aerospace focus + maximize restore.
+- **Offset buttons (±1s, ±5s)**: seek phone directly for manual fine-tuning of live streams.
+- **Video swap**: sync loop detects `pb.url` change, resets all sync state, re-fetches stream URL from `/api/watch-on-phone`.
+- **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries.
+- **Live stream server-side detection**: if frontend doesn't send `isLive` flag, server checks via `yt-dlp --print is_live`
+- Phone player positioned below Dynamic Island (`env(safe-area-inset-top)`)
+- iOS lock screen media controls via Media Session API (`useMediaSession` hook) — silent audio loop (`public/silent.m4a`), checks mpv pause state before toggling to prevent double-toggle.
+- **PTS-based vlcPdtEpochMs**: `fetchPdtFromUrl` extracts PTS from MPEG-TS segment headers for accurate PDT mapping (replaces imprecise `mediaSequence * avgSegDuration`). Used for VLC absolute time when VLC is active.
 
 ### Frontend (React)
 
 - React + Zustand + Vite. Source in `client/src/`, build output in `client/dist/`
 - Responsive: mobile list layout (<768px) + desktop grid layout (768px+) with hover preview
 - Brutalist DOS aesthetic: JetBrains Mono, black bg, gray text
-- Now-playing bar (`NowPlayingBar.jsx`): fixed bottom, state from WebSocket (`useSync` hook) via Zustand playback store
-- WebSocket (`/ws/sync`): server pushes playback state every 1s (position, duration, title, channel, monitor, windowMode, paused, isLive, player)
+- Now-playing bar (`NowPlayingBar.jsx`): fixed bottom, uses `useShallow` selector for granular re-renders
+- WebSocket (`/ws/sync`): server pushes playback state every 1s (position, duration, title, channel, monitor, windowMode, visible, paused, isLive, player, macStatus). Clock offset recalibrated every 5min.
+- **Status dots** in header (4 dots, tap opens secret menu): WebSocket, Ethernet (en3), Mac lock, Screen on/off
+- **Mac status**: polled server-side every 10s (`refreshMacStatus`), cached in `_macStatusCache`, included in WS broadcast (no client-side HTTP polling)
+- **Now-playing bar icons**: eye icon (green=visible/red=hidden, tap toggles mpv visibility), terminal icon (green=cmux focused/gray=not, tap toggles cmux/mpv focus)
+- **Refresh FAB**: fixed bottom-right above now-playing bar, long-press opens secret menu
+- **Secret menu** (tap logo, status dots, or long-press refresh): volume slider (persists in UI store), mute toggle (red bg when muted), audio output selector (SwitchAudioSource), toggle resolution, refresh cookies, focus cmux, lock Mac, close
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
-- Tabs: Home, Live, History
-- Secret menu (tap "ytctrl" logo): volume slider (system volume), toggle resolution, refresh cookies
+- Tabs: Home, Live, History (search bar before tabs in header)
 - Long-press context menu on video cards: "More from [channel]", "Copy link" — position clamped to viewport
-- Seek preview: storyboard thumbnails from YouTube sprite sheets + time bubble above thumb while dragging. Live streams show time-behind-live (e.g., `-0:15`) instead of absolute time.
-- Current position marker (white line) shown during scrub, fades out after release
+- Seek preview: storyboard thumbnails from YouTube sprite sheets (page URL template `M$M.jpg`, proper `backgroundSize` scaling) + time bubble. Live streams show time-behind-live.
 - Home feed paginated: 24 videos per page, infinite scroll loads more
-- iOS Media Session API (`useMediaSession` hook): silent audio loop (`public/silent.m4a`) for lock screen Now Playing widget with play/pause/seek controls and artwork
 - Video badges: `duration` field can be pre-formatted string ("16:27"), "LIVE", or "SOON" — VideoCard handles all three
+- History enriches all videos via YouTube API (duration, uploadedAt, channel, live status)
 - Cookies exported from Firefox to `cookies.txt` on server startup (requires Mac to be unlocked)
-- `POST /api/refresh-cookies` to re-export if cookies expire
 - Firefox must be installed and logged into YouTube
+- **Maximize detection on reconnect**: checks mpv window width vs screen width heuristic
+- **cmux focus toggle**: aerospace-based, exits maximize when focusing cmux, restores on mpv focus. `phoneActive` synced to keep eye icon consistent.
 
 ## Key Files
 
