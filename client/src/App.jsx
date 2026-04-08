@@ -61,6 +61,7 @@ function App() {
           </div>
           <div className="header-status" onClick={toggleSecretMenu}>
             <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} title="WebSocket" />
+            <div className={`status-dot ${macStatus.ethernet ? 'connected' : 'disconnected'}`} title="Ethernet" />
             <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
             <div className={`status-dot ${macStatus.screenOff ? 'disconnected' : 'connected'}`} title="Screen" />
           </div>

@@ -156,11 +156,20 @@ app.post("/api/toggle-visibility", async (_req, res) => {
   } catch { res.status(500).json({ error: "Failed" }); }
 });
 
+app.post("/api/lock-mac", (_req, res) => {
+  try {
+    execSync(`pmset displaysleepnow`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Lock failed" }); }
+});
+
 app.post("/api/focus-cmux", (_req, res) => {
   try {
     const front = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim();
     if (front === "cmux") {
-      // Focus mpv
+      // Show and focus mpv
+      phoneActive = false;
+      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
       const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
       if (mpvWid) {
         execSync(`aerospace focus --window-id ${mpvWid}`, { stdio: "ignore" });
@@ -2475,12 +2484,13 @@ setInterval(() => {
 // Push playback state to all connected phones
 let wsSyncInterval = null;
 // Cached mac status — refreshed every 10s to avoid expensive shell calls per WS tick
-let _macStatusCache = { locked: false, screenOff: false, frontApp: '' };
+let _macStatusCache = { locked: false, screenOff: false, frontApp: '', ethernet: false };
 let _macStatusInterval = null;
 function refreshMacStatus() {
   try { _macStatusCache.locked = execSync(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`, { encoding: "utf8", timeout: 2000 }).includes("Yes"); } catch { _macStatusCache.locked = false; }
   try { _macStatusCache.screenOff = execSync(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`, { encoding: "utf8", timeout: 3000 }).includes("Yes"); } catch { _macStatusCache.screenOff = false; }
   try { _macStatusCache.frontApp = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim(); } catch { _macStatusCache.frontApp = ''; }
+  try { _macStatusCache.ethernet = execSync(`ifconfig en3 | grep "status:"`, { encoding: "utf8", timeout: 1000 }).includes("active"); } catch { _macStatusCache.ethernet = false; }
 }
 refreshMacStatus();
 _macStatusInterval = setInterval(refreshMacStatus, 10000);

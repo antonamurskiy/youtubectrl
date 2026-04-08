@@ -4,7 +4,10 @@ import { useUIStore } from '../stores/ui'
 export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const addToast = useUIStore(s => s.addToast)
-  const [volume, setVolume] = useState(50)
+  const cachedVolume = useUIStore(s => s.cachedVolume)
+  const setCachedVolume = useUIStore(s => s.setCachedVolume)
+  const [volume, setVolumeLocal] = useState(cachedVolume ?? 50)
+  const setVolume = (v) => { setVolumeLocal(v); setCachedVolume(v) }
   const [audioOutputs, setAudioOutputs] = useState([])
   const [currentOutput, setCurrentOutput] = useState('')
   const [showOutputs, setShowOutputs] = useState(false)
@@ -15,7 +18,7 @@ export default function SecretMenu() {
   useEffect(() => {
     // Get initial mute state
     try {
-      fetch('/api/volume-status').then(r => r.json()).then(d => setMuted(!!d.muted)).catch(() => {})
+      fetch('/api/volume-status').then(r => r.json()).then(d => { setMuted(!!d.muted); if (d.volume != null) setVolume(d.volume) }).catch(() => {})
     } catch {}
     fetch('/api/audio-outputs').then(r => r.json()).then(d => {
       setAudioOutputs(d.outputs || [])
@@ -119,6 +122,12 @@ export default function SecretMenu() {
           toggleSecretMenu()
         }}>
           Refresh cookies
+        </button>
+        <button className="secret-menu-item" onClick={() => {
+          fetch('/api/lock-mac', { method: 'POST' }).then(() => addToast('Mac locked')).catch(() => addToast('Lock failed'))
+          toggleSecretMenu()
+        }}>
+          Lock Mac
         </button>
         <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>
           Close
