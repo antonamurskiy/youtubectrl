@@ -772,28 +772,18 @@ app.post("/api/play", async (req, res) => {
     // If live, use VLC for DVR support + phone sync
     if (isLive) {
       // Kill mpv if switching from VOD to live
-      if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
-      if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-      // Get HLS URL via yt-dlp
-      const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", url],
-        { timeout: 15000 }
-      );
-      const hlsUrl = stdout.trim();
-      if (activePlayer === "vlc" && vlcProcess) {
-        lastVlcHlsUrl = hlsUrl;
-        fs.writeFileSync("/tmp/vlc-next.m3u", hlsUrl);
-        await vlcRC("clear");
-        await vlcRC("add /tmp/vlc-next.m3u");
-      } else {
-        killVlc();
-        spawnVlc(hlsUrl);
-      }
-      nowPlaying = url;
-      addToHistory(url, reqTitle || "", reqChannel || "");
-      markWatchedOnYouTube(url);
-      playLock = false;
-      return res.json({ ok: true, player: "vlc" });
+      // Store HLS URL for VLC DVR switch later
+      try {
+        const { stdout } = await execFileP(
+          "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", url],
+          { timeout: 15000 }
+        );
+        lastVlcHlsUrl = stdout.trim();
+      } catch {}
+      // Kill VLC if running — live streams now use mpv for precise time sync
+      if (activePlayer === "vlc" && vlcProcess) { killVlc(); }
+      // Fall through to mpv playback below
+      isLive = false; // let mpv handle it as a regular stream
     }
 
     const savedEntry = historyMap.get(url);
@@ -1866,33 +1856,21 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     const videoId = m ? m[1] : "";
 
     if (activePlayer === "vlc") {
-      // Switch VLC → mpv for perfect phone sync (mpv exposes precise time-pos)
-      console.log("Phone sync: switching VLC → mpv for precise sync");
+      // Switch VLC → mpv for phone sync (shouldn't happen since live now uses mpv)
+      console.log("Phone sync: VLC active, switching to mpv");
       phoneSwitchedFromVlc = true;
       killVlc();
-      // Spawn mpv with the same URL — mpv handles HLS live via yt-dlp
       try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
       await new Promise(r => setTimeout(r, 200));
       try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
-      const mpvArgs = [
+      mpvProcess = spawn("mpv", [
         `--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
         `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, nowPlaying,
-      ];
-      mpvProcess = spawn("mpv", mpvArgs, { stdio: "ignore" });
+      ], { stdio: "ignore" });
       activePlayer = "mpv";
       windowMode = "floating";
-      // Hide mpv window (phone is the display)
-      setTimeout(() => {
-        try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
-      }, 2000);
-      // Wait for mpv to start and get position
       await new Promise(r => setTimeout(r, 3000));
-      try {
-        const pos = await mpvCommand(["get_property", "time-pos"]);
-        seconds = Math.floor(pos?.data || 0);
-      } catch {}
-      // Phone gets direct YouTube MP4/stream URL (same as VOD path)
-      // mpv position sync handles the rest
+      try { const pos = await mpvCommand(["get_property", "time-pos"]); seconds = Math.floor(pos?.data || 0); } catch {}
     }
     if (activePlayer === "mpv") {
       // Hide mpv window
@@ -1927,14 +1905,8 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
-  if (phoneSwitchedFromVlc && activePlayer === "mpv" && lastVlcHlsUrl) {
-    // Switch mpv back to VLC for DVR capability
-    console.log("Phone sync: switching mpv → VLC (restoring DVR)");
-    if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
-    if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-    spawnVlc(lastVlcHlsUrl);
-    phoneSwitchedFromVlc = false;
-  } else if (activePlayer === "mpv") {
+  phoneSwitchedFromVlc = false;
+  if (activePlayer === "mpv") {
     // VOD — restore mpv window
     try {
       execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });

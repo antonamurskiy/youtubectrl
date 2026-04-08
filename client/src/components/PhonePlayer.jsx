@@ -229,7 +229,7 @@ export default function PhonePlayer({ send }) {
             calibOffsetRef.current = null
             driftSamplesRef.current = []
             lastSeekRef.current = now
-          } else if (Math.abs(drift) > 0.5 && now - lastSeekRef.current > 10000) {
+          } else if (Math.abs(drift) > 0.2 && now - lastSeekRef.current > 5000) {
             video.currentTime += drift
             lastSeekRef.current = now
           }
