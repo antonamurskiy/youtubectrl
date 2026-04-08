@@ -1,9 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
+import { useSyncStore } from '../stores/sync'
+import { usePlaybackStore } from '../stores/playback'
 
 export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const addToast = useUIStore(s => s.addToast)
+  const connected = useSyncStore(s => s.connected)
+  const macStatus = usePlaybackStore(s => s.macStatus) || {}
   const cachedVolume = useUIStore(s => s.cachedVolume)
   const setCachedVolume = useUIStore(s => s.setCachedVolume)
   const [volume, setVolumeLocal] = useState(cachedVolume ?? 50)
@@ -68,6 +72,19 @@ export default function SecretMenu() {
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 599 }} onClick={toggleSecretMenu} />
       <div className="secret-menu">
+        <div className="secret-menu-item" style={{ display: 'flex', gap: 16, alignItems: 'center', justifyContent: 'center', padding: '10px 12px' }}>
+          {[
+            { on: connected, label: 'WS' },
+            { on: macStatus.ethernet, label: 'ETH' },
+            { on: !macStatus.locked, label: 'UNLK' },
+            { on: !macStatus.screenOff, label: 'SCR' },
+          ].map(({ on, label }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div className={`status-dot ${on ? 'connected' : 'disconnected'}`} />
+              <span style={{ fontSize: 9, color: 'var(--text-dim)', letterSpacing: '0.5px' }}>{label}</span>
+            </div>
+          ))}
+        </div>
         <div
           className="secret-menu-item vol-area"
           ref={volAreaRef}

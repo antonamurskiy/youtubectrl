@@ -2359,7 +2359,6 @@ app.post("/api/maximize", async (req, res) => {
       windowMode = "maximize";
     } else {
       // Already maximized — exit to floating with resize via AppleScript
-      execSync(`aerospace fullscreen off --window-id ${wid}`, { stdio: "ignore" });
       try {
         const screens = getScreenOrigins();
         const fsScreen = await mpvCommand(["get_property", "fs-screen"]).catch(() => ({ data: 0 }));

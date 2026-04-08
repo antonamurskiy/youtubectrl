@@ -44,9 +44,6 @@ function App() {
 
       <div className="app">
         <header className="header">
-          <span className="logo-text" onClick={toggleSecretMenu}>
-            ytctrl
-          </span>
           <SearchBar />
           <div className="tabs">
             {tabs.map(t => (

@@ -113,12 +113,14 @@ export default function VideoCard({ video, isPlaying }) {
       <div
         className={`video-card${isPlaying ? ' playing' : ''}`}
         onClick={handlePlay}
-        onTouchStart={handleTouchStart}
-        onTouchEnd={handleTouchEnd}
-        onTouchCancel={handleTouchEnd}
-        onContextMenu={handleContextMenuEvent}
       >
-        <div className="thumb-wrap">
+        <div
+          className="thumb-wrap"
+          onTouchStart={handleTouchStart}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
+          onContextMenu={handleContextMenuEvent}
+        >
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" />}
           {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
           {(video.upcoming || video.duration === 'SOON') && !video.isLive && !video.live && (
@@ -159,9 +161,14 @@ export default function VideoCard({ video, isPlaying }) {
               if (el) {
                 const rect = el.getBoundingClientRect()
                 const maxX = window.innerWidth - rect.width - 8
-                const maxY = window.innerHeight - rect.height - 8
-                el.style.top = `${Math.min(contextMenu.y, maxY)}px`
-                el.style.left = `${Math.min(contextMenu.x, maxX)}px`
+                const bottomBar = 140 // now-playing bar + scrubber height
+                const maxY = window.innerHeight - bottomBar - rect.height
+                // Position above the tap point, clamped to viewport
+                let y = contextMenu.y - rect.height - 8
+                if (y < 8) y = 8
+                if (y > maxY) y = maxY
+                el.style.top = `${y}px`
+                el.style.left = `${Math.min(Math.max(contextMenu.x - rect.width / 2, 8), maxX)}px`
               }
             }}
           >
@@ -170,6 +177,9 @@ export default function VideoCard({ video, isPlaying }) {
             </button>
             <button className="context-menu-item" onClick={handleCopyLink}>
               Copy link
+            </button>
+            <button className="context-menu-item" onClick={closeContextMenu} style={{ color: 'var(--accent2)' }}>
+              Close
             </button>
           </div>
         </>
