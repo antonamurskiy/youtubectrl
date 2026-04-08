@@ -71,6 +71,30 @@ export default function TerminalModal({ onClose }) {
     const handleResize = () => fitAddon.fit()
     window.addEventListener('resize', handleResize)
 
+    // Resize terminal panel when iOS keyboard opens/closes
+    const panel = termRef.current?.closest('.terminal-panel')
+    const vv = window.visualViewport
+    if (vv && panel) {
+      const update = () => {
+        // visualViewport.height shrinks when keyboard opens
+        const totalH = window.innerHeight
+        const vvH = vv.height
+        const kbH = totalH - vvH
+        if (kbH > 100) {
+          // Keyboard open: panel fills from top to above keyboard + now-playing
+          panel.style.bottom = `${kbH - 80}px`
+          panel.style.paddingBottom = '0px'
+        } else {
+          // Keyboard closed: panel fills to above now-playing bar
+          panel.style.bottom = '0px'
+          panel.style.paddingBottom = ''
+        }
+        fitAddon.fit()
+      }
+      vv.addEventListener('resize', update)
+      vv.addEventListener('scroll', update)
+    }
+
     return () => {
       window.removeEventListener('resize', handleResize)
       ws.close()
