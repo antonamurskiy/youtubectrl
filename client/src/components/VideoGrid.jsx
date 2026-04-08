@@ -103,6 +103,7 @@ export default function VideoGrid() {
     if (!page) {
       setLoading(true)
       setVideos([])
+      setShorts([])
       setHasMore(false)
       setNextPage(null)
     }

@@ -167,24 +167,35 @@ app.post("/api/focus-cmux", (_req, res) => {
   try {
     const front = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim();
     if (front === "cmux") {
-      // Show and focus mpv
+      // Return to mpv — restore previous window state
       phoneActive = false;
       execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
       const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
       if (mpvWid) {
         execSync(`aerospace focus --window-id ${mpvWid}`, { stdio: "ignore" });
-        if (windowMode === "maximize") execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${mpvWid}`, { stdio: "ignore" });
+        if (windowMode === "maximize") {
+          execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${mpvWid}`, { stdio: "ignore" });
+        } else if (windowMode === "floating") {
+          try {
+            const screens = getScreenOrigins();
+            const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
+            const [wx] = posStr.split(", ").map(Number);
+            const screen = screens.find(s => wx >= s.x && wx < s.x + s.w) || screens.find(s => s.isMain) || screens[0];
+            const w = Math.round(screen.w * 0.38);
+            const h = Math.round(w * 9 / 16);
+            const posX = screen.x + screen.w - w - 12;
+            const posY = screen.y + 38;
+            execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
+            execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`, { stdio: "ignore" });
+          } catch {}
+          try { mpvCommand(["set_property", "ontop", true]); } catch {}
+        }
       }
     } else {
-      // Focus cmux (mpv stays visible)
-      const cmuxWid = execSync("aerospace list-windows --all | grep cmux | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-      if (cmuxWid) {
-        if (windowMode === "maximize") {
-          const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-          if (mpvWid) execSync(`aerospace fullscreen off --window-id ${mpvWid}`, { stdio: "ignore" });
-        }
-        execSync(`aerospace focus --window-id ${cmuxWid}`, { stdio: "ignore" });
-      }
+      // Focus cmux — pure AppleScript, no aerospace commands to avoid terminal reflow
+      try {
+        execSync(`osascript -e 'tell application "System Events" to set frontmost of process "cmux" to true'`, { stdio: "ignore" });
+      } catch {}
     }
     setTimeout(refreshMacStatus, 300); // update cached frontApp
     res.json({ ok: true });

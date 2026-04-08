@@ -71,7 +71,11 @@ function App() {
         className="fab-refresh"
         onClick={() => {
           if (didLongPressRef.current) { didLongPressRef.current = false; return }
-          refresh()
+          if (activeTab === 'channel' || activeTab === 'search') {
+            setTab('rec')
+          } else {
+            refresh()
+          }
         }}
         onTouchStart={() => {
           didLongPressRef.current = false
@@ -84,9 +88,15 @@ function App() {
         onTouchCancel={() => clearTimeout(longPressRef.current)}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-          <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
-        </svg>
+        {activeTab === 'channel' || activeTab === 'search' ? (
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
+          </svg>
+        )}
       </button>
 
       {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}
