@@ -2790,6 +2790,8 @@ wssTerm.on("connection", (ws) => {
     cwd: process.env.HOME,
     env: { ...process.env, TERM: "xterm-256color" },
   });
+  // Hide tmux status bar for web session, restore on disconnect
+  setTimeout(() => { try { execSync("tmux set status off", { stdio: "ignore" }); } catch {} }, 500);
   shell.onData((data) => {
     try { ws.send(data); } catch {}
   });
@@ -2804,6 +2806,7 @@ wssTerm.on("connection", (ws) => {
   });
   ws.on("close", () => {
     console.log("  Terminal: WebSocket disconnected");
+    try { execSync("tmux set status on", { stdio: "ignore" }); } catch {}
     shell.kill();
   });
   shell.onExit(() => { try { ws.close(); } catch {} });
