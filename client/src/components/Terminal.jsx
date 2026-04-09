@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { usePlaybackStore } from '../stores/playback'
 import '@xterm/xterm/css/xterm.css'
 
 export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
+  const claudeState = usePlaybackStore(s => s.claudeState)
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -117,6 +119,12 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
 
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
+      <div className="claude-quick-reply" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
+        {[1,2,3].map(n => <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => {
+          sendKey(String(n))
+          fetch('/api/tmux-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: String(n) }) }).catch(() => {})
+        }}>{n}</button>)}
+      </div>
       <div className="terminal-container" ref={termRef} />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>

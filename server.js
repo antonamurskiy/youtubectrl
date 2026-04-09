@@ -2839,6 +2839,17 @@ function refreshTmuxWindows() {
   } catch { tmuxWindows = []; }
 }
 
+app.post("/api/tmux-send", (req, res) => {
+  const { keys } = req.body;
+  if (!keys) return res.status(400).json({ error: "No keys" });
+  try {
+    execSync(`tmux send-keys -t 0 "${keys}" Enter`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post("/api/tmux-select", (req, res) => {
   const { index } = req.body;
   try {
