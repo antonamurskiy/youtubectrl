@@ -2323,32 +2323,12 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       } catch {}
     }
 
-    // VOD — try 720p DASH remux first, fall back to progressive MP4
-    let streamUrl;
-    try {
-      const { stdout: dashOut } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "136", "--get-url", nowPlaying],
-        { timeout: 10000 }
-      );
-      const { stdout: audioOut } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "140-drc/140", "--get-url", nowPlaying],
-        { timeout: 10000 }
-      );
-      const videoUrl = dashOut.trim();
-      const audioUrl = audioOut.trim();
-      if (videoUrl && audioUrl) {
-        // Serve remuxed stream via /api/phone-vod-stream
-        _phoneVodUrls = { video: videoUrl, audio: audioUrl };
-        streamUrl = `/api/phone-vod-stream?t=${Date.now()}`;
-      }
-    } catch {}
-    if (!streamUrl) {
-      const { stdout } = await execFileP(
-        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
-        { timeout: 15000 }
-      );
-      streamUrl = stdout.trim().split("\n")[0];
-    }
+    // VOD — progressive MP4 (360p/720p)
+    const { stdout } = await execFileP(
+      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
+      { timeout: 15000 }
+    );
+    const streamUrl = stdout.trim().split("\n")[0];
     res.json({ streamUrl, seconds, videoId });
   } catch (err) {
     console.error("Watch on phone error:", err.message);
