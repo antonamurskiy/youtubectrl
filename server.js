@@ -2783,6 +2783,7 @@ const wss = new WebSocket.Server({ noServer: true });
 let pty;
 try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
 const wssTerm = new WebSocket.Server({ noServer: true });
+let claudeWaiting = false;
 
 httpServer.on("upgrade", (req, socket, head) => {
   if (req.url === "/ws/sync") {
@@ -2809,6 +2810,14 @@ wssTerm.on("connection", (ws) => {
   setTimeout(() => { try { execSync("tmux set status off", { stdio: "ignore" }); } catch {} }, 500);
   shell.onData((data) => {
     try { ws.send(data); } catch {}
+    // Detect Claude Code waiting for input
+    const stripped = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b[()][AB012]/g, "");
+    const compact = stripped.replace(/[\r\n\s]+/g, "");
+    if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
+      claudeWaiting = true;
+    } else if (/tokens\)|Cooked|Sautéed|Crunched|Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting/.test(compact)) {
+      claudeWaiting = false;
+    }
   });
   ws.on("message", (msg) => {
     const str = msg.toString();
@@ -2951,6 +2960,7 @@ function startWsSync() {
         state = { type: "playback", playing: false };
       }
       state.macStatus = _macStatusCache;
+      state.claudeWaiting = claudeWaiting;
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}

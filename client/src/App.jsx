@@ -22,6 +22,7 @@ function App() {
   const secretMenuOpen = useUIStore(s => s.secretMenuOpen)
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const playing = usePlaybackStore(s => s.playing)
+  const claudeWaiting = usePlaybackStore(s => s.claudeWaiting)
   const connected = useSyncStore(s => s.connected)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
@@ -76,7 +77,8 @@ function App() {
       <div className="fab-stack">
         <button
           className="fab-cmux"
-          onClick={() => setTerminalOpen(!useSyncStore.getState().terminalOpen)}
+          style={claudeWaiting ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : undefined}
+          onClick={(e) => { e.stopPropagation(); setTerminalOpen(!useSyncStore.getState().terminalOpen) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
