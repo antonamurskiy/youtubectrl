@@ -2738,6 +2738,8 @@ app.post("/api/maximize", async (req, res) => {
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
       execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
       windowMode = "maximize";
+      // Hide cmux behind maximized mpv
+      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "cmux" to false'`, { stdio: "ignore" }); } catch {}
     } else {
       // Already maximized — exit to floating with resize via AppleScript
       try {
