@@ -762,7 +762,7 @@ body {
 .terminal-container {
   flex: 1;
   overflow: hidden;
-  padding: 4px 8px;
+  padding: 2px 8px;
 }
 
 .terminal-container .xterm {
@@ -777,7 +777,7 @@ body {
 .terminal-keys {
   display: flex;
   gap: 4px;
-  padding: 4px 8px;
+  padding: 2px 8px;
   border-top: 1px solid var(--border);
   flex-shrink: 0;
   overflow-x: auto;
