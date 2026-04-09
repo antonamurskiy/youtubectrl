@@ -90,7 +90,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
         const kbH = totalH - vvH
         if (kbH > 100) {
           // Keyboard open: panel fills from top to above keyboard
-          panel.style.bottom = `${kbH}px`
+          panel.style.bottom = `${Math.max(0, kbH - 10)}px`
           panel.style.paddingBottom = '0px'
         } else {
           // Keyboard closed: panel fills to above now-playing bar
