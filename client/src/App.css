@@ -955,7 +955,7 @@ body {
   padding: 0 10px;
   background: #1a1a2e;
   border: 1px solid var(--magenta);
-  color: var(--magenta);
+  color: #f0c0e0;
   font-family: var(--font);
   font-size: var(--font-sm);
   cursor: pointer;
@@ -966,7 +966,7 @@ body {
 }
 
 .claude-question {
-  color: var(--magenta);
+  color: #f0c0e0;
   font-size: var(--font-sm);
   padding: 6px 10px;
   max-width: 220px;
