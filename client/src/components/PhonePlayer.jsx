@@ -196,6 +196,9 @@ export default function PhonePlayer({ send }) {
         const rawDiff = pb.position - video.currentTime
         if (calibOffsetRef.current === null) {
           calibOffsetRef.current = rawDiff
+          // mpv time-pos leads actual audio by ~1.5s — seek phone back
+          video.currentTime -= 1.5
+          calibOffsetRef.current = pb.position - video.currentTime
           setDrift('calibrated (mpv live)')
           return
         }
