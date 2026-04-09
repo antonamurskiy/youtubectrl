@@ -120,7 +120,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
       <div className="claude-quick-reply" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
-        {[1,2,3].map(n => <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => sendKey(String(n))}>{n}</button>)}
+        {[1,2,3].map(n => <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => fetch('/api/tmux-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: String(n) }) }).catch(() => {})}>{n}</button>)}
       </div>
       <div className="terminal-container" ref={termRef} />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
