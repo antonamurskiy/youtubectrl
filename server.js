@@ -2961,7 +2961,7 @@ wssTerm.on("connection", (ws) => {
       claudeOptions = [];
       claudeQuestion = '';
       broadcastClaude();
-    } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
+    } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting/.test(compact) || /^[✻✳]/.test(stripped.trim())) {
       claudeState = 'thinking';
       claudeOptions = [];
       claudeQuestion = '';
