@@ -2472,22 +2472,26 @@ app.post("/api/playpause", async (_req, res) => {
   }
   try {
     await mpvCommand(["cycle", "pause"]);
+    // Small delay to let mpv apply the state change before reading it back
+    await new Promise(r => setTimeout(r, 50));
     const state = await mpvCommand(["get_property", "pause"]);
     const paused = !!state?.data;
-    // Hide/show window when pausing in floating/maximize mode
-    if (windowMode === "floating" || windowMode === "maximize") {
+    // Hide/show window when pausing (any mode except native fullscreen)
+    if (windowMode !== "fullscreen") {
       try {
-        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
         if (paused) {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
         } else if (!phoneActive) {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
-          if (wid && windowMode === "maximize") {
-            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-            execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+          if (windowMode === "maximize") {
+            const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+            if (wid) {
+              execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+              execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+            }
           }
         }
-      } catch {}
+      } catch (e) { console.error("  Hide/show mpv failed:", e.message); }
     }
     res.json({ ok: true, paused });
   } catch {
@@ -2954,7 +2958,8 @@ function startWsSync() {
           url: nowPlaying, serverTs: Date.now(),
           title: historyMap.get(nowPlaying)?.title || "",
           channel: historyMap.get(nowPlaying)?.channel || "",
-          monitor: currentMonitor, windowMode: windowMode || "floating", visible: !phoneActive,
+          monitor: currentMonitor, windowMode: windowMode || "floating",
+          visible: !phoneActive && !(vlcPaused && windowMode !== "fullscreen"),
           seeking: vlcSeekBusy
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
@@ -2974,7 +2979,8 @@ function startWsSync() {
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",
             channel: historyMap.get(nowPlaying)?.channel || "",
-            monitor: currentMonitor, windowMode: windowMode || "floating", visible: !phoneActive
+            monitor: currentMonitor, windowMode: windowMode || "floating",
+            visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen")
           };
         } catch {
           state = { type: "playback", playing: false };
@@ -3041,7 +3047,15 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
             windowMode = "floating";
           }
         }
-        console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode);
+        // Detect which monitor mpv is on
+        try {
+          const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
+          const [wx] = posStr.split(", ").map(Number);
+          const screens = getScreenOrigins();
+          const onScreen = screens.find(s => wx >= s.x && wx < s.x + s.w);
+          currentMonitor = (onScreen?.isLaptop) ? "laptop" : "lg";
+        } catch {}
+        console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode, "monitor:", currentMonitor);
         await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
         // Start progress tracking for reconnected player
         startProgressTracking(nowPlaying);
