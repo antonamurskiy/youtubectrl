@@ -147,6 +147,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
         <button onClick={() => sendKey('|')}>|</button>
         <button onClick={() => sendKey('/')}>/ </button>
         <button onClick={() => sendKey('~')}>~</button>
+        <button onClick={async () => { try { const text = await navigator.clipboard.readText(); if (text) sendKey(text); } catch {} }}>paste</button>
       </div>
     </div>
   )
