@@ -2897,6 +2897,10 @@ wssTerm.on("connection", (ws) => {
     _ptyBuffer += stripped;
     if (_ptyBuffer.length > 5000) _ptyBuffer = _ptyBuffer.slice(-3000);
     if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
+      if (claudeState !== 'waiting') {
+        claudeOptions = [];
+        claudeQuestion = '';
+      }
       claudeState = 'waiting';
     } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
       claudeState = 'thinking';

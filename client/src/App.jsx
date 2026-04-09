@@ -28,8 +28,8 @@ function App() {
     if (rawClaudeState === 'waiting') {
       setClaudeState('waiting')
     } else if (claudeState === 'waiting') {
-      // Keep waiting visible for 3s so user can tap buttons
-      const t = setTimeout(() => setClaudeState(rawClaudeState || 'idle'), 3000)
+      // Keep waiting visible briefly so user can tap buttons
+      const t = setTimeout(() => setClaudeState(rawClaudeState || 'idle'), 1000)
       return () => clearTimeout(t)
     } else {
       setClaudeState(rawClaudeState || 'idle')
