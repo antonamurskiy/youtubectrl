@@ -2686,11 +2686,12 @@ app.post("/api/maximize", async (req, res) => {
     if (!wid) return res.json({ ok: true });
 
     if (force || wasFullscreen || windowMode !== "maximize") {
-      // Enter maximize — move to focused workspace first so it fullscreens on the right monitor
+      // Enter maximize — use currentMonitor to determine correct workspace
       try { await mpvCommand(["set_property", "ontop", false]); } catch {}
+      const targetWs = currentMonitor === "laptop" ? "8" : "1";
       try {
-        const focusedWs = execSync("aerospace list-workspaces --focused", { encoding: "utf8" }).trim();
-        execSync(`aerospace move-node-to-workspace --window-id ${wid} ${focusedWs}`, { stdio: "ignore" });
+        execSync(`aerospace move-node-to-workspace --window-id ${wid} ${targetWs}`, { stdio: "ignore" });
+        execSync(`aerospace workspace ${targetWs}`, { stdio: "ignore" });
       } catch {}
       execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
       execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
@@ -2784,6 +2785,28 @@ let pty;
 try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
 const wssTerm = new WebSocket.Server({ noServer: true });
 let claudeWaiting = false;
+let tmuxWindows = [];
+
+function refreshTmuxWindows() {
+  try {
+    const out = execSync('tmux list-windows -t 0 -F "#{window_index}:#{window_name}:#{window_active}"', { encoding: "utf8", timeout: 2000 });
+    tmuxWindows = out.trim().split("\n").map(line => {
+      const [index, name, active] = line.split(":");
+      return { index: +index, name, active: active === "1" };
+    });
+  } catch { tmuxWindows = []; }
+}
+
+app.post("/api/tmux-select", (req, res) => {
+  const { index } = req.body;
+  try {
+    execSync(`tmux select-window -t 0:${index}`, { stdio: "ignore" });
+    refreshTmuxWindows();
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 httpServer.on("upgrade", (req, socket, head) => {
   if (req.url === "/ws/sync") {
@@ -2961,6 +2984,8 @@ function startWsSync() {
       }
       state.macStatus = _macStatusCache;
       state.claudeWaiting = claudeWaiting;
+      refreshTmuxWindows();
+      if (tmuxWindows.length > 1) state.tmuxWindows = tmuxWindows;
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}

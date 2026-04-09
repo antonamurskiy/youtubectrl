@@ -23,6 +23,7 @@ function App() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const playing = usePlaybackStore(s => s.playing)
   const claudeWaiting = usePlaybackStore(s => s.claudeWaiting)
+  const tmuxWindows = usePlaybackStore(s => s.tmuxWindows)
   const connected = useSyncStore(s => s.connected)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
@@ -74,6 +75,19 @@ function App() {
         <VideoGrid />
       </div>
 
+      {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (
+        <div className="tmux-tabs">
+          {tmuxWindows.map(w => (
+            <button
+              key={w.index}
+              style={w.active ? { color: 'var(--green)', borderColor: 'var(--green)' } : undefined}
+              onClick={(e) => { e.stopPropagation(); fetch('/api/tmux-select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index }) }).catch(() => {}) }}
+            >
+              {w.name.match(/^\d+\.\d+/) ? w.index : w.name.slice(0, 3)}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="fab-stack">
         <button
           className="fab-cmux"
@@ -120,7 +134,7 @@ function App() {
       {terminalEverOpened && (
         <Suspense fallback={null}>
           <div style={{ display: terminalOpen ? '' : 'none' }}>
-            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} />
+            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} />
           </div>
         </Suspense>
       )}

@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
-export default function TerminalModal({ onClose, hasNowPlaying }) {
+export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)

@@ -922,7 +922,7 @@ body {
   gap: 8px;
 }
 
-.fab-refresh, .fab-cmux {
+.fab-refresh, .fab-cmux, .fab-tmux {
   width: 40px;
   height: 40px;
   background: var(--bg);
@@ -937,7 +937,33 @@ body {
   user-select: none;
   touch-action: manipulation;
 }
-.fab-refresh:active, .fab-cmux:active { background: var(--surface-hover); }
+.fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--surface-hover); }
+
+.tmux-tabs {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 4px);
+  right: 8px;
+  z-index: 200;
+  display: flex;
+  flex-direction: row;
+  gap: 4px;
+}
+
+.tmux-tabs button {
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  cursor: pointer;
+  border: 1px solid var(--border);
+}
+
+.fab-tmux {
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  font-weight: 500;
+}
 
 /* ── Context menu ── */
 .context-menu {
