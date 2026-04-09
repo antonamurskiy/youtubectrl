@@ -953,9 +953,9 @@ body {
 .claude-quick-reply button {
   height: 36px;
   padding: 0 10px;
-  background: var(--bg);
-  border: 1px solid var(--border);
-  color: var(--text-dim);
+  background: #1a1a2e;
+  border: 1px solid var(--magenta);
+  color: var(--magenta);
   font-family: var(--font);
   font-size: var(--font-sm);
   cursor: pointer;
