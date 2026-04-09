@@ -2829,6 +2829,7 @@ const wssTerm = new WebSocket.Server({ noServer: true });
 let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
 let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
 let claudeQuestion = '';
+let _claudeWaitingTimer = null;
 let _lastCapture = 0;
 let _lastActiveWindow = '';
 function broadcastClaude() {
@@ -2895,7 +2896,7 @@ app.post("/api/tmux-select", (req, res) => {
             let question = '';
             for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
               const line = lines[i];
-              const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
+              const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{0,40})/);
               if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
               if (!m && opts.length === 0) {
                 const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
@@ -2960,7 +2961,9 @@ wssTerm.on("connection", (ws) => {
       claudeState = 'waiting';
       claudeOptions = [];
       claudeQuestion = '';
-      broadcastClaude();
+      // Debounce broadcast — option parsing below needs time to find options in capture-pane
+      if (_claudeWaitingTimer) clearTimeout(_claudeWaitingTimer);
+      _claudeWaitingTimer = setTimeout(() => { _claudeWaitingTimer = null; if (claudeState === 'waiting') broadcastClaude(); }, 500);
     } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting/.test(compact) || /^[✻✳]/.test(stripped.trim())) {
       claudeState = 'thinking';
       claudeOptions = [];
@@ -2979,6 +2982,7 @@ wssTerm.on("connection", (ws) => {
       try {
         const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
         const lines = pane.split('\n');
+        // DEBUG: log what we see
         let selectIdx = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
           if (/^Enter to select|^Esc to cancel/.test(lines[i].trim())) { selectIdx = i; break; }
@@ -2988,7 +2992,7 @@ wssTerm.on("connection", (ws) => {
           let question = '';
           for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
             const line = lines[i];
-            const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
+            const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{0,40})/);
             if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim()) && !/^Other$/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
             if (!m && opts.length === 0) {
               const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
@@ -3005,6 +3009,7 @@ wssTerm.on("connection", (ws) => {
           if (opts.length >= 2) {
             claudeOptions = opts.slice(0, 4);
             if (question) claudeQuestion = question;
+            if (_claudeWaitingTimer) { clearTimeout(_claudeWaitingTimer); _claudeWaitingTimer = null; }
             broadcastClaude();
           }
         }
