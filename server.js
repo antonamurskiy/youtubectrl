@@ -2830,6 +2830,9 @@ let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
 let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
 let claudeQuestion = '';
 let _lastCapture = 0;
+let _lastActiveWindow = '';
+let _tmuxSwitchAt = 0;
+let _tmuxSwitchTimer = null;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
 let tmuxWindows = [];
 
@@ -2841,6 +2844,13 @@ function refreshTmuxWindows() {
       return { index: +index, name, active: active === "1" };
     });
   } catch { tmuxWindows = []; }
+  const active = tmuxWindows.find(w => w.active);
+  if (active && String(active.index) !== _lastActiveWindow) {
+    _lastActiveWindow = String(active.index);
+    claudeOptions = [];
+    claudeQuestion = '';
+    claudeState = 'idle';
+  }
 }
 
 app.post("/api/tmux-send", (req, res) => {
@@ -2859,6 +2869,49 @@ app.post("/api/tmux-select", (req, res) => {
   try {
     execSync(`tmux select-window -t 0:${index}`, { stdio: "ignore" });
     refreshTmuxWindows();
+    claudeOptions = [];
+    claudeQuestion = '';
+    claudeState = 'idle';
+    _tmuxSwitchAt = Date.now();
+    if (_tmuxSwitchTimer) clearTimeout(_tmuxSwitchTimer);
+    // After cooldown, check if new tab has an active prompt
+    _tmuxSwitchTimer = setTimeout(() => {
+      _tmuxSwitchTimer = null;
+      try {
+        const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
+        if (/Enter to select/.test(pane)) {
+          claudeState = 'waiting';
+          const lines = pane.split('\n');
+          let selectIdx = -1;
+          for (let i = lines.length - 1; i >= 0; i--) {
+            if (/^Enter to select/.test(lines[i].trim())) { selectIdx = i; break; }
+          }
+          if (selectIdx > 0) {
+            const opts = [];
+            let question = '';
+            for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
+              const line = lines[i];
+              const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
+              if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
+              if (!m && opts.length === 0) {
+                const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
+                if (h) opts.unshift({ n: '1', text: h[1].trim() });
+              }
+              const q = line.match(/[☐●☑]\s+(.+)/);
+              if (q) { question = q[1].trim(); break; }
+              if (opts.length > 0 && !m && line.trim().length > 2 && !/^\s{4,}/.test(line) && !/^[❯►⏺⎿●─]/.test(line.trim()) && !/^Enter/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line)) {
+                question = line.trim();
+                break;
+              }
+            }
+            if (opts.length >= 2) {
+              claudeOptions = opts.slice(0, 4);
+              if (question) claudeQuestion = question;
+            }
+          }
+        }
+      } catch {}
+    }, 2000);
     res.json({ ok: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2896,7 +2949,9 @@ wssTerm.on("connection", (ws) => {
     // Keep rolling buffer of stripped pty output
     _ptyBuffer += stripped;
     if (_ptyBuffer.length > 5000) _ptyBuffer = _ptyBuffer.slice(-3000);
-    if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
+    if (Date.now() - _tmuxSwitchAt < 2000) {
+      // Ignore pty triggers right after tmux switch (scrollback noise)
+    } else if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
       if (claudeState !== 'waiting') {
         claudeOptions = [];
         claudeQuestion = '';
@@ -2912,9 +2967,11 @@ wssTerm.on("connection", (ws) => {
       claudeQuestion = '';
     }
     // Capture options when "Enter to select" appears (separate from state detection)
-    if (/Entertoselect/.test(compact) && claudeState === 'waiting') {
+    if (/Entertoselect/.test(compact) && Date.now() - _tmuxSwitchAt > 2000) {
+      claudeOptions = [];
+      claudeQuestion = '';
       try {
-        const pane = execSync('tmux capture-pane -t 0 -p', { encoding: 'utf8', timeout: 1000 });
+        const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
         const lines = pane.split('\n');
         let selectIdx = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
@@ -2931,9 +2988,10 @@ wssTerm.on("connection", (ws) => {
               const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
               if (h) opts.unshift({ n: '1', text: h[1].trim() });
             }
-            const q = line.match(/[☐●☑]\s+\S+\s+(.+)/);
+            const q = line.match(/[☐●☑]\s+(.+)/);
             if (q) { question = q[1].trim(); break; }
-            if (opts.length > 0 && !m && line.trim().length > 3 && /^\S/.test(line.trim()) && !/^[❯►⏺⎿●─☐☑]/.test(line.trim()) && !/^Enter/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line) && !/^\s{4,}/.test(line)) {
+            // Non-option, non-description text line above options = question
+            if (opts.length > 0 && !m && line.trim().length > 2 && !/^\s{4,}/.test(line) && !/^[❯►⏺⎿●─]/.test(line.trim()) && !/^Enter/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line)) {
               question = line.trim();
               break;
             }
