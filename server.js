@@ -2966,7 +2966,7 @@ wssTerm.on("connection", (ws) => {
       claudeOptions = [];
       claudeQuestion = '';
       broadcastClaude();
-    } else if (/tokens\)|Cooked|Sautéed|Crunched|⏺|Useranswered|❯/.test(compact)) {
+    } else if (/tokens\)|Cooked|Sautéed|Crunched|Marinated|Braised|Simmered|Garnished|⏺|✢|Useranswered|❯|⎿/.test(compact)) {
       claudeState = 'idle';
       claudeOptions = [];
       claudeQuestion = '';
