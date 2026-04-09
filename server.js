@@ -2301,6 +2301,28 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
+    // Live — extract mpv's actual HLS URL so phone plays the exact same stream
+    const fmt = await mpvCommand(["get_property", "file-format"]).catch(() => null);
+    const isLiveStream = (fmt?.data || "").includes("hls");
+    if (isLiveStream) {
+      try {
+        const sp = await mpvCommand(["get_property", "stream-path"]);
+        const edl = sp?.data || "";
+        // Extract HLS manifest URL from edl:// wrapper
+        const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
+        if (hlsMatch) {
+          lastVlcHlsUrl = hlsMatch[1];
+          phoneActive = true;
+          // proxyUrl for hls.js (CORS), streamUrl with direct=1 for Safari native
+          return res.json({
+            streamUrl: hlsMatch[1],
+            proxyUrl: `/api/phone-hls?t=${Date.now()}`,
+            seconds, videoId, isLive: true
+          });
+        }
+      } catch {}
+    }
+
     // VOD — try 720p DASH remux first, fall back to progressive MP4
     let streamUrl;
     try {

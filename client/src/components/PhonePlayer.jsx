@@ -57,10 +57,10 @@ export default function PhonePlayer({ send }) {
               video._vlcBufDelay = vlcBufDelay
               if (data.isLive && Hls.isSupported()) {
                 if (video._hls) { video._hls.destroy(); video._hls = null }
-                // Compute liveSyncDurationCount based on actual segment duration + VLC buffer
+                // liveSyncDurationCount: how many segments behind live edge to start
                 const segDur = data.segDuration || 2
-                const vlcBuf = data.vlcBufferDelay || 19
-                const syncCount = Math.round(vlcBuf / segDur)
+                const pb = usePlaybackStore.getState()
+                const syncCount = pb.player === 'mpv' ? 4 : Math.round((data.vlcBufferDelay || 19) / segDur)
                 const hls = new Hls({
                   liveSyncDurationCount: syncCount,
                   liveMaxLatencyDurationCount: syncCount + 6,
@@ -119,11 +119,10 @@ export default function PhonePlayer({ send }) {
 
     window._nudgeOffset = (delta) => {
       const v = videoRef.current
-      if (v) v.currentTime += delta
-      userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
-      // Recalibrate after nudge so sync loop accepts new position as baseline
-      calibOffsetRef.current = null
+      if (!v) return
+      v.currentTime += delta
       lastSeekRef.current = Date.now()
+      userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
       const el = offsetDisplayRef.current
       if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
     }
@@ -193,6 +192,7 @@ export default function PhonePlayer({ send }) {
       if (pb.isLive && pb.player === 'mpv') {
         // mpv live: calibrated drift — both time-pos and phone currentTime advance at ~1s/s
         // but have different bases (mpv = absolute PTS, phone = relative)
+        // -1s compensates mpv HLS audio pipeline latency (time-pos leads actual playback)
         const rawDiff = pb.position - video.currentTime
         if (calibOffsetRef.current === null) {
           calibOffsetRef.current = rawDiff
@@ -205,15 +205,12 @@ export default function PhonePlayer({ send }) {
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
         const now = Date.now()
-        if (Math.abs(drift) > 10) {
-          // Major desync — hard seek and recalibrate
+        if (Math.abs(drift) > 5) {
           video.currentTime += drift
           calibOffsetRef.current = null
           lastSeekRef.current = now
-        } else if (Math.abs(drift) > 3 && now - lastSeekRef.current > 10000) {
-          // Gradual drift correction with long cooldown
+        } else if (Math.abs(drift) > 2 && now - lastSeekRef.current > 10000) {
           video.currentTime += drift
-          calibOffsetRef.current = null
           lastSeekRef.current = now
         }
       } else if (pb.isLive && pb.player === 'vlc') {
