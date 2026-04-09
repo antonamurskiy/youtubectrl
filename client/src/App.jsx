@@ -73,37 +73,47 @@ function App() {
         <VideoGrid />
       </div>
 
-      <button
-        className="fab-refresh"
-        onClick={() => {
-          if (didLongPressRef.current) { didLongPressRef.current = false; return }
-          if (activeTab === 'channel' || activeTab === 'search') {
-            setTab('rec')
-          } else {
-            refresh()
-          }
-        }}
-        onTouchStart={() => {
-          didLongPressRef.current = false
-          longPressRef.current = setTimeout(() => {
-            didLongPressRef.current = true
-            toggleSecretMenu()
-          }, 500)
-        }}
-        onTouchEnd={() => clearTimeout(longPressRef.current)}
-        onTouchCancel={() => clearTimeout(longPressRef.current)}
-        onContextMenu={(e) => e.preventDefault()}
-      >
-        {activeTab === 'channel' || activeTab === 'search' ? (
+      <div className="fab-stack">
+        <button
+          className="fab-cmux"
+          onClick={() => setTerminalOpen(!useSyncStore.getState().terminalOpen)}
+        >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-            <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+            <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
           </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-            <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
-          </svg>
-        )}
-      </button>
+        </button>
+        <button
+          className="fab-refresh"
+          onClick={() => {
+            if (didLongPressRef.current) { didLongPressRef.current = false; return }
+            if (activeTab === 'channel' || activeTab === 'search') {
+              setTab('rec')
+            } else {
+              refresh()
+            }
+          }}
+          onTouchStart={() => {
+            didLongPressRef.current = false
+            longPressRef.current = setTimeout(() => {
+              didLongPressRef.current = true
+              toggleSecretMenu()
+            }, 500)
+          }}
+          onTouchEnd={() => clearTimeout(longPressRef.current)}
+          onTouchCancel={() => clearTimeout(longPressRef.current)}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          {activeTab === 'channel' || activeTab === 'search' ? (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+              <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+              <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
+            </svg>
+          )}
+        </button>
+      </div>
 
       {terminalEverOpened && (
         <Suspense fallback={null}>

@@ -1141,6 +1141,7 @@ function startProgressTracking(url) {
         mpvCommand(["get_property", "duration"]),
       ]);
       if (gen !== progressGen) return;
+      if (nowPlaying !== url) { clearInterval(progressInterval); return; }
       if (pos?.data && dur?.data && pos.data < dur.data * 1.05) updateHistoryProgress(url, pos.data, dur.data);
     } catch {}
   }, 10000);
@@ -1309,7 +1310,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--audio-samplerate=48000`, `--autosync=30`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(url);
@@ -2287,7 +2288,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
       mpvProcess = spawn("mpv", [
         `--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
-        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--audio-samplerate=48000`, `--autosync=30`, nowPlaying,
+        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--autosync=30`, nowPlaying,
       ], { stdio: "ignore" });
       activePlayer = "mpv";
       windowMode = "floating";
@@ -2926,14 +2927,18 @@ function startWsSync() {
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
         try {
-          const pos = await mpvCommand(["get_property", "time-pos"]);
-          const dur = await mpvCommand(["get_property", "duration"]);
-          const pause = await mpvCommand(["get_property", "pause"]);
+          const [pos, dur, pause, fmt] = await Promise.all([
+            mpvCommand(["get_property", "time-pos"]),
+            mpvCommand(["get_property", "duration"]),
+            mpvCommand(["get_property", "pause"]),
+            mpvCommand(["get_property", "file-format"]).catch(() => null),
+          ]);
+          const isHls = (fmt?.data || "").includes("hls");
           state = {
             type: "playback",
-            playing: true, isLive: false, player: "mpv",
+            playing: true, isLive: isHls, player: "mpv",
             position: pos?.data || 0, duration: dur?.data || 0,
-            paused: pause?.data || false,
+            paused: pause?.data || false, phoneSyncOk: !isHls,
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",
             channel: historyMap.get(nowPlaying)?.channel || "",

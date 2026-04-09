@@ -82,7 +82,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const pb = usePlaybackStore(useShallow(s => ({
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, paused: s.paused, playing: s.playing,
-    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, visible: s.visible,
+    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
@@ -340,13 +340,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         <button
           className="np-skip-btn"
           style={{ color: frontApp === 'cmux' ? 'var(--green)' : 'var(--text-dim)', opacity: 0.8 }}
-          onClick={() => {
-            const isOpen = useSyncStore.getState().terminalOpen
-            useSyncStore.getState().setTerminalOpen(!isOpen)
-            if (!isOpen) {
-              fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {})
-            }
-          }}
+          onClick={() => fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {})}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
@@ -384,7 +378,9 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         </button>
         <button
           className={`np-btn${phoneOpen ? ' active' : ''}`}
+          style={pb.phoneSyncOk === false ? { opacity: 0.3 } : undefined}
           onClick={watchOnPhone}
+          title={pb.phoneSyncOk === false ? 'No MP4 — phone sync unavailable' : 'Watch on phone'}
         >
           {Icons.phone}
         </button>

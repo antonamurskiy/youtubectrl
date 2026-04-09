@@ -912,10 +912,17 @@ body {
 .fab-top { top: 56px; }
 .fab-bottom { bottom: 16px; }
 
-.fab-refresh {
+.fab-stack {
   position: fixed;
   right: 16px;
-  bottom: 240px;
+  bottom: 408px;
+  z-index: 101;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.fab-refresh, .fab-cmux {
   width: 40px;
   height: 40px;
   background: var(--bg);
@@ -925,15 +932,12 @@ body {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  z-index: 101;
-}
-.fab-refresh:active { background: var(--surface-hover); }
-.fab-refresh {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
 }
+.fab-refresh:active, .fab-cmux:active { background: var(--surface-hover); }
 
 /* ── Context menu ── */
 .context-menu {
