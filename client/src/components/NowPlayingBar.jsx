@@ -97,6 +97,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const barRef = useRef(null)
   const seekConfirmTimeout = useRef(null)
   const currentPosTimeout = useRef(null)
+  const seekCleanupRef = useRef(null)
 
   const position = isSeeking ? seekPos : pb.position
   const duration = pb.duration || 1
@@ -109,10 +110,12 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     const videoId = pb.url.match(/[?&]v=([\w-]+)/)?.[1]
     if (!videoId || pb.isLive) return
 
-    fetch(`/api/storyboard?videoId=${videoId}`)
+    const controller = new AbortController()
+    fetch(`/api/storyboard?videoId=${videoId}`, { signal: controller.signal })
       .then(r => r.ok ? r.json() : null)
       .then(data => { if (data) setStoryboard(data) })
       .catch(() => {})
+    return () => controller.abort()
   }, [pb.url, pb.isLive])
 
   const getSeekPosition = useCallback((clientX) => {
@@ -177,6 +180,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       const finalPos = seekPosRef.current
       setIsSeeking(false)
       setSeekPreview(null)
+      seekCleanupRef.current = null
 
       fetch('/api/seek', {
         method: 'POST',
@@ -191,9 +195,20 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       document.removeEventListener('pointerup', handleUp)
     }
 
+    // Store cleanup so unmount can remove listeners
+    seekCleanupRef.current = () => {
+      document.removeEventListener('pointermove', handleMove)
+      document.removeEventListener('pointerup', handleUp)
+    }
+
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
   }, [getSeekPosition])
+
+  // Clean up seek listeners on unmount
+  useEffect(() => {
+    return () => { if (seekCleanupRef.current) seekCleanupRef.current() }
+  }, [])
 
   const togglePlayPause = useCallback(() => {
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})

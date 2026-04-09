@@ -26,6 +26,8 @@ function App() {
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const setTerminalOpen = useSyncStore(s => s.setTerminalOpen)
+  const [terminalEverOpened, setTerminalEverOpened] = useState(false)
+  useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
   const refresh = useUIStore(s => s.refresh)
   const longPressRef = useRef(null)
   const didLongPressRef = useRef(false)
@@ -46,7 +48,7 @@ function App() {
     <>
       {phoneOpen && <PhonePlayer send={send} />}
 
-      <div className="app">
+      <div className="app" style={terminalOpen ? { display: 'none' } : undefined}>
         <header className="header">
           <SearchBar />
           <div className="tabs">
@@ -103,9 +105,11 @@ function App() {
         )}
       </button>
 
-      {terminalOpen && (
+      {terminalEverOpened && (
         <Suspense fallback={null}>
-          <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} />
+          <div style={{ display: terminalOpen ? '' : 'none' }}>
+            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} />
+          </div>
         </Suspense>
       )}
       {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}

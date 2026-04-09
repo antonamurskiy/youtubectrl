@@ -20,50 +20,60 @@ export default function SecretMenu() {
   const draggingRef = useRef(false)
 
   useEffect(() => {
-    // Get initial mute state
-    try {
-      fetch('/api/volume-status').then(r => r.json()).then(d => { setMuted(!!d.muted); if (d.volume != null && !draggingRef.current) setVolume(d.volume) }).catch(() => {})
-    } catch {}
+    let stale = false
+    fetch('/api/volume-status').then(r => r.json()).then(d => {
+      if (stale || draggingRef.current) return
+      setMuted(!!d.muted)
+      if (d.volume != null) setVolume(d.volume)
+    }).catch(() => {})
     fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+      if (stale) return
       setAudioOutputs(d.outputs || [])
       setCurrentOutput(d.current || '')
     }).catch(() => {})
+    return () => { stale = true }
   }, [])
 
+  const lastSentVol = useRef(null)
   const updateVolume = useCallback((clientY) => {
     const el = volAreaRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
     const y = clientY - rect.top
-    if (y < -20 || y > rect.height + 20) return // ignore events far outside
     const clamped = Math.max(0, Math.min(y, rect.height))
     const vol = Math.round(100 - (clamped / rect.height) * 100)
     setVolume(vol)
-    fetch('/api/volume', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ volume: vol }),
-    }).catch(() => {})
+    if (lastSentVol.current !== vol) {
+      lastSentVol.current = vol
+      fetch('/api/volume', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ volume: vol }),
+      }).catch(() => {})
+    }
   }, [])
 
   const handlePointerDown = useCallback((e) => {
     e.preventDefault()
     e.stopPropagation()
+    const el = volAreaRef.current
+    if (el) el.setPointerCapture(e.pointerId)
     draggingRef.current = true
     updateVolume(e.clientY)
-    const handleMove = (ev) => {
-      ev.preventDefault()
-      if (draggingRef.current) updateVolume(ev.clientY)
-    }
-    const handleUp = (ev) => {
-      ev.preventDefault()
-      draggingRef.current = false
-      document.removeEventListener('pointermove', handleMove)
-      document.removeEventListener('pointerup', handleUp)
-    }
-    document.addEventListener('pointermove', handleMove, { passive: false })
-    document.addEventListener('pointerup', handleUp)
   }, [updateVolume])
+
+  const handlePointerMove = useCallback((e) => {
+    if (draggingRef.current) {
+      e.preventDefault()
+      updateVolume(e.clientY)
+    }
+  }, [updateVolume])
+
+  const handlePointerUp = useCallback((e) => {
+    draggingRef.current = false
+    const el = volAreaRef.current
+    if (el) el.releasePointerCapture(e.pointerId)
+  }, [])
 
   const switchOutput = useCallback((name) => {
     fetch('/api/audio-output', {
@@ -77,7 +87,7 @@ export default function SecretMenu() {
 
   return (
     <>
-      <div style={{ position: 'fixed', inset: 0, zIndex: 599 }} onClick={toggleSecretMenu} />
+      <div style={{ position: 'fixed', inset: 0, zIndex: 599 }} onClick={() => { if (!draggingRef.current) toggleSecretMenu() }} />
       <div className="secret-menu">
         <div className="secret-menu-item" style={{ display: 'flex', gap: 16, alignItems: 'center', justifyContent: 'center', padding: '10px 12px' }}>
           {[
@@ -96,6 +106,9 @@ export default function SecretMenu() {
           className="secret-menu-item vol-area"
           ref={volAreaRef}
           onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
         >
           <div className="vol-fill" style={{ height: `${volume}%` }} />
           <div className="vol-label">{volume}%</div>

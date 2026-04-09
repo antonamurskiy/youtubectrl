@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useUIStore } from '../stores/ui'
 import { usePlaybackStore } from '../stores/playback'
+import { useSyncStore } from '../stores/sync'
 import VideoCard from './VideoCard'
 
 const PAGE_SIZE = 24
 
 function ShortCard({ short }) {
+  const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [previewing, setPreviewing] = useState(false)
   const [previewUrl, setPreviewUrl] = useState(null)
   const cardRef = useRef(null)
@@ -23,12 +25,14 @@ function ShortCard({ short }) {
   }, [isMobile])
 
   useEffect(() => {
-    if (!previewing || previewUrl) return
-    fetch(`/api/preview-url?id=${short.id}`)
+    if (!previewing || terminalOpen || previewUrl) return
+    const controller = new AbortController()
+    fetch(`/api/preview-url?id=${short.id}`, { signal: controller.signal })
       .then(r => r.json())
       .then(d => { if (d.url) setPreviewUrl(d.url) })
       .catch(() => {})
-  }, [previewing, short.id, previewUrl])
+    return () => controller.abort()
+  }, [previewing, terminalOpen, short.id, previewUrl])
 
   return (
     <div
@@ -46,7 +50,7 @@ function ShortCard({ short }) {
     >
       <div className="shorts-thumb-wrap">
         <img src={short.thumbnail} alt="" loading="lazy" />
-        {previewing && previewUrl && (
+        {previewing && !terminalOpen && previewUrl && (
           <video
             src={previewUrl}
             muted
@@ -179,10 +183,11 @@ export default function VideoGrid() {
   }, [activeTab, searchQuery, channelQuery])
 
   // Re-fetch when tab, search, or refreshKey changes
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     genRef.current += 1
     fetchVideos()
-  }, [activeTab, searchQuery, channelQuery, refreshKey, fetchVideos])
+  }, [activeTab, searchQuery, channelQuery, refreshKey])
 
   // Infinite scroll for home tab
   useEffect(() => {

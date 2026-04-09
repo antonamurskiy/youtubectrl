@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
+import { useSyncStore } from '../stores/sync'
 
 function formatDuration(val) {
   if (!val) return null
@@ -37,6 +38,7 @@ function timeAgo(dateStr) {
 
 export default function VideoCard({ video, isPlaying }) {
   const addToast = useUIStore(s => s.addToast)
+  const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
   const [previewing, setPreviewing] = useState(false)
   const longPressTimer = useRef(null)
@@ -71,12 +73,25 @@ export default function VideoCard({ video, isPlaying }) {
   }, [isMobile])
 
   useEffect(() => {
-    if (!previewing || !videoId || previewUrl || video.isLive || video.live) return
-    fetch(`/api/preview-url?id=${videoId}`)
+    if (!previewing || terminalOpen || !videoId || previewUrl || video.isLive || video.live) return
+    const controller = new AbortController()
+    fetch(`/api/preview-url?id=${videoId}`, { signal: controller.signal })
       .then(r => r.json())
       .then(d => { if (d.url) setPreviewUrl(d.url) })
       .catch(() => {})
-  }, [previewing, videoId, previewUrl, video.isLive, video.live])
+    return () => controller.abort()
+  }, [previewing, terminalOpen, videoId, previewUrl, video.isLive, video.live])
+
+  // Clean up preview video resources on unmount
+  useEffect(() => {
+    return () => {
+      if (previewRef.current) {
+        previewRef.current.pause()
+        previewRef.current.removeAttribute('src')
+        previewRef.current.load()
+      }
+    }
+  }, [])
 
   const videoUrl = video.url || (video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : '')
 
@@ -156,7 +171,7 @@ export default function VideoCard({ video, isPlaying }) {
           onContextMenu={handleContextMenuEvent}
         >
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
-          {previewing && previewUrl && (
+          {previewing && !terminalOpen && previewUrl && (
             <video
               ref={previewRef}
               src={previewUrl}

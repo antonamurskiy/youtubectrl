@@ -4,7 +4,8 @@ const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { promisify } = require("util");
-const { execFile, execSync, spawn } = require("child_process");
+const { exec, execFile, execSync, spawn } = require("child_process");
+const execP = promisify(exec);
 const execFileP = promisify(execFile);
 const net = require("net");
 const YouTube = require("youtube-sr").default;
@@ -41,9 +42,13 @@ function saveHistory() {
 }
 
 function markWatchedOnYouTube(url) {
-  require("child_process").execFile("yt-dlp", [
+  const child = spawn("yt-dlp", [
     "--mark-watched", "--simulate", "--cookies", COOKIES_FILE, "--no-warnings", url,
-  ], { timeout: 15000 }, () => {});
+  ], { stdio: "ignore", detached: false });
+  child.unref();
+  // Kill if it hangs beyond 15s
+  const timer = setTimeout(() => { try { child.kill(); } catch {} }, 15000);
+  child.on("exit", () => clearTimeout(timer));
 }
 
 function rebuildHistoryMap() {
@@ -119,19 +124,21 @@ fs.watch(path.join(__dirname, "public"), { recursive: true }, () => { lastModifi
 fs.watch(path.join(__dirname, "server.js"), () => { lastModified = Date.now(); });
 app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
 
-app.get("/api/audio-outputs", (_req, res) => {
+app.get("/api/audio-outputs", async (_req, res) => {
   try {
-    const all = execSync("SwitchAudioSource -a -t output", { encoding: "utf8" }).trim().split("\n");
-    const current = execSync("SwitchAudioSource -c -t output", { encoding: "utf8" }).trim();
-    res.json({ outputs: all, current });
+    const [allOut, curOut] = await Promise.all([
+      execP("SwitchAudioSource -a -t output"),
+      execP("SwitchAudioSource -c -t output"),
+    ]);
+    res.json({ outputs: allOut.stdout.trim().split("\n"), current: curOut.stdout.trim() });
   } catch { res.json({ outputs: [], current: "" }); }
 });
 
-app.post("/api/audio-output", (req, res) => {
+app.post("/api/audio-output", async (req, res) => {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: "Missing name" });
   try {
-    execSync(`SwitchAudioSource -s "${name.replace(/"/g, '\\"')}"`, { stdio: "ignore" });
+    await execP(`SwitchAudioSource -s "${name.replace(/"/g, '\\"')}"`);
     res.json({ ok: true });
   } catch { res.status(500).json({ error: "Switch failed" }); }
 });
@@ -141,13 +148,14 @@ app.post("/api/toggle-visibility", async (_req, res) => {
     if (activePlayer === "mpv") {
       phoneActive = !phoneActive;
       if (phoneActive) {
-        execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+        await execP(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`);
       } else {
-        execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
-        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        await execP(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`);
+        const { stdout } = await execP("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1");
+        const wid = stdout.trim();
         if (wid) {
-          execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-          if (windowMode === "maximize") execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+          await execP(`aerospace focus --window-id ${wid}`);
+          if (windowMode === "maximize") await execP(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`);
           else try { await mpvCommand(["set_property", "ontop", true]); } catch {}
         }
       }
@@ -156,37 +164,39 @@ app.post("/api/toggle-visibility", async (_req, res) => {
   } catch { res.status(500).json({ error: "Failed" }); }
 });
 
-app.post("/api/lock-mac", (_req, res) => {
+app.post("/api/lock-mac", async (_req, res) => {
   try {
-    execSync(`pmset displaysleepnow`, { stdio: "ignore" });
+    await execP(`pmset displaysleepnow`);
     res.json({ ok: true });
   } catch { res.status(500).json({ error: "Lock failed" }); }
 });
 
-app.post("/api/focus-cmux", (_req, res) => {
+app.post("/api/focus-cmux", async (_req, res) => {
   try {
-    const front = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim();
+    const { stdout: frontOut } = await execP(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`);
+    const front = frontOut.trim();
     if (front === "cmux") {
       // Return to mpv — restore previous window state
       phoneActive = false;
-      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
-      const mpvWid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+      await execP(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`);
+      const { stdout: widOut } = await execP("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1");
+      const mpvWid = widOut.trim();
       if (mpvWid) {
-        execSync(`aerospace focus --window-id ${mpvWid}`, { stdio: "ignore" });
+        await execP(`aerospace focus --window-id ${mpvWid}`);
         if (windowMode === "maximize") {
-          execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${mpvWid}`, { stdio: "ignore" });
+          await execP(`aerospace fullscreen --no-outer-gaps on --window-id ${mpvWid}`);
         } else if (windowMode === "floating") {
           try {
             const screens = getScreenOrigins();
-            const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
-            const [wx] = posStr.split(", ").map(Number);
+            const { stdout: posOut } = await execP(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`);
+            const [wx] = posOut.trim().split(", ").map(Number);
             const screen = screens.find(s => wx >= s.x && wx < s.x + s.w) || screens.find(s => s.isMain) || screens[0];
             const w = Math.round(screen.w * 0.38);
             const h = Math.round(w * 9 / 16);
             const posX = screen.x + screen.w - w - 12;
             const posY = screen.y + 38;
-            execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
-            execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`, { stdio: "ignore" });
+            await execP(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`);
+            await execP(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`);
           } catch {}
           try { mpvCommand(["set_property", "ontop", true]); } catch {}
         }
@@ -194,7 +204,7 @@ app.post("/api/focus-cmux", (_req, res) => {
     } else {
       // Focus cmux — pure AppleScript, no aerospace commands to avoid terminal reflow
       try {
-        execSync(`osascript -e 'tell application "System Events" to set frontmost of process "cmux" to true'`, { stdio: "ignore" });
+        await execP(`osascript -e 'tell application "System Events" to set frontmost of process "cmux" to true'`);
       } catch {}
     }
     setTimeout(refreshMacStatus, 300); // update cached frontApp
@@ -1576,31 +1586,32 @@ function fetchManifest(url) {
   });
 }
 
-// Parse total duration from HLS manifest segments
-function hlsTotalDuration(manifest) {
-  let total = 0;
-  for (const line of manifest.split('\n')) {
-    if (line.startsWith('#EXTINF:')) total += parseFloat(line.split(':')[1]);
-  }
-  return total;
-}
-
-// Compute live edge PDT from manifest (last PDT + durations after it)
-// Handles discontinuities where PDT resets mid-manifest
-function hlsLiveEdgePdt(manifest) {
+// Parse HLS manifest once — returns { lines, totalDuration, liveEdgePdt }
+function parseHlsManifest(manifest) {
   const lines = manifest.split('\n');
+  let totalDuration = 0;
   let lastPdtMs = 0;
   let durAfterLastPdt = 0;
   for (const line of lines) {
-    if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
+    if (line.startsWith('#EXTINF:')) {
+      const dur = parseFloat(line.split(':')[1]);
+      totalDuration += dur;
+      durAfterLastPdt += dur;
+    } else if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) {
       lastPdtMs = new Date(line.substring('#EXT-X-PROGRAM-DATE-TIME:'.length).trim()).getTime();
       durAfterLastPdt = 0;
-    } else if (line.startsWith('#EXTINF:')) {
-      durAfterLastPdt += parseFloat(line.split(':')[1]);
     }
   }
-  return lastPdtMs > 0 ? lastPdtMs + durAfterLastPdt * 1000 : 0;
+  return {
+    lines,
+    totalDuration,
+    liveEdgePdt: lastPdtMs > 0 ? lastPdtMs + durAfterLastPdt * 1000 : 0,
+  };
 }
+
+// Compat wrappers for callers that pass raw manifest string
+function hlsTotalDuration(manifest) { return parseHlsManifest(manifest).totalDuration; }
+function hlsLiveEdgePdt(manifest) { return parseHlsManifest(manifest).liveEdgePdt; }
 
 // Refresh real DVR window from YouTube manifest periodically
 let vlcDvrRefreshInterval = null;
@@ -1610,9 +1621,9 @@ function startDvrRefresh() {
     if (!lastVlcHlsUrl || activePlayer !== "vlc") { clearInterval(vlcDvrRefreshInterval); vlcDvrRefreshInterval = null; return; }
     try {
       const m = await fetchManifest(lastVlcHlsUrl);
-      const dur = hlsTotalDuration(m);
-      if (dur > 0) vlcDvrWindow = dur;
-      const liveEdge = hlsLiveEdgePdt(m);
+      const parsed = parseHlsManifest(m);
+      if (parsed.totalDuration > 0) vlcDvrWindow = parsed.totalDuration;
+      const liveEdge = parsed.liveEdgePdt;
       if (liveEdge > 0) {
         vlcManifestLiveEdgeMs = liveEdge; vlcManifestFetchedAt = Date.now();
         // Calibrate manifest-based time against accurate PDT+vlcTime while at live edge
@@ -1630,14 +1641,13 @@ app.get("/api/vlc-hls-offset", async (_req, res) => {
   if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
   try {
     const manifest = await fetchManifest(lastVlcHlsUrl);
-    // Update real DVR window from manifest
-    const realDvr = hlsTotalDuration(manifest);
-    if (realDvr > 0) vlcDvrWindow = realDvr;
+    const parsed = parseHlsManifest(manifest);
+    if (parsed.totalDuration > 0) vlcDvrWindow = parsed.totalDuration;
     if (vlcDvrBehind <= 0) {
       return res.type('application/vnd.apple.mpegurl').send(manifest);
     }
     // Parse segments and trim the last N seconds worth
-    const lines = manifest.split('\n');
+    const lines = parsed.lines;
     const segLines = []; // [{idx, dur}]
     for (let i = 0; i < lines.length; i++) {
       if (lines[i].startsWith('#EXTINF:')) {
@@ -1665,7 +1675,7 @@ app.get("/api/phone-hls", async (req, res) => {
   if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
   try {
     const manifest = await fetchManifest(lastVlcHlsUrl);
-    const lines = manifest.split('\n');
+    const { lines } = parseHlsManifest(manifest);
     // Parse segments with their PDT tags
     const segLines = [];
     let lastPdt = null;
@@ -2097,21 +2107,23 @@ app.get("/api/live-status", async (req, res) => {
 
 // Watch on phone — pause mpv, return YouTube URL at current timestamp
 // Volume control
-app.get("/api/volume", (_req, res) => {
+app.get("/api/volume", async (_req, res) => {
   try {
-    const vol = execSync(`osascript -e 'output volume of (get volume settings)'`, { encoding: "utf8" }).trim();
-    const muted = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim() === "true";
-    res.json({ volume: parseInt(vol), muted });
+    const [volOut, muteOut] = await Promise.all([
+      execP(`osascript -e 'output volume of (get volume settings)'`),
+      execP(`osascript -e 'output muted of (get volume settings)'`),
+    ]);
+    res.json({ volume: parseInt(volOut.stdout.trim()), muted: muteOut.stdout.trim() === "true" });
   } catch {
     res.json({ volume: 50, muted: false });
   }
 });
 
-app.post("/api/volume", (req, res) => {
+app.post("/api/volume", async (req, res) => {
   const vol = parseInt(req.body.volume);
   if (isNaN(vol) || vol < 0 || vol > 100) return res.status(400).json({ error: "Invalid volume" });
   try {
-    execSync(`osascript -e 'set volume output volume ${vol}'`, { stdio: "ignore" });
+    await execP(`osascript -e 'set volume output volume ${vol}'`);
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Volume failed" });
@@ -2125,19 +2137,21 @@ app.post("/api/refresh-cookies", async (_req, res) => {
 });
 
 // Mute toggle
-app.get("/api/volume-status", (_req, res) => {
+app.get("/api/volume-status", async (_req, res) => {
   try {
-    const muteState = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim();
-    const vol = execSync(`osascript -e 'output volume of (get volume settings)'`, { encoding: "utf8" }).trim();
-    res.json({ muted: muteState === "true", volume: parseInt(vol) || 0 });
+    const [muteOut, volOut] = await Promise.all([
+      execP(`osascript -e 'output muted of (get volume settings)'`),
+      execP(`osascript -e 'output volume of (get volume settings)'`),
+    ]);
+    res.json({ muted: muteOut.stdout.trim() === "true", volume: parseInt(volOut.stdout.trim()) || 0 });
   } catch { res.json({ muted: false, volume: 50 }); }
 });
 
-app.post("/api/mute", (_req, res) => {
+app.post("/api/mute", async (_req, res) => {
   try {
-    const muteState = execSync(`osascript -e 'output muted of (get volume settings)'`, { encoding: "utf8" }).trim();
-    const isMuted = muteState === "true";
-    execSync(`osascript -e 'set volume output muted ${isMuted ? "false" : "true"}'`, { stdio: "ignore" });
+    const { stdout } = await execP(`osascript -e 'output muted of (get volume settings)'`);
+    const isMuted = stdout.trim() === "true";
+    await execP(`osascript -e 'set volume output muted ${isMuted ? "false" : "true"}'`);
     res.json({ ok: true, muted: !isMuted });
   } catch {
     res.status(500).json({ error: "Mute failed" });
@@ -2862,11 +2876,17 @@ let wsSyncInterval = null;
 // Cached mac status — refreshed every 10s to avoid expensive shell calls per WS tick
 let _macStatusCache = { locked: false, screenOff: false, frontApp: '', ethernet: false };
 let _macStatusInterval = null;
-function refreshMacStatus() {
-  try { _macStatusCache.locked = execSync(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`, { encoding: "utf8", timeout: 2000 }).includes("Yes"); } catch { _macStatusCache.locked = false; }
-  try { _macStatusCache.screenOff = execSync(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`, { encoding: "utf8", timeout: 3000 }).includes("Yes"); } catch { _macStatusCache.screenOff = false; }
-  try { _macStatusCache.frontApp = execSync(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`, { encoding: "utf8", timeout: 2000 }).trim(); } catch { _macStatusCache.frontApp = ''; }
-  try { _macStatusCache.ethernet = execSync(`ifconfig en3 | grep "status:"`, { encoding: "utf8", timeout: 1000 }).includes("active"); } catch { _macStatusCache.ethernet = false; }
+async function refreshMacStatus() {
+  const results = await Promise.allSettled([
+    execP(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`),
+    execP(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`),
+    execP(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`),
+    execP(`ifconfig en3 | grep "status:"`),
+  ]);
+  _macStatusCache.locked = results[0].status === 'fulfilled' && results[0].value.stdout.includes("Yes");
+  _macStatusCache.screenOff = results[1].status === 'fulfilled' && results[1].value.stdout.includes("Yes");
+  _macStatusCache.frontApp = results[2].status === 'fulfilled' ? results[2].value.stdout.trim() : '';
+  _macStatusCache.ethernet = results[3].status === 'fulfilled' && results[3].value.stdout.includes("active");
 }
 refreshMacStatus();
 _macStatusInterval = setInterval(refreshMacStatus, 10000);

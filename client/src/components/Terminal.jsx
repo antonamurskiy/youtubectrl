@@ -88,8 +88,8 @@ export default function TerminalModal({ onClose, hasNowPlaying }) {
         const vvH = vv.height
         const kbH = totalH - vvH
         if (kbH > 100) {
-          // Keyboard open: panel fills from top to above keyboard + now-playing
-          panel.style.bottom = `${kbH - 40}px`
+          // Keyboard open: panel fills from top to above keyboard
+          panel.style.bottom = `${kbH}px`
           panel.style.paddingBottom = '0px'
         } else {
           // Keyboard closed: panel fills to above now-playing bar
