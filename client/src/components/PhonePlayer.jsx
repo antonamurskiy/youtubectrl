@@ -119,14 +119,8 @@ export default function PhonePlayer({ send }) {
 
     window._nudgeOffset = (delta) => {
       const v = videoRef.current
-      if (v) {
-        // Seek the phone video directly — don't touch VLC
-        v.currentTime += delta
-      }
+      if (v) v.currentTime += delta
       userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
-      // Re-calibrate drift baseline after manual offset
-      calibOffsetRef.current = null
-      driftSamplesRef.current = []
       const el = offsetDisplayRef.current
       if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
     }
@@ -193,7 +187,31 @@ export default function PhonePlayer({ send }) {
 
       const behindLive = pb.duration - pb.position
 
-      if (pb.isLive) {
+      if (pb.isLive && pb.player === 'mpv') {
+        // mpv live: calibrated drift — both time-pos and phone currentTime advance at ~1s/s
+        // but have different bases (mpv = absolute PTS, phone = relative)
+        const rawDiff = pb.position - video.currentTime
+        if (calibOffsetRef.current === null) {
+          calibOffsetRef.current = rawDiff
+          setDrift('calibrated (mpv live)')
+          return
+        }
+        const drift = rawDiff - calibOffsetRef.current + userOffsetRef.current
+
+        setDrift(`drift: ${drift.toFixed(2)}s`)
+        send({ type: 'phone-state', drift: +drift.toFixed(2) })
+
+        const now = Date.now()
+        if (Math.abs(drift) > 5) {
+          video.currentTime += drift
+          calibOffsetRef.current = null
+          driftSamplesRef.current = []
+          lastSeekRef.current = now
+        } else if (Math.abs(drift) > 0.5 && now - lastSeekRef.current > 5000) {
+          video.currentTime += drift
+          lastSeekRef.current = now
+        }
+      } else if (pb.isLive && pb.player === 'vlc') {
         // Detect DVR seeks by large position jumps
         const lastVlcPos = video._vlcLastPos || pb.position
         video._vlcLastPos = pb.position
@@ -352,9 +370,9 @@ export default function PhonePlayer({ send }) {
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
-          <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
+          <button onClick={() => window._nudgeOffset?.(-0.5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-0.5</button>
           <span ref={offsetDisplayRef} style={{ color: 'var(--yellow)', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
-          <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
+          <button onClick={() => window._nudgeOffset?.(0.5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+0.5</button>
           <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
