@@ -121,6 +121,9 @@ export default function PhonePlayer({ send }) {
       const v = videoRef.current
       if (v) v.currentTime += delta
       userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
+      // Recalibrate after nudge so sync loop accepts new position as baseline
+      calibOffsetRef.current = null
+      lastSeekRef.current = Date.now()
       const el = offsetDisplayRef.current
       if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
     }
@@ -196,19 +199,21 @@ export default function PhonePlayer({ send }) {
           setDrift('calibrated (mpv live)')
           return
         }
-        const drift = rawDiff - calibOffsetRef.current + userOffsetRef.current
+        const drift = rawDiff - calibOffsetRef.current
 
         setDrift(`drift: ${drift.toFixed(2)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
         const now = Date.now()
-        if (Math.abs(drift) > 5) {
+        if (Math.abs(drift) > 10) {
+          // Major desync — hard seek and recalibrate
           video.currentTime += drift
           calibOffsetRef.current = null
-          driftSamplesRef.current = []
           lastSeekRef.current = now
-        } else if (Math.abs(drift) > 0.5 && now - lastSeekRef.current > 5000) {
+        } else if (Math.abs(drift) > 3 && now - lastSeekRef.current > 10000) {
+          // Gradual drift correction with long cooldown
           video.currentTime += drift
+          calibOffsetRef.current = null
           lastSeekRef.current = now
         }
       } else if (pb.isLive && pb.player === 'vlc') {

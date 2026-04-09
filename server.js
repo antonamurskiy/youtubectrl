@@ -2788,7 +2788,7 @@ const wss = new WebSocket.Server({ noServer: true });
 let pty;
 try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
 const wssTerm = new WebSocket.Server({ noServer: true });
-let claudeWaiting = false;
+let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
 let tmuxWindows = [];
 
 function refreshTmuxWindows() {
@@ -2837,13 +2837,15 @@ wssTerm.on("connection", (ws) => {
   setTimeout(() => { try { execSync("tmux set status off", { stdio: "ignore" }); } catch {} }, 500);
   shell.onData((data) => {
     try { ws.send(data); } catch {}
-    // Detect Claude Code waiting for input
+    // Detect Claude Code state: waiting for input, thinking, or idle
     const stripped = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b[()][AB012]/g, "");
     const compact = stripped.replace(/[\r\n\s]+/g, "");
     if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
-      claudeWaiting = true;
-    } else if (/tokens\)|Cooked|Sautéed|Crunched|Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|⏺|✻|✳|Useranswered/.test(compact)) {
-      claudeWaiting = false;
+      claudeState = 'waiting';
+    } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
+      claudeState = 'thinking';
+    } else if (/tokens\)|Cooked|Sautéed|Crunched|⏺|Useranswered|❯/.test(compact)) {
+      claudeState = 'idle';
     }
   });
   ws.on("message", (msg) => {
@@ -2989,7 +2991,7 @@ function startWsSync() {
         state = { type: "playback", playing: false };
       }
       state.macStatus = _macStatusCache;
-      state.claudeWaiting = claudeWaiting;
+      state.claudeState = claudeState;
       refreshTmuxWindows();
       if (tmuxWindows.length > 1) state.tmuxWindows = tmuxWindows;
       const msg = JSON.stringify(state);
@@ -3054,6 +3056,15 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           const screens = getScreenOrigins();
           const onScreen = screens.find(s => wx >= s.x && wx < s.x + s.w);
           currentMonitor = (onScreen?.isLaptop) ? "laptop" : "lg";
+        } catch {}
+        // Update title from mpv if missing in history
+        try {
+          const t = await mpvCommand(["get_property", "media-title"]);
+          if (t?.data) {
+            const entry = historyMap.get(nowPlaying);
+            if (entry && (!entry.title || entry.title === '')) { entry.title = t.data; saveHistory(); }
+            if (!entry) addToHistory(nowPlaying, t.data, "");
+          }
         } catch {}
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode, "monitor:", currentMonitor);
         await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
