@@ -2827,6 +2827,9 @@ let pty;
 try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
 const wssTerm = new WebSocket.Server({ noServer: true });
 let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
+let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
+let claudeQuestion = '';
+let _ptyBuffer = ''; // rolling buffer of recent pty output
 let tmuxWindows = [];
 
 function refreshTmuxWindows() {
@@ -2889,12 +2892,41 @@ wssTerm.on("connection", (ws) => {
     // Detect Claude Code state: waiting for input, thinking, or idle
     const stripped = data.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "").replace(/\x1b\][^\x07]*\x07/g, "").replace(/\x1b[()][AB012]/g, "");
     const compact = stripped.replace(/[\r\n\s]+/g, "");
+    // Keep rolling buffer of stripped pty output
+    _ptyBuffer += stripped;
+    if (_ptyBuffer.length > 5000) _ptyBuffer = _ptyBuffer.slice(-3000);
     if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
       claudeState = 'waiting';
+      // Capture rendered screen to extract question + options
+      try {
+        const pane = execSync('tmux capture-pane -t 0 -p', { encoding: 'utf8', timeout: 1000 });
+        const lines = pane.split('\n');
+        const opts = [];
+        let question = '';
+        for (const line of lines) {
+          const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
+          if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4) opts.push({ n: m[1], text: m[2].trim() });
+          // Also match highlighted option without number prefix
+          if (!m && opts.length === 0) {
+            const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
+            if (h) opts.push({ n: '1', text: h[1].trim() });
+          }
+          const q = line.match(/[☐●]\s+(.+\?)\s*$/);
+          if (q) question = q[1].trim();
+        }
+        if (opts.length >= 2) {
+          claudeOptions = opts.slice(-4);
+          if (question) claudeQuestion = question;
+        }
+      } catch {}
     } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
       claudeState = 'thinking';
+      claudeOptions = [];
+      claudeQuestion = '';
     } else if (/tokens\)|Cooked|Sautéed|Crunched|⏺|Useranswered|❯/.test(compact)) {
       claudeState = 'idle';
+      claudeOptions = [];
+      claudeQuestion = '';
     }
   });
   ws.on("message", (msg) => {
@@ -3041,6 +3073,8 @@ function startWsSync() {
       }
       state.macStatus = _macStatusCache;
       state.claudeState = claudeState;
+      if (claudeOptions.length) state.claudeOptions = claudeOptions;
+      if (claudeQuestion) state.claudeQuestion = claudeQuestion;
       refreshTmuxWindows();
       if (tmuxWindows.length > 1) state.tmuxWindows = tmuxWindows;
       const msg = JSON.stringify(state);

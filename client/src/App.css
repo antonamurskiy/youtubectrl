@@ -946,19 +946,20 @@ body {
   z-index: 200;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 .claude-quick-reply button {
-  width: 40px;
-  height: 40px;
+  height: 36px;
+  padding: 0 10px;
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--text-dim);
   font-family: var(--font);
-  font-size: var(--font-lg);
-  font-weight: 700;
+  font-size: var(--font-sm);
   cursor: pointer;
+  white-space: nowrap;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;

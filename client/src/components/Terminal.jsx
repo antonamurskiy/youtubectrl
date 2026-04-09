@@ -6,6 +6,8 @@ import '@xterm/xterm/css/xterm.css'
 
 export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
   const claudeState = usePlaybackStore(s => s.claudeState)
+  const claudeOptions = usePlaybackStore(s => s.claudeOptions)
+  const claudeQuestion = usePlaybackStore(s => s.claudeQuestion)
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -120,7 +122,12 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
       <div className="claude-quick-reply" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
-        {[1,2,3].map(n => <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => fetch('/api/tmux-send', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ keys: String(n) }) }).catch(() => {})}>{n}</button>)}
+        {claudeState === 'waiting' && claudeQuestion && <div style={{ color: 'var(--magenta)', fontSize: 'var(--font-sm)', padding: '4px 8px', maxWidth: '200px', textAlign: 'right' }}>{claudeQuestion}</div>}
+        {[1,2,3].map(n => {
+          const opt = claudeOptions?.find(o => o.n === String(n))
+          const label = opt ? `${n} ${opt.text}` : String(n)
+          return <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => sendKey(String(n))}>{label}</button>
+        })}
       </div>
       <div className="terminal-container" ref={termRef} />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
