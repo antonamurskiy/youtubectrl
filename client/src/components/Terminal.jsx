@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { useSyncStore } from '../stores/sync'
 import '@xterm/xterm/css/xterm.css'
 
-export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
+export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, visible }) {
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -110,6 +110,11 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
       term.dispose()
     }
   }, [])
+
+  // Re-focus xterm when terminal becomes visible
+  useEffect(() => {
+    if (visible && xtermRef.current) xtermRef.current.focus()
+  }, [visible])
 
   const sendKey = (key) => {
     const ws = wsRef.current

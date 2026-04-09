@@ -157,7 +157,7 @@ function App() {
       {terminalEverOpened && (
         <Suspense fallback={null}>
           <div style={{ display: terminalOpen ? '' : 'none' }}>
-            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} />
+            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} visible={terminalOpen} />
           </div>
         </Suspense>
       )}
