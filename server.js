@@ -2815,7 +2815,7 @@ wssTerm.on("connection", (ws) => {
     const compact = stripped.replace(/[\r\n\s]+/g, "");
     if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
       claudeWaiting = true;
-    } else if (/tokens\)|Cooked|Sautéed|Crunched|Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting/.test(compact)) {
+    } else if (/tokens\)|Cooked|Sautéed|Crunched|Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|⏺|✻|✳|Useranswered/.test(compact)) {
       claudeWaiting = false;
     }
   });
