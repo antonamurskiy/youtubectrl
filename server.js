@@ -2829,6 +2829,7 @@ const wssTerm = new WebSocket.Server({ noServer: true });
 let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
 let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
 let claudeQuestion = '';
+let _lastCapture = 0;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
 let tmuxWindows = [];
 
@@ -2897,33 +2898,6 @@ wssTerm.on("connection", (ws) => {
     if (_ptyBuffer.length > 5000) _ptyBuffer = _ptyBuffer.slice(-3000);
     if (/Esctocancel/.test(compact) || /Waitingforpermission/.test(compact)) {
       claudeState = 'waiting';
-      // Capture rendered screen to extract question + options
-      try {
-        const pane = execSync('tmux capture-pane -t 0 -p', { encoding: 'utf8', timeout: 1000 });
-        const lines = pane.split('\n');
-        const opts = [];
-        let question = '';
-        for (const line of lines) {
-          const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
-          if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4) opts.push({ n: m[1], text: m[2].trim() });
-          // Also match highlighted option without number prefix
-          if (!m && opts.length === 0) {
-            const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
-            if (h) opts.push({ n: '1', text: h[1].trim() });
-          }
-          const q = line.match(/[☐●☑]\s+(.+\?)\s*$/);
-          if (q) question = q[1].trim();
-          // Also try: line right before first numbered option that contains "?"
-          if (!question && opts.length === 0 && line.includes('?') && line.trim().length > 5 && line.trim().length < 80) {
-            const qt = line.trim();
-            if (!/^\d/.test(qt) && !/Esc/.test(qt)) question = qt;
-          }
-        }
-        if (opts.length >= 2) {
-          claudeOptions = opts.slice(-4);
-          if (question) claudeQuestion = question;
-        }
-      } catch {}
     } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
       claudeState = 'thinking';
       claudeOptions = [];
@@ -2932,6 +2906,40 @@ wssTerm.on("connection", (ws) => {
       claudeState = 'idle';
       claudeOptions = [];
       claudeQuestion = '';
+    }
+    // Capture options when "Enter to select" appears (separate from state detection)
+    if (/Entertoselect/.test(compact) && claudeState === 'waiting') {
+      try {
+        const pane = execSync('tmux capture-pane -t 0 -p', { encoding: 'utf8', timeout: 1000 });
+        const lines = pane.split('\n');
+        let selectIdx = -1;
+        for (let i = lines.length - 1; i >= 0; i--) {
+          if (/^Enter to select/.test(lines[i].trim())) { selectIdx = i; break; }
+        }
+        if (selectIdx > 0) {
+          const opts = [];
+          let question = '';
+          for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
+            const line = lines[i];
+            const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{1,40})/);
+            if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim()) && !/^Other$/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
+            if (!m && opts.length === 0) {
+              const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
+              if (h) opts.unshift({ n: '1', text: h[1].trim() });
+            }
+            const q = line.match(/[☐●☑]\s+\S+\s+(.+)/);
+            if (q) { question = q[1].trim(); break; }
+            if (opts.length > 0 && !m && line.trim().length > 3 && /^\S/.test(line.trim()) && !/^[❯►⏺⎿●─☐☑]/.test(line.trim()) && !/^Enter/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line) && !/^\s{4,}/.test(line)) {
+              question = line.trim();
+              break;
+            }
+          }
+          if (opts.length >= 2) {
+            claudeOptions = opts.slice(0, 4);
+            if (question) claudeQuestion = question;
+          }
+        }
+      } catch {}
     }
   });
   ws.on("message", (msg) => {

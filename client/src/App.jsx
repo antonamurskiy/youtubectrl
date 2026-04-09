@@ -22,7 +22,19 @@ function App() {
   const secretMenuOpen = useUIStore(s => s.secretMenuOpen)
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const playing = usePlaybackStore(s => s.playing)
-  const claudeState = usePlaybackStore(s => s.claudeState)
+  const rawClaudeState = usePlaybackStore(s => s.claudeState)
+  const [claudeState, setClaudeState] = useState('idle')
+  useEffect(() => {
+    if (rawClaudeState === 'waiting') {
+      setClaudeState('waiting')
+    } else if (claudeState === 'waiting') {
+      // Keep waiting visible for 3s so user can tap buttons
+      const t = setTimeout(() => setClaudeState(rawClaudeState || 'idle'), 3000)
+      return () => clearTimeout(t)
+    } else {
+      setClaudeState(rawClaudeState || 'idle')
+    }
+  }, [rawClaudeState])
   const claudeOptions = usePlaybackStore(s => s.claudeOptions)
   const claudeQuestion = usePlaybackStore(s => s.claudeQuestion)
   const tmuxWindows = usePlaybackStore(s => s.tmuxWindows)
