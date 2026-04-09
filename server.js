@@ -2223,6 +2223,7 @@ app.get("/api/phone-sync-target", async (_req, res) => {
 
 // fMP4 relay — ffmpeg reads stream source, outputs fragmented MP4 for phone
 let phoneFmp4Process = null;
+let _phoneVodUrls = null; // { video, audio } for DASH remux
 
 app.get("/api/phone-live-stream", async (_req, res) => {
   // Stream directly from ffmpeg with Content-Length for Safari compatibility
@@ -2300,12 +2301,32 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
-    // VOD — direct URL (Safari plays these natively)
-    const { stdout } = await execFileP(
-      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
-      { timeout: 15000 }
-    );
-    const streamUrl = stdout.trim().split("\n")[0];
+    // VOD — try 720p DASH remux first, fall back to progressive MP4
+    let streamUrl;
+    try {
+      const { stdout: dashOut } = await execFileP(
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "136", "--get-url", nowPlaying],
+        { timeout: 10000 }
+      );
+      const { stdout: audioOut } = await execFileP(
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "140-drc/140", "--get-url", nowPlaying],
+        { timeout: 10000 }
+      );
+      const videoUrl = dashOut.trim();
+      const audioUrl = audioOut.trim();
+      if (videoUrl && audioUrl) {
+        // Serve remuxed stream via /api/phone-vod-stream
+        _phoneVodUrls = { video: videoUrl, audio: audioUrl };
+        streamUrl = `/api/phone-vod-stream?t=${Date.now()}`;
+      }
+    } catch {}
+    if (!streamUrl) {
+      const { stdout } = await execFileP(
+        "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
+        { timeout: 15000 }
+      );
+      streamUrl = stdout.trim().split("\n")[0];
+    }
     res.json({ streamUrl, seconds, videoId });
   } catch (err) {
     console.error("Watch on phone error:", err.message);
@@ -2324,6 +2345,21 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       res.status(500).json({ error: "Failed" });
     }
   }
+});
+
+// VOD DASH remux: merge separate 720p video + audio into fragmented MP4
+app.get("/api/phone-vod-stream", (req, res) => {
+  if (!_phoneVodUrls) return res.status(400).json({ error: "No VOD URLs" });
+  const { video, audio } = _phoneVodUrls;
+  res.setHeader("Content-Type", "video/mp4");
+  res.setHeader("Cache-Control", "no-store");
+  const ff = spawn("ffmpeg", [
+    "-i", video, "-i", audio,
+    "-c", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-f", "mp4", "pipe:1"
+  ], { stdio: ["ignore", "pipe", "ignore"] });
+  ff.stdout.pipe(res);
+  res.on("close", () => { ff.kill(); });
 });
 
 app.post("/api/stop-phone-stream", async (_req, res) => {
