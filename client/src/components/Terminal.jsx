@@ -1,13 +1,10 @@
 import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { usePlaybackStore } from '../stores/playback'
+import { useSyncStore } from '../stores/sync'
 import '@xterm/xterm/css/xterm.css'
 
 export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
-  const claudeState = usePlaybackStore(s => s.claudeState)
-  const claudeOptions = usePlaybackStore(s => s.claudeOptions)
-  const claudeQuestion = usePlaybackStore(s => s.claudeQuestion)
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -119,16 +116,17 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
     if (ws?.readyState === WebSocket.OPEN) ws.send(key)
   }
 
+  // Expose sendKey globally via store so quick-reply buttons work outside terminal
+  useEffect(() => {
+    useSyncStore.getState().setTerminalSendKey((key) => {
+      const ws = wsRef.current
+      if (ws?.readyState === WebSocket.OPEN) ws.send(key)
+    })
+    return () => useSyncStore.getState().setTerminalSendKey(null)
+  }, [])
+
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
-      <div className="claude-quick-reply" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
-        {claudeState === 'waiting' && claudeQuestion && <div style={{ color: 'var(--magenta)', fontSize: 'var(--font-sm)', padding: '4px 8px', maxWidth: '200px', textAlign: 'right' }}>{claudeQuestion}</div>}
-        {[1,2,3].map(n => {
-          const opt = claudeOptions?.find(o => o.n === String(n))
-          const label = opt ? `${n} ${opt.text}` : String(n)
-          return <button key={n} style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : { opacity: 0.3 }} onClick={() => sendKey(String(n))}>{label}</button>
-        })}
-      </div>
       <div className="terminal-container" ref={termRef} />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>

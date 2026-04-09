@@ -9,6 +9,7 @@ export const useSyncStore = create((set) => ({
   settleUntil: 0,
   phoneOpen: false,
   terminalOpen: false,
+  terminalSendKey: null, // function to send key to terminal pty
 
   setDrift: (drift) => set({ drift }),
   nudgeOffset: (delta) => set((s) => ({ userOffset: +(s.userOffset + delta).toFixed(1) })),
@@ -18,5 +19,6 @@ export const useSyncStore = create((set) => ({
   clearSettling: () => set({ settling: false, settleUntil: 0 }),
   setPhoneOpen: (open) => set({ phoneOpen: open }),
   setTerminalOpen: (open) => set({ terminalOpen: open }),
+  setTerminalSendKey: (fn) => set({ terminalSendKey: fn }),
   resetSync: () => set({ drift: 0, baseline: null, settling: false, settleUntil: 0 }),
 }))

@@ -2911,8 +2911,13 @@ wssTerm.on("connection", (ws) => {
             const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
             if (h) opts.push({ n: '1', text: h[1].trim() });
           }
-          const q = line.match(/[☐●]\s+(.+\?)\s*$/);
+          const q = line.match(/[☐●☑]\s+(.+\?)\s*$/);
           if (q) question = q[1].trim();
+          // Also try: line right before first numbered option that contains "?"
+          if (!question && opts.length === 0 && line.includes('?') && line.trim().length > 5 && line.trim().length < 80) {
+            const qt = line.trim();
+            if (!/^\d/.test(qt) && !/Esc/.test(qt)) question = qt;
+          }
         }
         if (opts.length >= 2) {
           claudeOptions = opts.slice(-4);

@@ -965,6 +965,16 @@ body {
   user-select: none;
 }
 
+.claude-question {
+  color: var(--magenta);
+  font-size: var(--font-sm);
+  padding: 6px 10px;
+  max-width: 220px;
+  text-align: right;
+  background: var(--bg);
+  border: 1px solid var(--magenta);
+}
+
 .tmux-tabs {
   position: fixed;
   top: calc(env(safe-area-inset-top, 0px) + 4px);

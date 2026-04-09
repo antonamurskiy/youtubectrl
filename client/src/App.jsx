@@ -23,6 +23,8 @@ function App() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const playing = usePlaybackStore(s => s.playing)
   const claudeState = usePlaybackStore(s => s.claudeState)
+  const claudeOptions = usePlaybackStore(s => s.claudeOptions)
+  const claudeQuestion = usePlaybackStore(s => s.claudeQuestion)
   const tmuxWindows = usePlaybackStore(s => s.tmuxWindows)
   const connected = useSyncStore(s => s.connected)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
@@ -86,6 +88,16 @@ function App() {
               {w.name.match(/^\d+\.\d+/) ? w.index : w.name.slice(0, 3)}
             </button>
           ))}
+        </div>
+      )}
+      {claudeState === 'waiting' && (
+        <div className="claude-quick-reply">
+          {claudeQuestion && <div className="claude-question">{claudeQuestion}</div>}
+          {[1,2,3].map(n => {
+            const opt = claudeOptions?.find(o => o.n === String(n))
+            const label = opt ? `${n} ${opt.text}` : String(n)
+            return <button key={n} onClick={() => { const fn = useSyncStore.getState().terminalSendKey; if (fn) fn(String(n)); }}>{label}</button>
+          })}
         </div>
       )}
       <div className="fab-stack">
