@@ -128,7 +128,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows }) {
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
       <div className="terminal-container" ref={termRef} />
-      <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchEnd={(e) => { e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
+      <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { e.currentTarget._touchX = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (e.currentTarget._touchX || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>
         <button onClick={() => sendKey('\x03')}>^C</button>
         <button onClick={() => sendKey('\x0c')}>^L</button>
