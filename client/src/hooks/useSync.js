@@ -33,6 +33,8 @@ export function useSync() {
         const data = JSON.parse(e.data)
         if (data.type === 'playback') {
           usePlaybackStore.getState().update(data)
+        } else if (data.type === 'claude') {
+          usePlaybackStore.getState().update(data)
         } else if (data.type === 'pong') {
           handlePong(data, ws, pingState.current)
         }

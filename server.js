@@ -2831,6 +2831,10 @@ let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
 let claudeQuestion = '';
 let _lastCapture = 0;
 let _lastActiveWindow = '';
+function broadcastClaude() {
+  const msg = JSON.stringify({ type: 'claude', claudeState, claudeOptions: claudeOptions.length ? claudeOptions : undefined, claudeQuestion: claudeQuestion || undefined });
+  wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+}
 let _tmuxSwitchAt = 0;
 let _tmuxSwitchTimer = null;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
@@ -2907,6 +2911,7 @@ app.post("/api/tmux-select", (req, res) => {
             if (opts.length >= 2) {
               claudeOptions = opts.slice(0, 4);
               if (question) claudeQuestion = question;
+              broadcastClaude();
             }
           }
         }
@@ -2955,14 +2960,17 @@ wssTerm.on("connection", (ws) => {
       claudeState = 'waiting';
       claudeOptions = [];
       claudeQuestion = '';
+      broadcastClaude();
     } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|✻|✳/.test(compact)) {
       claudeState = 'thinking';
       claudeOptions = [];
       claudeQuestion = '';
+      broadcastClaude();
     } else if (/tokens\)|Cooked|Sautéed|Crunched|⏺|Useranswered|❯/.test(compact)) {
       claudeState = 'idle';
       claudeOptions = [];
       claudeQuestion = '';
+      broadcastClaude();
     }
     // Capture options when "Enter to select" appears (separate from state detection)
     if ((/Entertoselect/.test(compact) || /Tabtoamend/.test(compact)) && Date.now() - _tmuxSwitchAt > 2000) {
@@ -2997,6 +3005,7 @@ wssTerm.on("connection", (ws) => {
           if (opts.length >= 2) {
             claudeOptions = opts.slice(0, 4);
             if (question) claudeQuestion = question;
+            broadcastClaude();
           }
         }
       } catch {}
