@@ -53,34 +53,48 @@ export default function VideoCard({ video, isPlaying }) {
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
-  // Mobile: IntersectionObserver for scroll-based preview
+  // Prefetch preview URL when card scrolls into view (mobile)
+  const [inView, setInView] = useState(false)
   useEffect(() => {
     if (!isMobile || !cardRef.current || !videoId || video.isLive || video.live) return
     const observer = new IntersectionObserver(
-      ([entry]) => setPreviewing(entry.isIntersecting),
-      { rootMargin: '-30% 0px -30% 0px', threshold: 0 }
+      ([entry]) => { if (entry.isIntersecting) setInView(true) },
+      { rootMargin: '200px 0px', threshold: 0 }
     )
     observer.observe(cardRef.current)
     return () => observer.disconnect()
   }, [videoId, video.isLive, video.live, isMobile])
 
-  // Desktop: hover-based preview
-  const handleMouseEnter = useCallback(() => {
-    if (!isMobile && videoId && !video.isLive && !video.live) setPreviewing(true)
-  }, [isMobile, videoId, video.isLive, video.live])
-  const handleMouseLeave = useCallback(() => {
-    if (!isMobile) setPreviewing(false)
-  }, [isMobile])
-
+  // Fetch preview URL when in view (prefetch) or previewing (desktop hover)
   useEffect(() => {
-    if (!previewing || terminalOpen || !videoId || previewUrl || video.isLive || video.live) return
+    if ((!inView && !previewing) || terminalOpen || !videoId || previewUrl || video.isLive || video.live) return
     const controller = new AbortController()
     fetch(`/api/preview-url?id=${videoId}`, { signal: controller.signal })
       .then(r => r.json())
       .then(d => { if (d.url) setPreviewUrl(d.url) })
       .catch(() => {})
     return () => controller.abort()
-  }, [previewing, terminalOpen, videoId, previewUrl, video.isLive, video.live])
+  }, [inView, previewing, terminalOpen, videoId, previewUrl, video.isLive, video.live])
+
+  // Mobile: preview on tap-hold; Desktop: hover
+  const handleMouseEnter = useCallback(() => {
+    if (!isMobile && videoId && !video.isLive && !video.live) setPreviewing(true)
+  }, [isMobile, videoId, video.isLive, video.live])
+  const handleMouseLeave = useCallback(() => {
+    if (!isMobile) setPreviewing(false)
+  }, [isMobile])
+  const previewTimer = useRef(null)
+  const handleCardTouchStart = useCallback(() => {
+    if (isMobile && videoId && !video.isLive && !video.live) {
+      if (previewTimer.current) clearTimeout(previewTimer.current)
+      setPreviewing(true)
+    }
+  }, [isMobile, videoId, video.isLive, video.live])
+  const handleCardTouchEnd = useCallback(() => {
+    if (isMobile) {
+      previewTimer.current = setTimeout(() => setPreviewing(false), 3000)
+    }
+  }, [isMobile])
 
   // Clean up preview video resources on unmount
   useEffect(() => {
@@ -105,6 +119,7 @@ export default function VideoCard({ video, isPlaying }) {
         url: videoUrl,
         title: video.title,
         channel: video.channel,
+        thumbnail: video.thumbnail || '',
         isLive: video.isLive || video.live || false,
         watchPct: video.startPercent || 0,
       }),
@@ -149,11 +164,13 @@ export default function VideoCard({ video, isPlaying }) {
   const closeContextMenu = useCallback(() => setContextMenu(null), [])
 
   const handleMoreFromChannel = useCallback(() => {
-    if (video.channelId || video.channel) {
+    if (video.platform === 'rumble') {
+      useUIStore.getState().setChannel({ name: video.channel, platform: 'rumble' })
+    } else if (video.channelId || video.channel) {
       useUIStore.getState().setChannel({ id: video.channelId, name: video.channel })
     }
     setContextMenu(null)
-  }, [video.channelId, video.channel])
+  }, [video.channelId, video.channel, video.platform])
 
   const handleCopyLink = useCallback(() => {
     navigator.clipboard?.writeText(videoUrl)
@@ -176,6 +193,9 @@ export default function VideoCard({ video, isPlaying }) {
         onClick={handlePlay}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
+        onTouchStart={handleCardTouchStart}
+        onTouchEnd={handleCardTouchEnd}
+        onTouchCancel={handleCardTouchEnd}
       >
         <div
           className="thumb-wrap"
@@ -188,19 +208,30 @@ export default function VideoCard({ video, isPlaying }) {
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
           {previewing && !terminalOpen && previewUrl && (
             <video
-              ref={previewRef}
+              ref={(el) => { previewRef.current = el; if (el) el.play().catch(() => {}) }}
               src={previewUrl}
               muted
               loop
               playsInline
-              autoPlay
               preload="auto"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover' }}
+              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 2 }}
             />
           )}
           {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
           {(video.upcoming || video.duration === 'SOON') && !video.isLive && !video.live && (
-            <span className="live-badge" style={{ background: 'var(--text-dim)' }}>SOON</span>
+            <span className="live-badge" style={{ background: 'var(--text-dim)' }}>
+              {(() => {
+                if (!video.uploadedAt) return 'SOON'
+                const m = video.uploadedAt.match(/(\d+)\/(\d+)\/(\d+),\s*(\d+):(\d+)\s*(AM|PM)/i)
+                if (!m) return 'SOON'
+                const d = new Date(2000 + parseInt(m[3]), parseInt(m[1]) - 1, parseInt(m[2]), m[6] === 'PM' && m[4] !== '12' ? parseInt(m[4]) + 12 : m[6] === 'AM' && m[4] === '12' ? 0 : parseInt(m[4]), parseInt(m[5]))
+                const mins = Math.round((d - Date.now()) / 60000)
+                if (mins < 1) return 'SOON'
+                if (mins < 60) return `in ${mins}m`
+                const h = Math.floor(mins / 60)
+                return h < 24 ? `in ${h}h` : `in ${Math.floor(h / 24)}d`
+              })()}
+            </span>
           )}
           {durationStr && !video.isLive && !video.live && !video.upcoming && video.duration !== 'SOON' && video.duration !== 'LIVE' && (
             <span className="duration-badge">{durationStr}</span>

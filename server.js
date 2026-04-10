@@ -72,15 +72,16 @@ async function exportCookies() {
   }
 }
 
-function addToHistory(url, title, channel) {
+function addToHistory(url, title, channel, thumbnail) {
   const existing = historyMap.get(url);
   if (existing) {
     existing.timestamp = Date.now();
     if (title) existing.title = title;
     if (channel) existing.channel = channel;
+    if (thumbnail) existing.thumbnail = thumbnail;
     history = [existing, ...history.filter((h) => h.url !== url)];
   } else {
-    const entry = { url, title, channel: channel || "", timestamp: Date.now(), position: 0, duration: 0 };
+    const entry = { url, title, channel: channel || "", thumbnail: thumbnail || "", timestamp: Date.now(), position: 0, duration: 0 };
     history.unshift(entry);
   }
   history = history.slice(0, 100);
@@ -465,6 +466,78 @@ app.get("/api/channel-videos", async (req, res) => {
   }
 });
 
+// Rumble channel scraper
+const RUMBLE_CHANNELS = ["nickjfuentes", "TheAlexJonesShow"];
+
+async function scrapeRumbleChannel(channel) {
+  const resp = await fetch(`https://rumble.com/c/${channel}`, {
+    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+  });
+  if (!resp.ok) throw new Error(`${resp.status}`);
+  const html = await resp.text();
+  const blocks = [...html.matchAll(/data-video-id="(\d+)"(.*?)(?=data-video-id|<\/ol>)/gs)];
+  const seen = new Set();
+  const videos = [];
+  for (const [, vid, block] of blocks) {
+    if (seen.has(vid)) continue;
+    const thumb = block.match(/thumbnail__image[^>]*src="([^"]+)"/);
+    const alt = block.match(/alt="([^"]+)"/);
+    const isLive = block.includes('thumbnail__thumb--live') || block.includes('status--live');
+    const dur = block.match(/videostream__status--duration"\s*>\s*([^<]+)/);
+    const href = block.match(/videostream__link link[^>]*href="([^"]+)"/);
+    const views = block.match(/data-views="([^"]+)"/);
+    const date = block.match(/datetime="([^"]+)"/);
+    if (!href || !alt) continue;
+    seen.add(vid);
+    const url = `https://rumble.com${href[1].replace(/\?.*/, "")}`;
+    let uploadedAt = "";
+    let _dateMs = 0;
+    if (date?.[1]) {
+      _dateMs = new Date(date[1]).getTime();
+      const diff = Date.now() - _dateMs;
+      const mins = Math.floor(diff / 60000);
+      const h = Math.floor(mins / 60), d = Math.floor(mins / 1440), mo = Math.floor(mins / 43200);
+      if (mins < 60) uploadedAt = `${mins} min ago`;
+      else if (h < 24) uploadedAt = `${h} hour${h !== 1 ? 's' : ''} ago`;
+      else if (d < 30) uploadedAt = `${d} day${d !== 1 ? 's' : ''} ago`;
+      else if (mo < 12) uploadedAt = `${mo} month${mo !== 1 ? 's' : ''} ago`;
+      else uploadedAt = `${Math.floor(mo / 12)} year${Math.floor(mo / 12) !== 1 ? 's' : ''} ago`;
+    }
+    videos.push({
+      id: vid,
+      title: alt[1],
+      thumbnail: thumb?.[1] || "",
+      duration: isLive ? "LIVE" : (dur?.[1]?.trim() || ""),
+      url,
+      channel: channel,
+      views: parseInt(views?.[1]) || 0,
+      uploadedAt,
+      _dateMs,
+      platform: "rumble",
+    });
+  }
+  return videos;
+}
+
+app.get("/api/rumble", async (req, res) => {
+  const channel = req.query.channel;
+  try {
+    let videos;
+    if (channel) {
+      videos = await scrapeRumbleChannel(channel);
+    } else {
+      const results = await Promise.allSettled(RUMBLE_CHANNELS.map(c => scrapeRumbleChannel(c)));
+      videos = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
+      videos.sort((a, b) => b._dateMs - a._dateMs);
+    }
+    videos.forEach(v => delete v._dateMs);
+    res.json({ videos });
+  } catch (err) {
+    console.error("Rumble fetch error:", err.message);
+    res.json({ videos: [] });
+  }
+});
+
 // Video preview URL — low quality stream for thumbnail preview
 const previewCache = new Map();
 app.get("/api/preview-url", async (req, res) => {
@@ -473,7 +546,7 @@ app.get("/api/preview-url", async (req, res) => {
   if (previewCache.has(id)) return res.json({ url: previewCache.get(id) });
   try {
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "134/133/160/18",
+      "--cookies", COOKIES_FILE, "-f", "18/134/133/160",
       "--get-url", `https://www.youtube.com/watch?v=${id}`,
     ], { timeout: 10000 });
     const url = stdout.trim();
@@ -694,13 +767,19 @@ async function browseRecommended(continuation = null) {
         }
       }
       const bestThumb = vr.thumbnail?.thumbnails?.[vr.thumbnail?.thumbnails?.length-1]?.url || `https://i.ytimg.com/vi/${vr.videoId}/hqdefault.jpg`;
+      const vrIsLive = !!(vr.badges?.find(b => b.metadataBadgeRenderer?.style === "BADGE_STYLE_TYPE_LIVE_NOW") || vr.thumbnailOverlays?.find(o => o.thumbnailOverlayTimeStatusRenderer?.style === "LIVE"));
+      const vrUpcomingText = vr.upcomingEventData?.startTime ? new Date(parseInt(vr.upcomingEventData.startTime) * 1000).toLocaleString('en-US', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : "";
+      const vrIsUpcoming = !!(vr.upcomingEventData || vr.thumbnailOverlays?.find(o => o.thumbnailOverlayTimeStatusRenderer?.style === "UPCOMING"));
+      if (!durText && !vrIsLive) console.log(`[browse-vr] no duration for "${(vr.title?.runs?.[0]?.text||'').slice(0,50)}" id=${vr.videoId} upcoming=${vrIsUpcoming} upcomingText=${vrUpcomingText} viewCount=${vr.viewCountText?.simpleText||''}`);
       videos.push({
         id: vr.videoId, title: vr.title?.runs?.[0]?.text || "",
         thumbnail: bestThumb,
-        duration: durText,
+        duration: vrIsLive ? "LIVE" : (vrIsUpcoming ? "SOON" : durText),
         channel: vr.shortBylineText?.runs?.[0]?.text || "",
         views: parseInt((vr.viewCountText?.simpleText?.match(/[\d,]+/) || ["0"])[0].replace(/,/g, "")) || 0,
+        uploadedAt: vrUpcomingText || (vr.publishedTimeText?.simpleText || ""),
         url: `https://www.youtube.com/watch?v=${vr.videoId}`,
+        live: vrIsLive, upcoming: vrIsUpcoming,
       });
       return;
     }
@@ -736,8 +815,8 @@ async function browseRecommended(continuation = null) {
           duration = h > 0 ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}` : `${m}:${String(s).padStart(2,'0')}`;
         }
         const isLive = /watching/i.test(viewsText);
-        const scheduledText = allTexts.find(t => /scheduled/i.test(t)) || "";
-        const isUpcoming = /waiting|scheduled/i.test(viewsText + scheduledText);
+        const scheduledText = allTexts.find(t => /scheduled|premiere/i.test(t)) || "";
+        const isUpcoming = /waiting|scheduled|premiere/i.test(viewsText + scheduledText);
         // Parse views: "2.7K views", "5.3K watching", "640,166 views"
         let views = 0;
         const vMatch = viewsText.match(/([\d,.]+)\s*([KMB])?/i);
@@ -1173,15 +1252,16 @@ let playLock = false;
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
-  const { url, isLive: clientIsLive, title: reqTitle, channel: reqChannel, watchPct } = req.body;
-  if (!url || !url.startsWith("https://www.youtube.com/")) {
+  const { url, isLive: clientIsLive, title: reqTitle, channel: reqChannel, thumbnail: reqThumb, watchPct } = req.body;
+  if (!url || (!url.startsWith("https://www.youtube.com/") && !url.startsWith("https://rumble.com/"))) {
     playLock = false;
     return res.status(400).json({ error: "Invalid URL" });
   }
+  const isRumble = url.startsWith("https://rumble.com/");
 
   // Detect live streams server-side if frontend didn't flag it
   let isLive = clientIsLive;
-  if (!isLive) {
+  if (!isLive && !isRumble) {
     try {
       const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", url], { timeout: 10000 });
       if (stdout.trim() === "True") isLive = true;
@@ -1235,7 +1315,7 @@ app.post("/api/play", async (req, res) => {
         // Unhide if it was hidden from pause
         try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
         nowPlaying = url;
-        addToHistory(url, reqTitle || "", reqChannel || "");
+        addToHistory(url, reqTitle || "", reqChannel || "", reqThumb || "");
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
@@ -1375,7 +1455,7 @@ app.post("/api/play", async (req, res) => {
       } catch {}
     };
     applyWindowMode();
-    addToHistory(url, reqTitle || "", reqChannel || "");
+    addToHistory(url, reqTitle || "", reqChannel || "", reqThumb || "");
 
     // Wait for video to load, then set up progress (remove from history if failed)
     if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -2065,12 +2145,25 @@ app.get("/api/history", async (_req, res) => {
         } catch {}
       }
       // Merge local progress data (more accurate than YouTube's startPercent)
+      const ytUrls = new Set(videos.map(v => v.url));
       for (const v of videos) {
         const h = historyMap.get(v.url);
         if (h?.position > 0 && h?.duration > 0) {
           v.savedPosition = h.position;
           v.savedDuration = h.duration;
         }
+      }
+      // Merge non-YouTube local history (Rumble etc) at position 0 (most recent first)
+      const nonYt = history.filter(h => !h.url.startsWith("https://www.youtube.com/") && !ytUrls.has(h.url));
+      // history is already sorted newest-first, so reverse before unshift to maintain order
+      for (let i = nonYt.length - 1; i >= 0; i--) {
+        const h = nonYt[i];
+        videos.unshift({
+          id: h.url, title: h.title || h.url, thumbnail: h.thumbnail || "",
+          duration: "", channel: h.channel || "", views: 0, url: h.url,
+          savedPosition: h.position || 0, savedDuration: h.duration || 0,
+          platform: h.url.includes("rumble.com") ? "rumble" : "other",
+        });
       }
       return res.json(videos);
     }
@@ -2082,9 +2175,9 @@ app.get("/api/history", async (_req, res) => {
   const localVideos = history.map((h) => {
     const m = h.url.match(/v=([\w-]+)/);
     return {
-      id: m ? m[1] : "",
+      id: m ? m[1] : h.url,
       title: h.title || h.url,
-      thumbnail: m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : "",
+      thumbnail: h.thumbnail || (m ? `https://i.ytimg.com/vi/${m[1]}/hqdefault.jpg` : ""),
       duration: "",
       channel: h.channel || "",
       views: 0,
@@ -2507,7 +2600,41 @@ app.get("/api/comments", async (req, res) => {
   }
 });
 
-// Play/pause
+// Idempotent pause/resume (for lock screen widget — avoids toggle race conditions)
+app.post("/api/pause", async (_req, res) => {
+  if (activePlayer === "vlc") {
+    if (!vlcPaused) { try { await vlcPause(); vlcPaused = true; } catch {} }
+  } else {
+    try { await mpvCommand(["set_property", "pause", true]); } catch {}
+  }
+  _lastPolledPaused = true;
+  if (windowMode !== "fullscreen") {
+    try { execSync(`osascript -e 'tell application "System Events" to set visible of process "${activePlayer === "vlc" ? "VLC" : "mpv"}" to false'`, { stdio: "ignore" }); } catch {}
+  }
+  res.json({ ok: true, paused: true });
+});
+
+app.post("/api/resume", async (_req, res) => {
+  if (activePlayer === "vlc") {
+    if (vlcPaused) { try { await vlcPause(); vlcPaused = false; } catch {} }
+  } else {
+    try { await mpvCommand(["set_property", "pause", false]); } catch {}
+  }
+  _lastPolledPaused = false;
+  if (windowMode !== "fullscreen" && !phoneActive) {
+    const proc = activePlayer === "vlc" ? "VLC" : "mpv";
+    try {
+      execSync(`osascript -e 'tell application "System Events" to set visible of process "${proc}" to true'`, { stdio: "ignore" });
+      if (activePlayer !== "vlc" && windowMode === "maximize") {
+        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+        if (wid) { try { execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" }); execSync(`aerospace fullscreen --no-outer-gaps on`, { stdio: "ignore" }); } catch {} }
+      }
+    } catch {}
+  }
+  res.json({ ok: true, paused: false });
+});
+
+// Play/pause (toggle)
 app.post("/api/playpause", async (_req, res) => {
   if (activePlayer === "vlc") {
     try {
@@ -3150,6 +3277,7 @@ function startWsSync() {
           url: nowPlaying, serverTs: Date.now(),
           title: historyMap.get(nowPlaying)?.title || "",
           channel: historyMap.get(nowPlaying)?.channel || "",
+          thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
           monitor: currentMonitor, windowMode: windowMode || "floating",
           visible: !phoneActive && !(vlcPaused && windowMode !== "fullscreen"),
           seeking: vlcSeekBusy
@@ -3183,6 +3311,7 @@ function startWsSync() {
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",
             channel: historyMap.get(nowPlaying)?.channel || "",
+            thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
             monitor: currentMonitor, windowMode: windowMode || "floating",
             visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen")
           };

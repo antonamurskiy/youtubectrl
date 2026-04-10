@@ -193,9 +193,21 @@ body {
   pointer-events: none;
 }
 
-.video-card:active { background: rgba(235, 219, 178, 0.06); }
+.video-card:active {
+  background: rgba(235, 219, 178, 0.06);
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
 .video-card:active::before { opacity: 1; }
-.video-card.playing { background: var(--surface); }
+.video-card.playing {
+  background: var(--surface);
+  margin-left: -16px;
+  margin-right: -16px;
+  padding-left: 16px;
+  padding-right: 16px;
+}
 
 .thumb-wrap {
   position: relative;
@@ -1131,6 +1143,7 @@ body {
 
   .video-card::before { display: none; }
   .video-card:hover { background: var(--surface-hover); }
+  .video-card.playing, .video-card:active { margin-left: 0; margin-right: 0; padding-left: 0; padding-right: 0; }
 
   .thumb-wrap {
     width: 100%;

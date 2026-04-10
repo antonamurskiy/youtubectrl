@@ -13,6 +13,7 @@ export const usePlaybackStore = create((set) => ({
   dvrWindow: 0,
   title: '',
   channel: '',
+  thumbnail: '',
   windowMode: null,
   monitor: 'lg',
   serverTs: 0,

@@ -46,17 +46,15 @@ export function useMediaSession() {
 
     // Register action handlers
     navigator.mediaSession.setActionHandler('play', () => {
-      // Only send playpause if mpv is actually paused
-      const pb = usePlaybackStore.getState()
-      if (pb.paused) fetch('/api/playpause', { method: 'POST' })
+      // Touch audio synchronously first — iOS kills the session if we await before play()
       audio.play().catch(() => {})
       navigator.mediaSession.playbackState = 'playing'
+      fetch('/api/resume', { method: 'POST' })
     })
     navigator.mediaSession.setActionHandler('pause', () => {
-      const pb = usePlaybackStore.getState()
-      if (!pb.paused) fetch('/api/playpause', { method: 'POST' })
       audio.pause()
       navigator.mediaSession.playbackState = 'paused'
+      fetch('/api/pause', { method: 'POST' })
     })
     navigator.mediaSession.setActionHandler('seekbackward', () => {
       fetch('/api/seek-relative', {

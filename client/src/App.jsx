@@ -57,7 +57,7 @@ function App() {
     setTimeout(() => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {}), 500)
   }, [])
 
-  const tabs = ['rec', 'subs', 'live', 'history']
+  const tabs = ['rec', 'subs', 'live', 'ru', 'history']
 
   return (
     <>

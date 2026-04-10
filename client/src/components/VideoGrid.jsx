@@ -13,16 +13,7 @@ function ShortCard({ short }) {
   const cardRef = useRef(null)
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
-  // Mobile: scroll-based preview
-  useEffect(() => {
-    if (!isMobile || !cardRef.current) return
-    const observer = new IntersectionObserver(
-      ([entry]) => setPreviewing(entry.isIntersecting),
-      { rootMargin: '-20% 0px -20% 0px', threshold: 0 }
-    )
-    observer.observe(cardRef.current)
-    return () => observer.disconnect()
-  }, [isMobile])
+  // No auto-preview on mobile — only preview on desktop hover
 
   useEffect(() => {
     if (!previewing || terminalOpen || previewUrl) return
@@ -144,15 +135,22 @@ export default function VideoGrid() {
       case 'history':
         url = '/api/history'
         break
+      case 'ru':
+        url = '/api/rumble'
+        break
       case 'search':
         if (!searchQuery) return setLoading(false)
         url = `/api/search?q=${encodeURIComponent(searchQuery)}`
         break
       case 'channel':
         if (!channelQuery) return setLoading(false)
-        url = channelQuery.id
-          ? `/api/channel?id=${encodeURIComponent(channelQuery.id)}`
-          : `/api/channel?name=${encodeURIComponent(channelQuery.name)}`
+        if (channelQuery.platform === 'rumble') {
+          url = `/api/rumble?channel=${encodeURIComponent(channelQuery.name)}`
+        } else {
+          url = channelQuery.id
+            ? `/api/channel?id=${encodeURIComponent(channelQuery.id)}`
+            : `/api/channel?name=${encodeURIComponent(channelQuery.name)}`
+        }
         break
       default:
         url = '/api/home?feed=recommended'
@@ -181,6 +179,7 @@ export default function VideoGrid() {
           tab === 'home' ? 'Home' :
           tab === 'live' ? 'Live' :
           tab === 'history' ? 'History' :
+          tab === 'ru' ? 'Rumble' :
           tab === 'channel' ? (channelQuery?.name || 'Channel') :
           tab === 'filtered' ? 'Filtered' : ''
         )

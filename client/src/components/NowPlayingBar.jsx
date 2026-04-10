@@ -82,7 +82,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const pb = usePlaybackStore(useShallow(s => ({
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, paused: s.paused, playing: s.playing,
-    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
+    monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
@@ -274,9 +274,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     addToast('+10s')
   }, [pb.position, duration, addToast])
 
-  const thumbnail = pb.url
-    ? `https://i.ytimg.com/vi/${pb.url.match(/[?&]v=([\w-]+)/)?.[1]}/default.jpg`
-    : ''
+  const ytId = pb.url?.match(/[?&]v=([\w-]+)/)?.[1]
+  const thumbnail = pb.thumbnail || (ytId ? `https://i.ytimg.com/vi/${ytId}/default.jpg` : '')
 
   const liveTimeBehind = pb.isLive && pb.duration > 0 ? pb.duration - pb.position : 0
 
