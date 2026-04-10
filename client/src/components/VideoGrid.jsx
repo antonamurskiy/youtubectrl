@@ -89,6 +89,7 @@ export default function VideoGrid() {
   const nextLoadGen = useUIStore(s => s.nextLoadGen)
   const refreshKey = useUIStore(s => s.refreshKey)
   const refresh = useUIStore(s => s.refresh)
+  const setFilteredVideos = useUIStore(s => s.setFilteredVideos)
   const nowPlayingUrl = usePlaybackStore(s => s.url)
 
   const [videos, setVideos] = useState([])
@@ -114,6 +115,18 @@ export default function VideoGrid() {
 
     let url
     const tab = activeTab === 'search' ? 'search' : activeTab
+
+    // Filtered tab uses stored data, no fetch needed
+    if (tab === 'filtered') {
+      const fv = useUIStore.getState().filteredVideos
+      setVideos(fv)
+      setShorts([])
+      setSectionLabel(`Filtered (${fv.length})`)
+      setHasMore(false)
+      setNextPage(null)
+      setLoading(false)
+      return
+    }
 
     switch (tab) {
       case 'rec':
@@ -160,6 +173,7 @@ export default function VideoGrid() {
       } else {
         setVideos(items)
         setShorts(data.shorts || [])
+        if (data.filtered?.length) setFilteredVideos(data.filtered)
         setSectionLabel(
           tab === 'search' ? `Search: ${searchQuery}` :
           tab === 'rec' ? 'Recommended' :
@@ -167,7 +181,8 @@ export default function VideoGrid() {
           tab === 'home' ? 'Home' :
           tab === 'live' ? 'Live' :
           tab === 'history' ? 'History' :
-          tab === 'channel' ? (channelQuery?.name || 'Channel') : ''
+          tab === 'channel' ? (channelQuery?.name || 'Channel') :
+          tab === 'filtered' ? 'Filtered' : ''
         )
       }
 

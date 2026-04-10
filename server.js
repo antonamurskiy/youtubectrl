@@ -667,6 +667,7 @@ async function browseRecommended(continuation = null) {
   const data = await res.json();
   const videos = [];
   const shorts = [];
+  const filtered = [];
   let nextContinuation = null;
   function extract(obj, depth) {
     if (depth > 30) return;
@@ -676,7 +677,7 @@ async function browseRecommended(continuation = null) {
       nextContinuation = obj.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
       return;
     }
-    // Skip ads
+    // Skip ads — collect into filtered array
     if (obj.adSlotRenderer || obj.promotedVideoRenderer || obj.promotedSparklesWebRenderer || obj.statementBannerRenderer || obj.brandVideoShelfRenderer || obj.brandVideoSingletonRenderer) return;
     if (obj.richItemRenderer?.content?.adSlotRenderer || obj.richItemRenderer?.content?.promotedVideoRenderer || obj.richItemRenderer?.content?.statementBannerRenderer) return;
     if (obj.richItemRenderer?.content?.videoRenderer) {
@@ -706,9 +707,17 @@ async function browseRecommended(continuation = null) {
     if (obj.richItemRenderer?.content?.lockupViewModel) {
       const lv = obj.richItemRenderer.content.lockupViewModel;
       const id = lv.contentId || "";
-      // Skip YouTube ad placements (not creator promo disclosures)
+      // Skip YouTube ad placements (not creator promo disclosures) — collect into filtered
       const lvStr = JSON.stringify(lv);
-      if (/adSlotRenderer|"BADGE_STYLE_TYPE_AD"|"adInfoRenderer"|promotedVideoRenderer/i.test(lvStr)) return;
+      if (/adSlotRenderer|"BADGE_STYLE_TYPE_AD"|"adInfoRenderer"|promotedVideoRenderer|"BADGE_COMMERCE"/i.test(lvStr)) {
+        const meta = lv.metadata?.lockupMetadataViewModel;
+        const _title = meta?.title?.content || "";
+        const _rows = meta?.metadata?.contentMetadataViewModel?.metadataRows || [];
+        const _texts = _rows.flatMap(r => r.metadataParts?.map(p => p.text?.content).filter(Boolean) || []);
+        const ciSrc = lv.contentImage?.thumbnailViewModel?.image?.sources;
+        if (id) filtered.push({ id, title: _title, channel: _texts[0] || "", thumbnail: ciSrc?.[ciSrc.length - 1]?.url || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`, url: `https://www.youtube.com/watch?v=${id}`, filtered: true });
+        return;
+      }
       if (id && !id.startsWith("RD")) {
         const meta = lv.metadata?.lockupMetadataViewModel;
         const title = meta?.title?.content || "";
@@ -799,13 +808,14 @@ async function browseRecommended(continuation = null) {
   }
   extract(data, 0);
   recContinuation = nextContinuation;
-  return { videos, shorts, hasMore: !!nextContinuation };
+  return { videos, shorts, filtered, hasMore: !!nextContinuation };
 }
 
 // Cache raw home feed so pagination doesn't re-fetch
 let homeFeedCache = [];
 let homeFeedType = null;
 let recShortsCache = [];
+let recFilteredCache = [];
 
 app.get("/api/home", async (req, res) => {
   const page = parseInt(req.query.page) || 0;
@@ -822,6 +832,7 @@ app.get("/api/home", async (req, res) => {
           if (result.videos.length < 5) throw new Error("too few results");
           homeFeedCache = result.videos;
           recShortsCache = result.shorts || [];
+          recFilteredCache = result.filtered || [];
         } catch {
           homeFeedCache = await getSingleFeed('recommended', 150);
           recContinuation = null;
@@ -834,6 +845,7 @@ app.get("/api/home", async (req, res) => {
           const result = await browseRecommended(recContinuation);
           if (!result.videos.length) break;
           homeFeedCache = [...homeFeedCache, ...result.videos];
+          if (result.filtered?.length) recFilteredCache = [...recFilteredCache, ...result.filtered];
         } catch { break; }
       }
       const slice = homeFeedCache.slice(page * pageSize, (page + 1) * pageSize);
@@ -846,6 +858,7 @@ app.get("/api/home", async (req, res) => {
       });
       const resp = { videos, hasMore, nextPageToken: hasMore ? String(page + 1) : null };
       if (page === 0 && recShortsCache.length) resp.shorts = recShortsCache;
+      if (page === 0 && recFilteredCache.length) resp.filtered = recFilteredCache;
       res.json(resp);
       // Enrich cache in background for next load
       const ids = slice.map(v => v.id).filter(Boolean);
@@ -2992,7 +3005,6 @@ wssTerm.on("connection", (ws) => {
       try {
         const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
         const lines = pane.split('\n');
-        // DEBUG: log what we see
         let selectIdx = -1;
         for (let i = lines.length - 1; i >= 0; i--) {
           if (/^Enter to select|^Esc to cancel/.test(lines[i].trim())) { selectIdx = i; break; }

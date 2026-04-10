@@ -14,6 +14,19 @@ export function useMediaSession() {
     audio.volume = 1
     silentAudioRef.current = audio
 
+    // iOS requires audio.play() from a user gesture to unlock the audio element.
+    // Once unlocked, subsequent play() calls from non-gesture contexts work.
+    const unlock = () => {
+      audio.play().then(() => {
+        // Unlocked — if not active yet, pause until playback starts
+        if (!activeRef.current) { audio.pause(); audio.currentTime = 0 }
+      }).catch(() => {})
+      document.removeEventListener('touchstart', unlock, true)
+      document.removeEventListener('click', unlock, true)
+    }
+    document.addEventListener('touchstart', unlock, true)
+    document.addEventListener('click', unlock, true)
+
     // Restart loop — set position state before restarting to prevent flash to 0
     const handleEnded = () => {
       if (!activeRef.current) return
@@ -135,6 +148,8 @@ export function useMediaSession() {
     return () => {
       unsub()
       audio.removeEventListener('ended', handleEnded)
+      document.removeEventListener('touchstart', unlock, true)
+      document.removeEventListener('click', unlock, true)
       audio.pause()
       activeRef.current = false
     }

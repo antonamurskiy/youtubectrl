@@ -141,6 +141,15 @@ export default function SecretMenu() {
           </button>
         ))}
 
+        {useUIStore.getState().filteredVideos.length > 0 && (
+          <button className="secret-menu-item" onClick={() => {
+            useUIStore.getState().setTab('filtered')
+            toggleSecretMenu()
+          }}>
+            Filtered ({useUIStore.getState().filteredVideos.length})
+          </button>
+        )}
+
         <button className="secret-menu-item" onClick={() => {
           const isOpen = useSyncStore.getState().terminalOpen
           useSyncStore.getState().setTerminalOpen(!isOpen)
