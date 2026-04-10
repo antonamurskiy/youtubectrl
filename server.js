@@ -1040,8 +1040,15 @@ async function fetchLiveStreams() {
 
 app.get("/api/live", async (_req, res) => {
   try {
-    const data = await fetchLiveStreams();
-    res.json(data);
+    const [ytData, rumbleResults] = await Promise.allSettled([
+      fetchLiveStreams(),
+      Promise.allSettled(RUMBLE_CHANNELS.map(c => scrapeRumbleChannel(c))),
+    ]);
+    const ytLive = ytData.status === "fulfilled" ? ytData.value : [];
+    const rumbleLive = (rumbleResults.status === "fulfilled" ? rumbleResults.value : [])
+      .flatMap(r => r.status === "fulfilled" ? r.value : [])
+      .filter(v => v.duration === "LIVE");
+    res.json([...rumbleLive, ...ytLive]);
   } catch (err) {
     console.error("Live search failed:", err.message);
     res.json([]);
