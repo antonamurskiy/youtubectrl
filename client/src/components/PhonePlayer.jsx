@@ -15,6 +15,7 @@ export default function PhonePlayer({ send }) {
   const driftDisplayRef = useRef(null)
   const offsetDisplayRef = useRef(null)
   const waitForVlcRef = useRef(null) // track waitForVlc interval for cleanup
+  const nudgeRef = useRef(null)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -117,7 +118,7 @@ export default function PhonePlayer({ send }) {
     let lastRateSend = 0
     const setDrift = (text) => { const el = driftDisplayRef.current; if (el) el.textContent = text }
 
-    window._nudgeOffset = (delta) => {
+    nudgeRef.current = (delta) => {
       const v = videoRef.current
       if (!v) return
       v.currentTime += delta
@@ -337,7 +338,7 @@ export default function PhonePlayer({ send }) {
     }, 1000)
 
     return () => {
-      delete window._nudgeOffset
+      nudgeRef.current = null
       clearInterval(interval)
     }
   }, [phoneOpen, send])
@@ -374,11 +375,11 @@ export default function PhonePlayer({ send }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button onClick={() => window._nudgeOffset?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
-          <button onClick={() => window._nudgeOffset?.(-1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
+          <button onClick={() => nudgeRef.current?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
+          <button onClick={() => nudgeRef.current?.(-1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
           <span ref={offsetDisplayRef} style={{ color: 'var(--yellow)', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
-          <button onClick={() => window._nudgeOffset?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
-          <button onClick={() => window._nudgeOffset?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
+          <button onClick={() => nudgeRef.current?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
+          <button onClick={() => nudgeRef.current?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>

@@ -676,8 +676,13 @@ async function browseRecommended(continuation = null) {
       nextContinuation = obj.continuationItemRenderer?.continuationEndpoint?.continuationCommand?.token || null;
       return;
     }
+    // Skip ads
+    if (obj.adSlotRenderer || obj.promotedVideoRenderer || obj.promotedSparklesWebRenderer || obj.statementBannerRenderer || obj.brandVideoShelfRenderer || obj.brandVideoSingletonRenderer) return;
+    if (obj.richItemRenderer?.content?.adSlotRenderer || obj.richItemRenderer?.content?.promotedVideoRenderer || obj.richItemRenderer?.content?.statementBannerRenderer) return;
     if (obj.richItemRenderer?.content?.videoRenderer) {
       const vr = obj.richItemRenderer.content.videoRenderer;
+      // Skip promoted ad placements (not creator sponsorship disclosures)
+      if (vr.promotedVideoRenderer) return;
       const durText = vr.lengthText?.simpleText || "";
       if (durText) {
         const dp = durText.split(':').map(Number);
@@ -701,6 +706,9 @@ async function browseRecommended(continuation = null) {
     if (obj.richItemRenderer?.content?.lockupViewModel) {
       const lv = obj.richItemRenderer.content.lockupViewModel;
       const id = lv.contentId || "";
+      // Skip YouTube ad placements (not creator promo disclosures)
+      const lvStr = JSON.stringify(lv);
+      if (/adSlotRenderer|"BADGE_STYLE_TYPE_AD"|"adInfoRenderer"|promotedVideoRenderer/i.test(lvStr)) return;
       if (id && !id.startsWith("RD")) {
         const meta = lv.metadata?.lockupMetadataViewModel;
         const title = meta?.title?.content || "";

@@ -98,6 +98,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const seekConfirmTimeout = useRef(null)
   const currentPosTimeout = useRef(null)
   const seekCleanupRef = useRef(null)
+  const skipPosRef = useRef(null)
+  const skipResetTimer = useRef(null)
 
   const position = isSeeking ? seekPos : pb.position
   const duration = pb.duration || 1
@@ -245,7 +247,11 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [phoneOpen, setPhoneOpen])
 
   const skipBack = useCallback(() => {
-    const newPos = Math.max(0, pb.position - 10)
+    const base = skipPosRef.current ?? pb.position
+    const newPos = Math.max(0, base - 10)
+    skipPosRef.current = newPos
+    clearTimeout(skipResetTimer.current)
+    skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
     fetch('/api/seek', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -255,7 +261,11 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [pb.position, addToast])
 
   const skipForward = useCallback(() => {
-    const newPos = Math.min(duration, pb.position + 10)
+    const base = skipPosRef.current ?? pb.position
+    const newPos = Math.min(duration, base + 10)
+    skipPosRef.current = newPos
+    clearTimeout(skipResetTimer.current)
+    skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
     fetch('/api/seek', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
