@@ -111,13 +111,27 @@ export default function VideoCard({ video, isPlaying }) {
     }).catch(() => addToast('Play failed'))
   }, [videoUrl, video.title, video.channel, video.isLive, addToast])
 
+  const touchStartPos = useRef(null)
+
   const handleTouchStart = useCallback((e) => {
     longPressTriggered.current = false
+    const touch = e.touches?.[0] || e
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY }
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true
-      const touch = e.touches?.[0] || e
-      setContextMenu({ x: touch.clientX, y: touch.clientY })
+      setContextMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
     }, 500)
+  }, [])
+
+  const handleTouchMove = useCallback((e) => {
+    if (!longPressTimer.current || !touchStartPos.current) return
+    const touch = e.touches?.[0] || e
+    const dx = Math.abs(touch.clientX - touchStartPos.current.x)
+    const dy = Math.abs(touch.clientY - touchStartPos.current.y)
+    if (dx > 10 || dy > 10) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
   }, [])
 
   const handleTouchEnd = useCallback(() => {
@@ -166,6 +180,7 @@ export default function VideoCard({ video, isPlaying }) {
         <div
           className="thumb-wrap"
           onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
           onTouchCancel={handleTouchEnd}
           onContextMenu={handleContextMenuEvent}

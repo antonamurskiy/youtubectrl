@@ -251,7 +251,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position: newPos }),
     }).catch(() => {})
-  }, [pb.position])
+    addToast('-10s')
+  }, [pb.position, addToast])
 
   const skipForward = useCallback(() => {
     const newPos = Math.min(duration, pb.position + 10)
@@ -260,7 +261,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ position: newPos }),
     }).catch(() => {})
-  }, [pb.position, duration])
+    addToast('+10s')
+  }, [pb.position, duration, addToast])
 
   const thumbnail = pb.url
     ? `https://i.ytimg.com/vi/${pb.url.match(/[?&]v=([\w-]+)/)?.[1]}/default.jpg`

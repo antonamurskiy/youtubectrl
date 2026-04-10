@@ -114,7 +114,7 @@ function App() {
       <div className="fab-stack">
         <button
           className="fab-cmux"
-          style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)' } : claudeState === 'thinking' ? { color: 'var(--yellow)', borderColor: 'var(--yellow)' } : undefined}
+          style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)', background: terminalOpen ? 'var(--magenta)' : undefined, color: terminalOpen ? 'var(--bg)' : 'var(--magenta)' } : claudeState === 'thinking' ? { color: 'var(--yellow)', borderColor: 'var(--yellow)', background: terminalOpen ? 'var(--yellow)' : undefined, color: terminalOpen ? 'var(--bg)' : 'var(--yellow)' } : terminalOpen ? { background: 'var(--text-dim)', color: 'var(--bg)' } : undefined}
           onClick={(e) => { e.stopPropagation(); setTerminalOpen(!useSyncStore.getState().terminalOpen) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">

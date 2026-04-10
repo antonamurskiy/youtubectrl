@@ -2964,13 +2964,13 @@ wssTerm.on("connection", (ws) => {
       // Debounce broadcast — option parsing below needs time to find options in capture-pane
       if (_claudeWaitingTimer) clearTimeout(_claudeWaitingTimer);
       _claudeWaitingTimer = setTimeout(() => { _claudeWaitingTimer = null; if (claudeState === 'waiting') broadcastClaude(); }, 500);
-    } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting/.test(compact) || /^[✻✳]/.test(stripped.trim())) {
-      claudeState = 'thinking';
+    } else if (/tokens\)|Cooked|Sautéed|Crunched|Marinated|Braised|Simmered|Garnished|⏺|✢|Useranswered|❯|⎿|thoughtfor/.test(compact)) {
+      claudeState = 'idle';
       claudeOptions = [];
       claudeQuestion = '';
       broadcastClaude();
-    } else if (/tokens\)|Cooked|Sautéed|Crunched|Marinated|Braised|Simmered|Garnished|⏺|✢|Useranswered|❯|⎿/.test(compact)) {
-      claudeState = 'idle';
+    } else if (/Whirlpooling|Channeling|Recombobulating|Flibbertigibbeting|Composing|Generating|Catapulting/.test(compact) || /^[✻✳✽✶✷]/.test(stripped.trim())) {
+      claudeState = 'thinking';
       claudeOptions = [];
       claudeQuestion = '';
       broadcastClaude();
