@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 
+let _lastRateSend = 0
+
 export function useDriftSync(videoRef, getPlayingDate, send) {
   const correcting = useRef(false)
 
@@ -50,8 +52,8 @@ function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
 
   // Throttle corrections to 1x/sec
   const now = Date.now()
-  if (now - (window._lastRateSend || 0) < 1000) return
-  window._lastRateSend = now
+  if (now - _lastRateSend < 1000) return
+  _lastRateSend = now
 
   if (Math.abs(drift) > 0.1) {
     // VLC rate control (phone playbackRate ignored on live HLS by Safari)

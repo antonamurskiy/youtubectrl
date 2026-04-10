@@ -16,6 +16,10 @@ export default function PhonePlayer({ send }) {
   const offsetDisplayRef = useRef(null)
   const waitForVlcRef = useRef(null) // track waitForVlc interval for cleanup
   const nudgeRef = useRef(null)
+  const hlsRef = useRef(null)
+  const syncUrlRef = useRef(null)
+  const vlcLastPosRef = useRef(null)
+  const vlcBufDelayRef = useRef(21)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -55,9 +59,9 @@ export default function PhonePlayer({ send }) {
               const video = videoRef.current
               if (!video) return
               const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-              video._vlcBufDelay = vlcBufDelay
+              vlcBufDelayRef.current = vlcBufDelay
               if (data.isLive && Hls.isSupported()) {
-                if (video._hls) { video._hls.destroy(); video._hls = null }
+                if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
                 // liveSyncDurationCount: how many segments behind live edge to start
                 const segDur = data.segDuration || 2
                 const pb = usePlaybackStore.getState()
@@ -73,7 +77,7 @@ export default function PhonePlayer({ send }) {
                 hls.on(Hls.Events.MANIFEST_PARSED, () => {
                   video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
                 })
-                video._hls = hls
+                hlsRef.current = hls
               } else {
                 video.src = fullUrl
                 if (data.isLive) {
@@ -134,13 +138,13 @@ export default function PhonePlayer({ send }) {
       const video = videoRef.current
       const pb = usePlaybackStore.getState()
       // Always show debug status
-      setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!video?._hls}`)
+      setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!hlsRef.current}`)
       if (!video || !readyRef.current) return
 
       // Detect video switch on desktop — reload phone stream with full state reset
-      if (pb.url && video._syncUrl && video._syncUrl !== pb.url) {
+      if (pb.url && syncUrlRef.current && syncUrlRef.current !== pb.url) {
         setDrift('video switched, reloading...')
-        video._syncUrl = pb.url
+        syncUrlRef.current = pb.url
         readyRef.current = false
         readyAtRef.current = 0
         lastSeekRef.current = 0
@@ -155,7 +159,7 @@ export default function PhonePlayer({ send }) {
           .then(data => {
             if (data.streamUrl) {
               const fullUrl = data.streamUrl.startsWith('/') ? `${location.origin}${data.streamUrl}` : data.streamUrl
-              if (video._hls) { video._hls.destroy(); video._hls = null }
+              if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
               video.src = fullUrl
               setTimeout(() => {
                 const newPb = usePlaybackStore.getState()
@@ -166,7 +170,7 @@ export default function PhonePlayer({ send }) {
           }).catch(() => {})
         return
       }
-      if (!video._syncUrl) video._syncUrl = pb.url
+      if (!syncUrlRef.current) syncUrlRef.current = pb.url
 
       const settleMs = Date.now() - readyAtRef.current
       if (settleMs < 5000) {
@@ -219,8 +223,8 @@ export default function PhonePlayer({ send }) {
         }
       } else if (pb.isLive && pb.player === 'vlc') {
         // Detect DVR seeks by large position jumps
-        const lastVlcPos = video._vlcLastPos || pb.position
-        video._vlcLastPos = pb.position
+        const lastVlcPos = vlcLastPosRef.current || pb.position
+        vlcLastPosRef.current = pb.position
         const posJump = Math.abs(pb.position - lastVlcPos)
         if (posJump > 10) {
           // VLC position jumped — DVR scrub detected, reload phone stream
@@ -229,10 +233,10 @@ export default function PhonePlayer({ send }) {
           calibOffsetRef.current = null
           driftSamplesRef.current = []
           readyRef.current = false
-          if (video._hls) {
-            video._hls.stopLoad()
-            video._hls.loadSource(`/api/phone-hls?_t=${Date.now()}`)
-            video._hls.startLoad()
+          if (hlsRef.current) {
+            hlsRef.current.stopLoad()
+            hlsRef.current.loadSource(`/api/phone-hls?_t=${Date.now()}`)
+            hlsRef.current.startLoad()
             setTimeout(() => { readyRef.current = true; readyAtRef.current = Date.now() }, 3000)
           } else {
             video.src = ''
@@ -241,7 +245,7 @@ export default function PhonePlayer({ send }) {
               if (video.seekable?.length > 0) {
                 // DVR reload: use measured VLC buffer delay + 2s for rebuffer
                 const pb2 = usePlaybackStore.getState()
-                video.currentTime = video.seekable.end(video.seekable.length - 1) - (video._vlcBufDelay || 21)
+                video.currentTime = video.seekable.end(video.seekable.length - 1) - (vlcBufDelayRef.current || 21)
               }
               video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
             }, { once: true })
@@ -353,7 +357,7 @@ export default function PhonePlayer({ send }) {
     setStreamUrl(null)
     setIsLive(false)
     if (videoRef.current) {
-      if (videoRef.current._hls) { videoRef.current._hls.destroy(); videoRef.current._hls = null }
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
       videoRef.current.pause()
       videoRef.current.removeAttribute('src')
       videoRef.current.load()

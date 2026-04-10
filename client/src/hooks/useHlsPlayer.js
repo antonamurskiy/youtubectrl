@@ -30,7 +30,6 @@ export function useHlsPlayer(videoRef, src) {
         video.play().catch(() => {})
       })
       hlsRef.current = hls
-      video._hls = hls // expose for sync loop access
     }
 
     return () => {

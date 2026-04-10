@@ -996,6 +996,7 @@ let mpvProcess = null;
 let vlcProcess = null;
 let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
+let _lastPolledPaused = null; // track mpv pause state for auto-hide on external pause (AirPods etc)
 let currentMonitor = "lg"; // tracked server-side, updated on move-monitor
 let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
@@ -2522,6 +2523,7 @@ app.post("/api/playpause", async (_req, res) => {
     await new Promise(r => setTimeout(r, 50));
     const state = await mpvCommand(["get_property", "pause"]);
     const paused = !!state?.data;
+    _lastPolledPaused = paused; // sync so poll loop doesn't double-trigger
     // Hide/show window when pausing (any mode except native fullscreen)
     if (windowMode !== "fullscreen") {
       try {
@@ -3149,6 +3151,18 @@ function startWsSync() {
             mpvCommand(["get_property", "file-format"]).catch(() => null),
           ]);
           const isHls = (fmt?.data || "").includes("hls");
+          const paused = !!pause?.data;
+          // Auto-hide/show on external pause (AirPods, media keys) — same logic as /api/playpause
+          if (_lastPolledPaused !== null && paused !== _lastPolledPaused && windowMode !== "fullscreen") {
+            try {
+              if (paused) {
+                execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+              } else if (!phoneActive) {
+                execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+              }
+            } catch {}
+          }
+          _lastPolledPaused = paused;
           state = {
             type: "playback",
             playing: true, isLive: isHls, player: "mpv",
