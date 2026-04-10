@@ -163,7 +163,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
 
     if (bar) {
       const rect = bar.getBoundingClientRect()
-      const x = e.clientX - rect.left
+      const x = Math.max(100, Math.min(e.clientX - rect.left, rect.width - 100))
       setSeekPreview({ x, time: pos })
     }
 
@@ -174,7 +174,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       seekPosRef.current = p
       if (bar) {
         const rect = bar.getBoundingClientRect()
-        setSeekPreview({ x: cx - rect.left, time: p })
+        setSeekPreview({ x: Math.max(100, Math.min(cx - rect.left, rect.width - 100)), time: p })
       }
     }
 
@@ -280,6 +280,16 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
 
   const liveTimeBehind = pb.isLive && pb.duration > 0 ? pb.duration - pb.position : 0
 
+  const chapters = storyboard?.chapters || []
+  const getChapter = useCallback((time) => {
+    for (let i = chapters.length - 1; i >= 0; i--) {
+      if (time >= chapters[i].start) return chapters[i]
+    }
+    return null
+  }, [chapters])
+
+  const currentChapter = chapters.length > 0 ? getChapter(position) : null
+  const seekChapter = seekPreview && chapters.length > 0 ? getChapter(seekPreview.time) : null
   const frame = seekPreview ? getStoryboardFrame(seekPreview.time) : null
 
   return (
@@ -291,6 +301,9 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         onPointerDown={handlePointerDownFixed}
       >
         <div className="np-progress-fill" style={{ width: `${pct}%` }} />
+        {chapters.length > 1 && chapters.map((ch, i) => i > 0 && (
+          <div key={i} className="np-chapter-mark" style={{ left: `${(ch.start / duration) * 100}%` }} />
+        ))}
         <div
           className={`np-progress-thumb${!pb.paused ? ' playing' : ''}`}
           style={{ left: `${pct}%` }}
@@ -323,6 +336,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
                 : formatTime(seekPreview.time)
               }
             </div>
+            {seekChapter && <div className="seek-preview-chapter">{seekChapter.title}</div>}
           </div>
         )}
       </div>

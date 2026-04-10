@@ -151,17 +151,6 @@ export default function SecretMenu() {
         )}
 
         <button className="secret-menu-item" onClick={() => {
-          const isOpen = useSyncStore.getState().terminalOpen
-          useSyncStore.getState().setTerminalOpen(!isOpen)
-          if (!isOpen) {
-            fetch('/api/focus-cmux', { method: 'POST' }).catch(() => {})
-          }
-          toggleSecretMenu()
-        }}>
-          Toggle cmux
-        </button>
-
-        <button className="secret-menu-item" onClick={() => {
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
           toggleSecretMenu()
         }}>

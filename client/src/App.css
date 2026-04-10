@@ -676,6 +676,37 @@ body {
   white-space: nowrap;
 }
 
+.seek-preview-chapter {
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  color: var(--text);
+  background: var(--bg);
+  max-width: 200px;
+  text-align: center;
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+  word-wrap: break-word;
+}
+
+.np-chapter-mark {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--bg);
+  z-index: 2;
+  pointer-events: none;
+}
+
+.np-chapter {
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* ── Secret menu ── */
 .secret-menu {
   position: fixed;
