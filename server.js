@@ -2160,12 +2160,18 @@ app.get("/api/history", async (_req, res) => {
           v.savedDuration = h.duration;
         }
       }
-      // Merge non-YouTube local history (Rumble etc) at position 0 (most recent first)
+      // Merge non-YouTube local history (Rumble etc) by local timestamp position
       const nonYt = history.filter(h => !h.url.startsWith("https://www.youtube.com/") && !ytUrls.has(h.url));
-      // history is already sorted newest-first, so reverse before unshift to maintain order
-      for (let i = nonYt.length - 1; i >= 0; i--) {
-        const h = nonYt[i];
-        videos.unshift({
+      for (const h of nonYt) {
+        // Find insertion point: local history has timestamps, YouTube history tracks position in local historyMap
+        // Insert after the last YouTube video that was watched before this Rumble video
+        const ts = h.timestamp || 0;
+        let insertIdx = videos.length;
+        for (let i = 0; i < videos.length; i++) {
+          const ytTs = historyMap.get(videos[i].url)?.timestamp || 0;
+          if (ytTs && ytTs < ts) { insertIdx = i; break; }
+        }
+        videos.splice(insertIdx, 0, {
           id: h.url, title: h.title || h.url, thumbnail: h.thumbnail || "",
           duration: "", channel: h.channel || "", views: 0, url: h.url,
           savedPosition: h.position || 0, savedDuration: h.duration || 0,
