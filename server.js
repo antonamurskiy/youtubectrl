@@ -2477,6 +2477,41 @@ app.post("/api/watch-on-phone", async (_req, res) => {
   }
 });
 
+// Phone-only playback — no mpv, just get stream URL for a given video
+app.post("/api/phone-only", async (req, res) => {
+  const { url } = req.body;
+  if (!url) return res.status(400).json({ error: "No URL" });
+  try {
+    const isRumble = url.startsWith("https://rumble.com/");
+    const m = url.match(/v=([\w-]+)/);
+    const videoId = m ? m[1] : "";
+
+    // Check if live
+    let isLive = false;
+    if (!isRumble) {
+      try {
+        const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", url], { timeout: 10000 });
+        if (stdout.trim() === "True") isLive = true;
+      } catch {}
+    }
+
+    if (isLive) {
+      // Get HLS manifest
+      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "best", "--get-url", url], { timeout: 15000 });
+      const streamUrl = stdout.trim().split("\n")[0];
+      return res.json({ streamUrl, seconds: 0, videoId, isLive: true });
+    }
+
+    // VOD — progressive MP4
+    const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", url], { timeout: 15000 });
+    const streamUrl = stdout.trim().split("\n")[0];
+    res.json({ streamUrl, seconds: 0, videoId });
+  } catch (err) {
+    console.error("Phone-only error:", err.message);
+    res.status(500).json({ error: "Failed to get stream URL" });
+  }
+});
+
 // VOD DASH remux: merge separate 720p video + audio into fragmented MP4
 app.get("/api/phone-vod-stream", (req, res) => {
   if (!_phoneVodUrls) return res.status(400).json({ error: "No VOD URLs" });

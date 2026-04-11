@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
+import { usePlaybackStore } from '../stores/playback'
 
 function formatDuration(val) {
   if (!val) return null
@@ -172,6 +173,18 @@ export default function VideoCard({ video, isPlaying }) {
     setContextMenu(null)
   }, [video.channelId, video.channel, video.platform])
 
+  const handleWatchOnPhone = useCallback(() => {
+    // Set playback store so now-playing bar shows the video
+    usePlaybackStore.getState().update({
+      playing: true, paused: false, url: videoUrl,
+      title: video.title, channel: video.channel,
+      thumbnail: video.thumbnail || '', isLive: video.isLive || video.live || false,
+      position: 0, duration: 0,
+    })
+    useSyncStore.getState().setPhoneOnly(videoUrl)
+    setContextMenu(null)
+  }, [videoUrl, video.title, video.channel, video.thumbnail, video.isLive, video.live])
+
   const handleCopyLink = useCallback(() => {
     navigator.clipboard?.writeText(videoUrl)
       .then(() => addToast('Link copied'))
@@ -282,6 +295,9 @@ export default function VideoCard({ video, isPlaying }) {
           >
             <button className="context-menu-item" onClick={handleMoreFromChannel}>
               More from {video.channel || 'channel'}
+            </button>
+            <button className="context-menu-item" onClick={handleWatchOnPhone}>
+              Watch on phone
             </button>
             <button className="context-menu-item" onClick={handleCopyLink}>
               Copy link

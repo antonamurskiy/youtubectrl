@@ -25,30 +25,96 @@ export default function PhonePlayer({ send }) {
   const [loading, setLoading] = useState(true)
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
+  const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
+  const phoneOnlyRef = useRef(false)
 
   // Fetch stream URL on open
   useEffect(() => {
     if (!phoneOpen) return
     setLoading(true)
+    phoneOnlyRef.current = !!phoneOnlyUrl
 
-    fetch('/api/watch-on-phone', { method: 'POST' })
+    const fetchUrl = phoneOnlyUrl
+      ? fetch('/api/phone-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: phoneOnlyUrl }) })
+      : fetch('/api/watch-on-phone', { method: 'POST' })
+
+    fetchUrl
       .then(r => r.json())
       .then(data => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
-          // Safari native: use proxy with direct YouTube segment URLs (no extra hop)
-          // hls.js (Chrome): use proxy with proxied segments (CORS workaround)
           const useHls = data.isLive && Hls.isSupported()
           const url = data.isLive
             ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
             : data.streamUrl
           setStreamUrl(url)
 
-          // Store VLC buffer delay for DVR reloads
           const vlcBufDelay = data.vlcBufferDelay || 19
-          // Wait for VLC to start playing before loading phone video
+
+          // Phone-only: load immediately, no mpv sync
+          if (phoneOnlyRef.current) {
+            readyRef.current = true
+            readyAtRef.current = Date.now()
+            setLoading(false)
+
+            // Background audio: preloaded, takes over when iOS pauses video on app switch
+            const bgAudio = new Audio(url.startsWith('/') ? `${location.origin}${url}` : url)
+            bgAudio.preload = 'auto'
+            bgAudio.volume = 0.01  // near-silent but not muted — iOS keeps resources alive
+            bgAudio.load()
+
+            const syncState = () => {
+              const v = videoRef.current
+              if (!v) return
+              const dur = v.duration
+              usePlaybackStore.getState().update({
+                position: v.currentTime || 0,
+                duration: (isFinite(dur) && dur > 0) ? dur : 0,
+                paused: v.paused,
+                playing: true,
+              })
+            }
+            const stateInterval = setInterval(syncState, 1000)
+
+            // On background: start audio from video position. On foreground: sync back.
+            const handleVisibility = () => {
+              const v = videoRef.current
+              if (!v) return
+              if (document.visibilityState === 'hidden') {
+                bgAudio.currentTime = v.currentTime
+                bgAudio.volume = 1
+                bgAudio.play().catch(() => {})
+              } else {
+                v.currentTime = bgAudio.currentTime
+                bgAudio.pause()
+                bgAudio.volume = 0.01
+                v.play().catch(() => {})
+              }
+            }
+            document.addEventListener('visibilitychange', handleVisibility)
+
+            useSyncStore.getState().setPhoneVideoCtrl({
+              play: () => videoRef.current?.play(),
+              pause: () => { videoRef.current?.pause(); bgAudio.pause() },
+              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+            })
+
+            const origCleanup = () => {
+              clearInterval(stateInterval)
+              document.removeEventListener('visibilitychange', handleVisibility)
+              bgAudio.pause()
+              bgAudio.removeAttribute('src')
+              bgAudio.load()
+              useSyncStore.getState().setPhoneVideoCtrl(null)
+            }
+            // Store cleanup ref for the effect's return
+            waitForVlcRef.current = { clear: origCleanup }
+            return
+          }
+
+          // Normal mode: wait for mpv to be playing before loading phone video
           waitForVlcRef.current = setInterval(() => {
             const pb = usePlaybackStore.getState()
             if (!pb.playing || pb.paused) return
@@ -62,7 +128,6 @@ export default function PhonePlayer({ send }) {
               vlcBufDelayRef.current = vlcBufDelay
               if (data.isLive && Hls.isSupported()) {
                 if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
-                // liveSyncDurationCount: how many segments behind live edge to start
                 const segDur = data.segDuration || 2
                 const pb = usePlaybackStore.getState()
                 const syncCount = pb.player === 'mpv' ? 4 : Math.round((data.vlcBufferDelay || 19) / segDur)
@@ -81,7 +146,6 @@ export default function PhonePlayer({ send }) {
               } else {
                 video.src = fullUrl
                 if (data.isLive) {
-                  // Native Safari HLS: wait for seekable range, then seek to match VLC
                   const vlcBuf = data.vlcBufferDelay || 25
                   const waitSeekable = () => {
                     if (video.seekable?.length > 0) {
@@ -89,15 +153,11 @@ export default function PhonePlayer({ send }) {
                       video.currentTime = Math.max(0, seekableEnd - vlcBuf)
                       video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
                     } else {
-                      // Retry until seekable is populated
                       setTimeout(waitSeekable, 500)
                     }
                   }
-                  video.addEventListener('loadedmetadata', () => {
-                    waitSeekable()
-                  }, { once: true })
+                  video.addEventListener('loadedmetadata', () => { waitSeekable() }, { once: true })
                 } else {
-                  // VOD: seek to current mpv position
                   const currentPb = usePlaybackStore.getState()
                   video.currentTime = currentPb.position || data.seconds || 0
                   video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
@@ -111,7 +171,9 @@ export default function PhonePlayer({ send }) {
       .catch(() => { addToast('Failed to get stream'); setLoading(false) })
 
     return () => {
-      if (waitForVlcRef.current) { clearInterval(waitForVlcRef.current); waitForVlcRef.current = null }
+      if (waitForVlcRef.current?.clear) { waitForVlcRef.current.clear() }
+      else if (waitForVlcRef.current) { clearInterval(waitForVlcRef.current) }
+      waitForVlcRef.current = null
     }
   }, [phoneOpen, addToast])
 
@@ -136,10 +198,17 @@ export default function PhonePlayer({ send }) {
     const interval = setInterval(() => {
       tick++
       const video = videoRef.current
+      if (!video || !readyRef.current) return
+
+      // Phone-only mode: no mpv sync, just keep playing
+      if (phoneOnlyRef.current) {
+        setDrift(`phone-only t${tick} ct:${video.currentTime?.toFixed(0)||'?'}`)
+        return
+      }
+
       const pb = usePlaybackStore.getState()
       // Always show debug status
       setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!hlsRef.current}`)
-      if (!video || !readyRef.current) return
 
       // Detect video switch on desktop — reload phone stream with full state reset
       if (pb.url && syncUrlRef.current && syncUrlRef.current !== pb.url) {
@@ -369,11 +438,16 @@ export default function PhonePlayer({ send }) {
   return (
     <div className="phone-player">
       <video
-        ref={videoRef}
+        ref={(el) => {
+          videoRef.current = el
+          if (el && phoneOnlyUrl) el.autoPictureInPicture = true
+        }}
+        src={phoneOnlyUrl && streamUrl ? streamUrl : undefined}
         playsInline
         autoPlay
         muted
         controls
+        onPlay={() => { if (phoneOnlyUrl && videoRef.current) videoRef.current.muted = false }}
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: 'var(--bg)' }}
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
@@ -385,6 +459,12 @@ export default function PhonePlayer({ send }) {
           <button onClick={() => nudgeRef.current?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
           <button onClick={() => nudgeRef.current?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
+        {phoneOnlyUrl && <button onClick={() => {
+          const v = videoRef.current
+          if (!v) return
+          if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('picture-in-picture')
+          else if (v.requestPictureInPicture) v.requestPictureInPicture().catch(() => {})
+        }} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>PiP</button>}
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>
     </div>

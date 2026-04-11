@@ -85,8 +85,11 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
+  const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
+
+  const phoneCtrl = () => useSyncStore.getState().phoneVideoCtrl
 
   const [isSeeking, setIsSeeking] = useState(false)
   const [seekPos, setSeekPos] = useState(0)
@@ -184,11 +187,9 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       setSeekPreview(null)
       seekCleanupRef.current = null
 
-      fetch('/api/seek', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ position: finalPos }),
-      }).catch(() => {})
+      const ctrl = phoneCtrl()
+      if (ctrl) { ctrl.seek(finalPos) }
+      else { fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: finalPos }) }).catch(() => {}) }
 
       if (currentPosTimeout.current) clearTimeout(currentPosTimeout.current)
       currentPosTimeout.current = setTimeout(() => setCurrentPosVisible(false), 1500)
@@ -213,8 +214,10 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [])
 
   const togglePlayPause = useCallback(() => {
+    const ctrl = phoneCtrl()
+    if (ctrl) { pb.paused ? ctrl.play() : ctrl.pause(); return }
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})
-  }, [])
+  }, [pb.paused])
 
   const stopPlayback = useCallback(() => {
     fetch('/api/stop', { method: 'POST' }).catch(() => {})
@@ -252,11 +255,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     skipPosRef.current = newPos
     clearTimeout(skipResetTimer.current)
     skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
-    fetch('/api/seek', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position: newPos }),
-    }).catch(() => {})
+    const ctrl = phoneCtrl()
+    if (ctrl) { ctrl.seek(newPos) } else { fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: newPos }) }).catch(() => {}) }
     addToast('-10s')
   }, [pb.position, addToast])
 
@@ -266,11 +266,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     skipPosRef.current = newPos
     clearTimeout(skipResetTimer.current)
     skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
-    fetch('/api/seek', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position: newPos }),
-    }).catch(() => {})
+    const ctrl = phoneCtrl()
+    if (ctrl) { ctrl.seek(newPos) } else { fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: newPos }) }).catch(() => {}) }
     addToast('+10s')
   }, [pb.position, duration, addToast])
 
