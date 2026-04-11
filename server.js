@@ -2496,6 +2496,60 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 });
 
 // Phone-only playback — no mpv, just get stream URL for a given video
+// Prepare existing mpv for phone-only mode: mute, hide, load URL if different
+async function preparePhoneOnlyMpv(url, resumePos) {
+  phoneActive = true;
+  if (activePlayer !== "mpv" || !mpvProcess) {
+    // No mpv running — spawn one hidden+muted
+    try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
+    const mpvArgs = [
+      `--input-ipc-server=/tmp/mpv-socket`,
+      `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
+      `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--autosync=30`,
+      `--mute=yes`,
+      url,
+    ];
+    if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
+    mpvProcess = spawn("mpv", mpvArgs, { stdio: "ignore" });
+    activePlayer = "mpv";
+    nowPlaying = url;
+    windowMode = "floating";
+    setTimeout(() => {
+      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
+    }, 3000);
+    console.log(`[phone-only] mpv spawned hidden+muted`);
+    return;
+  }
+  try {
+    await mpvCommand(["set_property", "mute", true]);
+    await mpvCommand(["set_property", "pause", true]);
+    execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+    if (nowPlaying !== url) {
+      await mpvCommand(["loadfile", url, "replace"]);
+      nowPlaying = url;
+      if (resumePos > 0) {
+        setTimeout(async () => { try { await mpvCommand(["set_property", "time-pos", resumePos]); } catch {} }, 2000);
+      }
+    }
+    console.log(`[phone-only] mpv muted+hidden`);
+  } catch (e) {
+    console.error("[phone-only] mpv prep error:", e.message);
+  }
+}
+
+// Resume phone-only mode (re-mute+pause mpv without re-encoding)
+app.post("/api/phone-only-resume", async (_req, res) => {
+  if (activePlayer === "mpv" && mpvProcess) {
+    try {
+      await mpvCommand(["set_property", "mute", true]);
+      await mpvCommand(["set_property", "pause", true]);
+      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
+    } catch {}
+  }
+  phoneActive = true;
+  res.json({ ok: true });
+});
+
 app.post("/api/phone-only", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "No URL" });
@@ -2504,38 +2558,46 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Get DASH (1080p) + progressive (for bgAudio) in parallel
-    const [dashResult, progResult] = await Promise.all([
-      execFileP("yt-dlp", [
-        "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140",
-        "--get-url", "--print", "is_live", "--print", "duration", url,
-      ], { timeout: 15000 }).catch(() => null),
-      execFileP("yt-dlp", [
-        "--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]",
-        "--get-url", "--print", "is_live", url,
-      ], { timeout: 15000 }),
-    ]);
-    const progLines = progResult.stdout.trim().split("\n");
-    const isLive = progLines.some(l => l.trim() === "True");
-    const progUrl = progLines.find(l => l.startsWith("http")) || "";
-    const savedEntry = historyMap.get(url);
-    const seconds = isLive ? 0 : (savedEntry?.position || 0);
-
-    // If DASH available and not live, use HLS for 1080p video + progressive for bgAudio
-    if (dashResult && !isLive) {
-      const dashLines = dashResult.stdout.trim().split("\n");
-      const dashUrls = dashLines.filter(l => l.startsWith("http"));
-      const durLine = dashLines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
-      const duration = durLine ? parseFloat(durLine) : 0;
-      if (dashUrls.length >= 2) {
-        _phoneVodUrls = { video: dashUrls[0], audio: dashUrls[1] };
-        preparePhoneHls(seconds);
-        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, bgAudioUrl: progUrl, seconds: 0, hlsSeekOffset: seconds, videoId, isLive: false, duration });
-        return;
-      }
+    // Get DASH (1080p) or fallback to progressive
+    const { stdout } = await execFileP("yt-dlp", [
+      "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18",
+      "--get-url", "--print", "is_live", "--print", "duration", url,
+    ], { timeout: 15000 });
+    const lines = stdout.trim().split("\n");
+    const isLive = lines.some(l => l.trim() === "True");
+    const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
+    const duration = durLine ? parseFloat(durLine) : 0;
+    const urls = lines.filter(l => l.startsWith("http"));
+    // Use mpv's current position if playing, otherwise fall back to history
+    let seconds = 0;
+    if (!isLive && activePlayer === "mpv" && mpvProcess) {
+      try {
+        const pos = await mpvCommand(["get_property", "time-pos"]);
+        seconds = Math.floor(pos?.data || 0);
+      } catch {}
     }
-    // Fallback: progressive MP4 (720p)
-    res.json({ streamUrl: progUrl, seconds, videoId, isLive });
+    if (!seconds && !isLive) {
+      const savedEntry = historyMap.get(url);
+      seconds = savedEntry?.position || 0;
+    }
+
+    console.log(`[phone-only] mpv pos=${seconds}, url match=${nowPlaying === url}`);
+    // Mute+hide+pause mpv — phone is the active player now
+    preparePhoneOnlyMpv(url, seconds);
+
+    if (urls.length >= 2 && !isLive) {
+      // DASH streams — full VOD HLS packaging for 1080p (slow but full seeking)
+      _phoneVodUrls = { video: urls[0], audio: urls[1] };
+      const ok = await preparePhoneHls();
+      if (ok) {
+        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, seconds, videoId, isLive: false, duration });
+      } else {
+        res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
+      }
+    } else {
+      // Progressive or live — direct URL
+      res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
+    }
   } catch (err) {
     console.error("Phone-only error:", err.message);
     res.status(500).json({ error: "Failed to get stream URL" });
@@ -2570,22 +2632,17 @@ function cleanPhoneHls() {
   } catch {}
 }
 
-function preparePhoneHls(seekTo) {
+function preparePhoneHls() {
   if (_phoneHlsProc) { try { _phoneHlsProc.kill(); } catch {} }
   _phoneHlsReady = false;
   cleanPhoneHls();
   const { video, audio } = _phoneVodUrls;
-  console.log(`[phone-hls] starting ffmpeg, seek=${seekTo || 0}s`);
-  const args = ["-y"];
-  if (seekTo > 0) args.push("-ss", String(seekTo));
-  args.push("-i", video);
-  if (seekTo > 0) args.push("-ss", String(seekTo));
-  args.push("-i", audio);
+  console.log(`[phone-hls] starting ffmpeg (full VOD)`);
   const ff = spawn("ffmpeg", [
-    ...args,
+    "-y", "-i", video, "-i", audio,
     "-c:v", "copy", "-c:a", "copy",
-    "-f", "hls", "-hls_time", "4", "-hls_list_size", "0",
-    "-hls_playlist_type", "event",
+    "-f", "hls", "-hls_time", "6", "-hls_list_size", "0",
+    "-hls_playlist_type", "vod",
     "-hls_segment_type", "mpegts",
     "-hls_segment_filename", "/tmp/phone-hls-%05d.ts",
     "/tmp/phone-hls.m3u8",
@@ -2593,19 +2650,14 @@ function preparePhoneHls(seekTo) {
   _phoneHlsProc = ff;
   let stderrBuf = "";
   ff.stderr.on("data", (d) => { stderrBuf = d.toString().slice(-200); });
-  ff.on("exit", (code) => {
-    console.log(`[phone-hls] ffmpeg exited code=${code}`);
-    if (code !== 0) console.log(`[phone-hls] stderr: ${stderrBuf}`);
-    _phoneHlsProc = null;
-    _phoneHlsReady = fs.existsSync("/tmp/phone-hls.m3u8");
-    if (_phoneHlsReady) {
-      try {
-        const content = fs.readFileSync("/tmp/phone-hls.m3u8", "utf8");
-        if (!content.includes("#EXT-X-ENDLIST")) {
-          fs.appendFileSync("/tmp/phone-hls.m3u8", "\n#EXT-X-ENDLIST\n");
-        }
-      } catch {}
-    }
+  return new Promise((resolve) => {
+    ff.on("exit", (code) => {
+      console.log(`[phone-hls] ffmpeg exited code=${code}`);
+      if (code !== 0) console.log(`[phone-hls] stderr: ${stderrBuf}`);
+      _phoneHlsProc = null;
+      _phoneHlsReady = fs.existsSync("/tmp/phone-hls.m3u8");
+      resolve(_phoneHlsReady);
+    });
   });
 }
 
@@ -2640,13 +2692,20 @@ app.get("/api/phone-vod-stream", (req, res) => {
   res.on("close", () => { ff.kill(); });
 });
 
-app.post("/api/stop-phone-stream", async (_req, res) => {
+app.post("/api/stop-phone-stream", async (req, res) => {
   killPhoneStream();
   phoneSwitchedFromVlc = false;
   phoneActive = false;
   if (activePlayer === "mpv") {
-    // VOD — restore mpv window
+    // Restore mpv: seek to phone position, unmute, unpause, show window
     try {
+      const phonePos = parseFloat(req.body?.position) || 0;
+      console.log(`[phone-close] seeking mpv to ${phonePos}`);
+      if (phonePos > 0) {
+        await mpvCommand(["set_property", "time-pos", phonePos]);
+      }
+      await mpvCommand(["set_property", "mute", false]);
+      await mpvCommand(["set_property", "pause", false]);
       execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
       if (windowMode === "maximize") {
         const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();

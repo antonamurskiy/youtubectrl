@@ -24,6 +24,7 @@ export default function PhonePlayer({ send }) {
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const resumePosRef = useRef(0)
+  const hlsOffsetRef = useRef(0)
   const bgAudioRef = useRef(null)
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
@@ -32,9 +33,16 @@ export default function PhonePlayer({ send }) {
   const addToast = useUIStore(s => s.addToast)
   const phoneOnlyRef = useRef(false)
 
-  // Fetch stream URL on open
+  // Fetch stream URL on open — skip if already loaded (just resuming from hide)
   useEffect(() => {
     if (!phoneOpen) return
+    if (streamUrl && videoRef.current && videoRef.current.src) {
+      // Already loaded — just resume
+      videoRef.current.play().catch(() => {})
+      // Re-mute+pause mpv
+      fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
+      return
+    }
     setLoading(true)
     phoneOnlyRef.current = !!phoneOnlyUrl
 
@@ -59,6 +67,7 @@ export default function PhonePlayer({ send }) {
           if (phoneOnlyRef.current) {
             resumePosRef.current = data.seconds || 0
             const hlsOffset = data.hlsSeekOffset || 0
+            hlsOffsetRef.current = hlsOffset
             readyRef.current = true
             readyAtRef.current = Date.now()
             setLoading(false)
@@ -71,38 +80,13 @@ export default function PhonePlayer({ send }) {
             bgAudioRef.current = bgAudio
 
             let bgMode = false
-            let saveCounter = 0
-            const phoneOnlyUrlCaptured = phoneOnlyUrl
-            const saveProgress = () => {
-              const v = videoRef.current
-              const pos = bgMode ? bgAudio.currentTime : v?.currentTime
-              const dur = v?.duration
-              if (!pos || pos < 1) return
-              fetch('/api/phone-progress', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  url: phoneOnlyUrlCaptured, position: pos,
-                  duration: (isFinite(dur) && dur > 0) ? dur : 0,
-                  title: usePlaybackStore.getState().title,
-                  channel: usePlaybackStore.getState().channel,
-                  thumbnail: usePlaybackStore.getState().thumbnail,
-                }),
-              }).catch(() => {})
-            }
-            const syncState = () => {
-              const v = videoRef.current
-              if (!v) return
-              const dur = v.duration
-              usePlaybackStore.getState().update({
-                position: bgMode ? bgAudio.currentTime : (v.currentTime || 0),
-                duration: (isFinite(dur) && dur > 0) ? dur : 0,
-                paused: bgMode ? false : v.paused,
-                playing: true,
-              })
-              if (++saveCounter % 5 === 0) saveProgress()
-            }
-            const stateInterval = setInterval(syncState, 1000)
+
+            // Wire up play/pause/seek controls for now-playing bar
+            useSyncStore.getState().setPhoneVideoCtrl({
+              play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
+              pause: () => { bgAudio.pause(); videoRef.current?.pause() },
+              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+            })
 
             // On background: start bgAudio, mute video. On foreground: stop bgAudio, resume video.
             const handleVisibility = () => {
@@ -140,8 +124,6 @@ export default function PhonePlayer({ send }) {
             })
 
             const origCleanup = () => {
-              saveProgress()
-              clearInterval(stateInterval)
               document.removeEventListener('visibilitychange', handleVisibility)
               bgAudio.pause()
               bgAudio.removeAttribute('src')
@@ -456,40 +438,22 @@ export default function PhonePlayer({ send }) {
   }, [phoneOpen, send])
 
   const handleClose = useCallback(() => {
-    // Save phone-only position before tearing down
-    const phoneUrl = useSyncStore.getState().phoneOnlyUrl
-    if (phoneUrl && videoRef.current) {
-      const v = videoRef.current
-      const pb = usePlaybackStore.getState()
-      const pos = v.currentTime || 0
-      const dur = isFinite(v.duration) ? v.duration : 0
-      console.log('[phone-close] saving', pos, dur, phoneUrl)
-      fetch('/api/phone-progress', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: phoneUrl, position: pos, duration: dur, title: pb.title, channel: pb.channel, thumbnail: pb.thumbnail }),
-      }).catch(() => {})
-    }
-    readyRef.current = false
-    calibOffsetRef.current = null
-    fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
-    send({ type: 'vlc-rate', rate: 1.0 })
+    // Just hide — keep HLS stream loaded for instant reopen
+    const phonePos = videoRef.current?.currentTime || 0
+    if (videoRef.current) videoRef.current.pause()
+    fetch('/api/stop-phone-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position: phonePos }),
+    }).catch(() => {})
     send({ type: 'mpv-speed', speed: 1.0 })
     setPhoneOpen(false)
-    setStreamUrl(null)
-    setIsLive(false)
-    if (videoRef.current) {
-      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
-      videoRef.current.pause()
-      videoRef.current.removeAttribute('src')
-      videoRef.current.load()
-    }
   }, [setPhoneOpen, send])
 
-  if (!phoneOpen) return null
+  if (!phoneOpen && !streamUrl) return null
 
   return (
-    <div className="phone-player">
+    <div className="phone-player" style={!phoneOpen ? { display: 'none' } : undefined}>
       <video
         ref={(el) => {
           videoRef.current = el
@@ -500,13 +464,15 @@ export default function PhonePlayer({ send }) {
         autoPlay
         muted
         controls
+        onLoadedMetadata={() => {
+          if (phoneOnlyUrl && videoRef.current && resumePosRef.current > 0) {
+            videoRef.current.currentTime = resumePosRef.current
+            resumePosRef.current = 0
+          }
+        }}
         onPlay={() => {
           if (phoneOnlyUrl && videoRef.current) {
             videoRef.current.muted = false
-            if (resumePosRef.current > 0) {
-              videoRef.current.currentTime = resumePosRef.current
-              resumePosRef.current = 0
-            }
             // Unlock bgAudio from user gesture chain so it can play on background
             if (bgAudioRef.current && bgAudioRef.current.paused) {
               bgAudioRef.current.volume = 0.01

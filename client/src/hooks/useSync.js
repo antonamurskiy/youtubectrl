@@ -32,8 +32,7 @@ export function useSync() {
       try {
         const data = JSON.parse(e.data)
         if (data.type === 'playback') {
-          // Don't overwrite playback state in phone-only mode
-          if (!useSyncStore.getState().phoneOnlyUrl) usePlaybackStore.getState().update(data)
+          usePlaybackStore.getState().update(data)
         } else if (data.type === 'claude') {
           usePlaybackStore.getState().update(data)
         } else if (data.type === 'pong') {
