@@ -2171,10 +2171,14 @@ app.get("/api/history", async (_req, res) => {
       withTs.sort((a, b) => b._localTs - a._localTs);
       withTs.forEach(v => delete v._localTs);
       videos = [...withTs, ...withoutTs];
+      // Deduplicate by URL
+      const seenUrls = new Set();
+      videos = videos.filter(v => { if (seenUrls.has(v.url)) return false; seenUrls.add(v.url); return true; });
       // Merge local-only history (Rumble, phone-only YouTube, etc) by timestamp
       const now = Date.now();
       const ytTimestamps = videos.map((v, i) => historyMap.get(v.url)?.timestamp || (now - i * 60000));
-      const nonYt = history.filter(h => !ytUrls.has(h.url));
+      const allUrls = new Set(videos.map(v => v.url));
+      const nonYt = history.filter(h => !allUrls.has(h.url));
       for (const h of nonYt) {
         const ts = h.timestamp || 0;
         let insertIdx = videos.length;
