@@ -44,7 +44,7 @@ export default function PhonePlayer({ send }) {
 
     fetchUrl
       .then(r => r.json())
-      .then(data => {
+      .then(async (data) => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
           const useHls = data.isLive && Hls.isSupported()
@@ -52,20 +52,19 @@ export default function PhonePlayer({ send }) {
             ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
             : data.streamUrl
           setStreamUrl(url)
-
           const vlcBufDelay = data.vlcBufferDelay || 19
 
-          // Phone-only: load immediately, no mpv sync
+          // Phone-only with single URL (live/progressive): load immediately
           if (phoneOnlyRef.current) {
             resumePosRef.current = data.seconds || 0
             readyRef.current = true
             readyAtRef.current = Date.now()
             setLoading(false)
-
-            // Background audio: unlocked via onPlay gesture, used only when backgrounding
-            const bgAudio = new Audio(url.startsWith('/') ? `${location.origin}${url}` : url)
-            bgAudio.preload = 'auto'
-            bgAudio.load()
+            // Background audio — skip for HLS (Audio element can't play m3u8)
+            const isHlsUrl = url.includes('.m3u8')
+            const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+            const bgAudio = isHlsUrl ? null : new Audio(fullUrl)
+            if (bgAudio) { bgAudio.preload = 'auto'; bgAudio.load() }
             bgAudioRef.current = bgAudio
 
             let bgMode = false
@@ -73,7 +72,7 @@ export default function PhonePlayer({ send }) {
             const phoneOnlyUrlCaptured = phoneOnlyUrl
             const saveProgress = () => {
               const v = videoRef.current
-              const pos = bgMode ? bgAudio.currentTime : v?.currentTime
+              const pos = (bgMode && bgAudio) ? bgAudio.currentTime : v?.currentTime
               const dur = v?.duration
               if (!pos || pos < 1) return
               fetch('/api/phone-progress', {
@@ -93,7 +92,7 @@ export default function PhonePlayer({ send }) {
               if (!v) return
               const dur = v.duration
               usePlaybackStore.getState().update({
-                position: bgMode ? bgAudio.currentTime : (v.currentTime || 0),
+                position: (bgMode && bgAudio) ? bgAudio.currentTime : (v.currentTime || 0),
                 duration: (isFinite(dur) && dur > 0) ? dur : 0,
                 paused: bgMode ? false : v.paused,
                 playing: true,
@@ -101,51 +100,37 @@ export default function PhonePlayer({ send }) {
               if (++saveCounter % 5 === 0) saveProgress()
             }
             const stateInterval = setInterval(syncState, 1000)
-
-            // On background: start bgAudio, mute video. On foreground: stop bgAudio, resume video.
             const handleVisibility = () => {
               const v = videoRef.current
               if (!v) return
               if (document.visibilityState === 'hidden') {
                 bgMode = true
-                bgAudio.currentTime = v.currentTime
-                bgAudio.volume = 1
-                bgAudio.play().catch(() => {})
-                v.muted = true
-                v.pause()
+                if (bgAudio) { bgAudio.currentTime = v.currentTime; bgAudio.volume = 1; bgAudio.play().catch(() => {}) }
+                v.muted = true; v.pause()
                 const silentAudio = useSyncStore.getState().silentAudioRef
                 if (silentAudio) silentAudio.pause()
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                 usePlaybackStore.getState().update({ paused: false })
               } else {
                 bgMode = false
-                const resumeAt = bgAudio.currentTime
-                bgAudio.pause()
-                if (resumeAt > 0) v.currentTime = resumeAt
-                v.muted = false
-                v.play().catch(() => {})
+                if (bgAudio) { const resumeAt = bgAudio.currentTime; bgAudio.pause(); if (resumeAt > 0) v.currentTime = resumeAt }
+                v.muted = false; v.play().catch(() => {})
                 const silentAudio = useSyncStore.getState().silentAudioRef
                 if (silentAudio) silentAudio.play().catch(() => {})
               }
             }
             document.addEventListener('visibilitychange', handleVisibility)
-
             useSyncStore.getState().setPhoneVideoCtrl({
-              play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
-              pause: () => { bgAudio.pause(); videoRef.current?.pause() },
-              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+              play: () => { if (bgMode && bgAudio) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
+              pause: () => { bgAudio?.pause(); videoRef.current?.pause() },
+              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; if (bgAudio) bgAudio.currentTime = t },
             })
-
             const origCleanup = () => {
-              saveProgress()
-              clearInterval(stateInterval)
+              saveProgress(); clearInterval(stateInterval)
               document.removeEventListener('visibilitychange', handleVisibility)
-              bgAudio.pause()
-              bgAudio.removeAttribute('src')
-              bgAudio.load()
+              if (bgAudio) { bgAudio.pause(); bgAudio.removeAttribute('src'); bgAudio.load() }
               useSyncStore.getState().setPhoneVideoCtrl(null)
             }
-            // Store cleanup ref for the effect's return
             waitForVlcRef.current = { clear: origCleanup }
             return
           }
@@ -500,10 +485,10 @@ export default function PhonePlayer({ send }) {
         onPlay={() => {
           if (phoneOnlyUrl && videoRef.current) {
             videoRef.current.muted = false
-            if (resumePosRef.current > 0) {
+            if (resumePosRef.current > 0 && !streamUrl?.startsWith('/api/phone-vod')) {
               videoRef.current.currentTime = resumePosRef.current
-              resumePosRef.current = 0
             }
+            resumePosRef.current = 0
             // Unlock bgAudio from user gesture chain so it can play on background
             if (bgAudioRef.current && bgAudioRef.current.paused) {
               bgAudioRef.current.volume = 0.01
