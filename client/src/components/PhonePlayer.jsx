@@ -24,6 +24,7 @@ export default function PhonePlayer({ send }) {
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [compMode, setCompMode] = useState(false)
+  const compModeRef = useRef(false)
   const resumePosRef = useRef(0)
   const hlsOffsetRef = useRef(0)
   const bgAudioRef = useRef(null)
@@ -95,11 +96,17 @@ export default function PhonePlayer({ send }) {
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
             })
 
-            // On background: start bgAudio, mute video. On foreground: stop bgAudio, resume video.
+            // On background: start bgAudio (or silent in comp mode), mute video.
             const handleVisibility = () => {
               const v = videoRef.current
               if (!v) return
               if (document.visibilityState === 'hidden') {
+                if (compModeRef.current) {
+                  // In comp mode — just keep silent audio for media session, don't play bgAudio
+                  const silentAudio = useSyncStore.getState().silentAudioRef
+                  if (silentAudio) silentAudio.play().catch(() => {})
+                  return
+                }
                 bgMode = true
                 bgAudio.currentTime = v.currentTime
                 bgAudio.volume = 1
@@ -445,14 +452,15 @@ export default function PhonePlayer({ send }) {
   }, [phoneOpen, send])
 
   const handleComp = useCallback(() => {
-    // Switch to computer — pause phone, fade out, resume mpv
-    const phonePos = videoRef.current?.currentTime || 0
+    // Switch to computer — pause phone + bgAudio, fade out, resume mpv
     if (videoRef.current) videoRef.current.pause()
-    fetch('/api/stop-phone-stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position: phonePos }),
-    }).catch(() => {})
+    if (bgAudioRef.current) bgAudioRef.current.pause()
+    const silentAudio = useSyncStore.getState().silentAudioRef
+    if (silentAudio) silentAudio.pause()
+    fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+    // Clear phoneVideoCtrl so now-playing bar controls mpv directly
+    useSyncStore.getState().setPhoneVideoCtrl(null)
+    compModeRef.current = true
     setCompMode(true)
   }, [])
 
@@ -463,7 +471,14 @@ export default function PhonePlayer({ send }) {
       videoRef.current.currentTime = pb.position
     }
     if (videoRef.current) videoRef.current.play().catch(() => {})
+    // Restore phoneVideoCtrl so now-playing bar controls phone
+    useSyncStore.getState().setPhoneVideoCtrl({
+      play: () => { videoRef.current?.play(); fetch('/api/playpause', { method: 'POST' }).catch(() => {}) },
+      pause: () => { videoRef.current?.pause(); fetch('/api/playpause', { method: 'POST' }).catch(() => {}) },
+      seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t },
+    })
     fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
+    compModeRef.current = false
     setCompMode(false)
   }, [])
 
@@ -485,7 +500,7 @@ export default function PhonePlayer({ send }) {
   return (
     <div className="phone-player" style={{
       ...((!phoneOpen && !streamUrl) ? { display: 'none' } : {}),
-      ...(compMode ? { opacity: 0.3, transition: 'opacity 0.3s' } : { opacity: 1, transition: 'opacity 0.3s' }),
+      ...(compMode ? { transform: 'translateY(calc(-100% + 30px))', opacity: 0.4, transition: 'transform 0.3s, opacity 0.3s' } : { transform: 'translateY(0)', transition: 'transform 0.3s, opacity 0.3s' }),
     }}>
       <video
         ref={(el) => {

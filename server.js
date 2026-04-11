@@ -1318,6 +1318,7 @@ app.post("/api/play", async (req, res) => {
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         await mpvCommand(["loadfile", url, "replace"]);
         await mpvCommand(["set_property", "pause", false]).catch(() => {});
+        await mpvCommand(["set_property", "mute", false]).catch(() => {}); // ensure unmuted
         await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
         // Unhide if it was hidden from pause
         try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
@@ -2695,16 +2696,11 @@ app.post("/api/stop-phone-stream", async (req, res) => {
   phoneSwitchedFromVlc = false;
   phoneActive = false;
   if (activePlayer === "mpv") {
-    // Restore mpv: seek to phone position, unmute, unpause, show window
+    // Restore mpv: unmute, show window (each step independent so one failure doesn't block rest)
+    try { await mpvCommand(["set_property", "mute", false]); } catch {}
+    try { await mpvCommand(["set_property", "pause", false]); } catch {}
+    try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
     try {
-      const phonePos = parseFloat(req.body?.position) || 0;
-      console.log(`[phone-close] seeking mpv to ${phonePos}`);
-      if (phonePos > 0) {
-        await mpvCommand(["set_property", "time-pos", phonePos]);
-      }
-      await mpvCommand(["set_property", "mute", false]);
-      await mpvCommand(["set_property", "pause", false]);
-      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
       if (windowMode === "maximize") {
         const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
         if (wid) {
@@ -2881,6 +2877,10 @@ app.post("/api/playpause", async (_req, res) => {
     await new Promise(r => setTimeout(r, 50));
     const state = await mpvCommand(["get_property", "pause"]);
     const paused = !!state?.data;
+    // Always ensure unmuted when playing on desktop
+    if (!paused && !phoneActive) {
+      try { await mpvCommand(["set_property", "mute", false]); } catch {}
+    }
     _lastPolledPaused = paused; // sync so poll loop doesn't double-trigger
     // Hide/show window when pausing (any mode except native fullscreen)
     if (windowMode !== "fullscreen") {
