@@ -2130,7 +2130,7 @@ app.get("/api/history", async (_req, res) => {
 
   // Try YouTube internal API (OAuth token or cookies)
   try {
-    const videos = await getYouTubeHistory(token);
+    let videos = await getYouTubeHistory(token);
     if (videos.length) {
       // Enrich with YouTube Data API for missing durations
       const needEnrich = videos.map(v => v.id).filter(Boolean);
@@ -2160,23 +2160,37 @@ app.get("/api/history", async (_req, res) => {
           v.savedDuration = h.duration;
         }
       }
-      // Merge non-YouTube local history (Rumble etc) by local timestamp position
-      const nonYt = history.filter(h => !h.url.startsWith("https://www.youtube.com/") && !ytUrls.has(h.url));
+      // Re-sort videos that have local timestamps to top, by recency
+      // (phone-only mode saves timestamps locally but doesn't update YouTube's history)
+      const withTs = [];
+      const withoutTs = [];
+      for (const v of videos) {
+        const ts = historyMap.get(v.url)?.timestamp;
+        if (ts) { v._localTs = ts; withTs.push(v); } else { withoutTs.push(v); }
+      }
+      withTs.sort((a, b) => b._localTs - a._localTs);
+      withTs.forEach(v => delete v._localTs);
+      videos = [...withTs, ...withoutTs];
+      // Merge local-only history (Rumble, phone-only YouTube, etc) by timestamp
+      const now = Date.now();
+      const ytTimestamps = videos.map((v, i) => historyMap.get(v.url)?.timestamp || (now - i * 60000));
+      const nonYt = history.filter(h => !ytUrls.has(h.url));
       for (const h of nonYt) {
-        // Find insertion point: local history has timestamps, YouTube history tracks position in local historyMap
-        // Insert after the last YouTube video that was watched before this Rumble video
         const ts = h.timestamp || 0;
         let insertIdx = videos.length;
         for (let i = 0; i < videos.length; i++) {
-          const ytTs = historyMap.get(videos[i].url)?.timestamp || 0;
-          if (ytTs && ytTs < ts) { insertIdx = i; break; }
+          if (ytTimestamps[i] < ts) { insertIdx = i; break; }
         }
+        const ytMatch = h.url.match(/v=([\w-]+)/);
         videos.splice(insertIdx, 0, {
-          id: h.url, title: h.title || h.url, thumbnail: h.thumbnail || "",
+          id: ytMatch ? ytMatch[1] : h.url,
+          title: h.title || h.url,
+          thumbnail: h.thumbnail || (ytMatch ? `https://i.ytimg.com/vi/${ytMatch[1]}/hqdefault.jpg` : ""),
           duration: "", channel: h.channel || "", views: 0, url: h.url,
           savedPosition: h.position || 0, savedDuration: h.duration || 0,
-          platform: h.url.includes("rumble.com") ? "rumble" : "other",
+          platform: h.url.includes("rumble.com") ? "rumble" : undefined,
         });
+        ytTimestamps.splice(insertIdx, 0, ts);
       }
       return res.json(videos);
     }
@@ -2486,26 +2500,17 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Check if live
-    let isLive = false;
-    if (!isRumble) {
-      try {
-        const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", url], { timeout: 10000 });
-        if (stdout.trim() === "True") isLive = true;
-      } catch {}
-    }
-
-    if (isLive) {
-      // Get HLS manifest
-      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "best", "--get-url", url], { timeout: 15000 });
-      const streamUrl = stdout.trim().split("\n")[0];
-      return res.json({ streamUrl, seconds: 0, videoId, isLive: true });
-    }
-
-    // VOD — progressive MP4
-    const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", url], { timeout: 15000 });
-    const streamUrl = stdout.trim().split("\n")[0];
-    res.json({ streamUrl, seconds: 0, videoId });
+    // Single yt-dlp call: get URL + live status together
+    const { stdout } = await execFileP("yt-dlp", [
+      "--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]",
+      "--get-url", "--print", "is_live", url,
+    ], { timeout: 15000 });
+    const lines = stdout.trim().split("\n");
+    const isLive = lines.some(l => l.trim() === "True");
+    const streamUrl = lines.find(l => l.startsWith("http")) || "";
+    const savedEntry = historyMap.get(url);
+    const seconds = isLive ? 0 : (savedEntry?.position || 0);
+    res.json({ streamUrl, seconds, videoId, isLive });
   } catch (err) {
     console.error("Phone-only error:", err.message);
     res.status(500).json({ error: "Failed to get stream URL" });
@@ -2515,7 +2520,8 @@ app.post("/api/phone-only", async (req, res) => {
 // Save progress from phone-only playback
 app.post("/api/phone-progress", (req, res) => {
   const { url, position, duration, title, channel, thumbnail } = req.body;
-  if (!url || !position) return res.status(400).json({ error: "Missing url/position" });
+  if (!url || position == null) return res.status(400).json({ error: "Missing url/position" });
+  console.log(`[phone-progress] ${title?.slice(0,30)} pos=${Math.floor(position)} dur=${Math.floor(duration||0)}`);
   addToHistory(url, title || "", channel || "", thumbnail || "");
   updateHistoryProgress(url, position, duration || 0);
   res.json({ ok: true });

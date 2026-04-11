@@ -47,18 +47,24 @@ export function useMediaSession() {
     audio.addEventListener('ended', handleEnded)
 
     // Register action handlers
+    const phoneCtrl = () => useSyncStore.getState().phoneVideoCtrl
     navigator.mediaSession.setActionHandler('play', () => {
-      // Touch audio synchronously first — iOS kills the session if we await before play()
+      const ctrl = phoneCtrl()
+      if (ctrl) { ctrl.play(); navigator.mediaSession.playbackState = 'playing'; return }
       audio.play().catch(() => {})
       navigator.mediaSession.playbackState = 'playing'
       fetch('/api/resume', { method: 'POST' })
     })
     navigator.mediaSession.setActionHandler('pause', () => {
+      const ctrl = phoneCtrl()
+      if (ctrl) { ctrl.pause(); navigator.mediaSession.playbackState = 'paused'; return }
       audio.pause()
       navigator.mediaSession.playbackState = 'paused'
       fetch('/api/pause', { method: 'POST' })
     })
     navigator.mediaSession.setActionHandler('seekbackward', () => {
+      const ctrl = phoneCtrl()
+      if (ctrl) { ctrl.seek(Math.max(0, (usePlaybackStore.getState().position || 0) - 10)); return }
       fetch('/api/seek-relative', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -66,6 +72,8 @@ export function useMediaSession() {
       })
     })
     navigator.mediaSession.setActionHandler('seekforward', () => {
+      const ctrl = phoneCtrl()
+      if (ctrl) { ctrl.seek((usePlaybackStore.getState().position || 0) + 10); return }
       fetch('/api/seek-relative', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

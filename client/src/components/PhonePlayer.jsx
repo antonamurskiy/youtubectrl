@@ -23,6 +23,8 @@ export default function PhonePlayer({ send }) {
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
+  const resumePosRef = useRef(0)
+  const bgAudioRef = useRef(null)
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
@@ -55,15 +57,16 @@ export default function PhonePlayer({ send }) {
 
           // Phone-only: load immediately, no mpv sync
           if (phoneOnlyRef.current) {
+            resumePosRef.current = data.seconds || 0
             readyRef.current = true
             readyAtRef.current = Date.now()
             setLoading(false)
 
-            // Background audio: preloaded, takes over when iOS pauses video on app switch
+            // Background audio: unlocked via onPlay gesture, used only when backgrounding
             const bgAudio = new Audio(url.startsWith('/') ? `${location.origin}${url}` : url)
             bgAudio.preload = 'auto'
-            bgAudio.volume = 0.01  // near-silent but not muted — iOS keeps resources alive
             bgAudio.load()
+            bgAudioRef.current = bgAudio
 
             let bgMode = false
             let saveCounter = 0
@@ -95,36 +98,32 @@ export default function PhonePlayer({ send }) {
                 paused: bgMode ? false : v.paused,
                 playing: true,
               })
-              if (++saveCounter % 10 === 0) saveProgress()
+              if (++saveCounter % 5 === 0) saveProgress()
             }
             const stateInterval = setInterval(syncState, 1000)
 
-            // On background: start audio from video position. On foreground: sync back.
+            // On background: start bgAudio, mute video. On foreground: stop bgAudio, resume video.
             const handleVisibility = () => {
               const v = videoRef.current
               if (!v) return
               if (document.visibilityState === 'hidden') {
                 bgMode = true
-                v.muted = true
-                v.pause()
-                // Stop silent audio so bgAudio becomes the active media session source
-                const silentAudio = useSyncStore.getState().silentAudioRef
-                if (silentAudio) silentAudio.pause()
                 bgAudio.currentTime = v.currentTime
                 bgAudio.volume = 1
                 bgAudio.play().catch(() => {})
-                if ('mediaSession' in navigator) {
-                  navigator.mediaSession.playbackState = 'playing'
-                }
+                v.muted = true
+                v.pause()
+                const silentAudio = useSyncStore.getState().silentAudioRef
+                if (silentAudio) silentAudio.pause()
+                if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                 usePlaybackStore.getState().update({ paused: false })
               } else {
                 bgMode = false
-                v.currentTime = bgAudio.currentTime
+                const resumeAt = bgAudio.currentTime
                 bgAudio.pause()
-                bgAudio.volume = 0.01
+                if (resumeAt > 0) v.currentTime = resumeAt
                 v.muted = false
                 v.play().catch(() => {})
-                // Restart silent audio for media session
                 const silentAudio = useSyncStore.getState().silentAudioRef
                 if (silentAudio) silentAudio.play().catch(() => {})
               }
@@ -132,8 +131,8 @@ export default function PhonePlayer({ send }) {
             document.addEventListener('visibilitychange', handleVisibility)
 
             useSyncStore.getState().setPhoneVideoCtrl({
-              play: () => videoRef.current?.play(),
-              pause: () => { videoRef.current?.pause(); bgAudio.pause() },
+              play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
+              pause: () => { bgAudio.pause(); videoRef.current?.pause() },
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
             })
 
@@ -454,6 +453,20 @@ export default function PhonePlayer({ send }) {
   }, [phoneOpen, send])
 
   const handleClose = useCallback(() => {
+    // Save phone-only position before tearing down
+    const phoneUrl = useSyncStore.getState().phoneOnlyUrl
+    if (phoneUrl && videoRef.current) {
+      const v = videoRef.current
+      const pb = usePlaybackStore.getState()
+      const pos = v.currentTime || 0
+      const dur = isFinite(v.duration) ? v.duration : 0
+      console.log('[phone-close] saving', pos, dur, phoneUrl)
+      fetch('/api/phone-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: phoneUrl, position: pos, duration: dur, title: pb.title, channel: pb.channel, thumbnail: pb.thumbnail }),
+      }).catch(() => {})
+    }
     readyRef.current = false
     calibOffsetRef.current = null
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
@@ -484,7 +497,20 @@ export default function PhonePlayer({ send }) {
         autoPlay
         muted
         controls
-        onPlay={() => { if (phoneOnlyUrl && videoRef.current) videoRef.current.muted = false }}
+        onPlay={() => {
+          if (phoneOnlyUrl && videoRef.current) {
+            videoRef.current.muted = false
+            if (resumePosRef.current > 0) {
+              videoRef.current.currentTime = resumePosRef.current
+              resumePosRef.current = 0
+            }
+            // Unlock bgAudio from user gesture chain so it can play on background
+            if (bgAudioRef.current && bgAudioRef.current.paused) {
+              bgAudioRef.current.volume = 0.01
+              bgAudioRef.current.play().then(() => bgAudioRef.current.pause()).catch(() => {})
+            }
+          }
+        }}
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: 'var(--bg)' }}
       />
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>

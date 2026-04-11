@@ -86,6 +86,7 @@ export default function VideoCard({ video, isPlaying }) {
   }, [isMobile])
   const previewTimer = useRef(null)
   const handleCardTouchStart = useCallback(() => {
+    longPressTriggered.current = false
     if (isMobile && videoId && !video.isLive && !video.live) {
       if (previewTimer.current) clearTimeout(previewTimer.current)
       setPreviewing(true)
