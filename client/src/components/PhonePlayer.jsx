@@ -23,6 +23,7 @@ export default function PhonePlayer({ send }) {
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [compMode, setCompMode] = useState(false)
   const resumePosRef = useRef(0)
   const hlsOffsetRef = useRef(0)
   const bgAudioRef = useRef(null)
@@ -81,10 +82,16 @@ export default function PhonePlayer({ send }) {
 
             let bgMode = false
 
-            // Wire up play/pause/seek controls for now-playing bar
+            // Wire up play/pause/seek controls for now-playing bar — controls phone + mpv together
             useSyncStore.getState().setPhoneVideoCtrl({
-              play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
-              pause: () => { bgAudio.pause(); videoRef.current?.pause() },
+              play: () => {
+                if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() }
+                fetch('/api/playpause', { method: 'POST' }).catch(() => {}) // unpause mpv
+              },
+              pause: () => {
+                bgAudio.pause(); videoRef.current?.pause()
+                fetch('/api/playpause', { method: 'POST' }).catch(() => {}) // pause mpv
+              },
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
             })
 
@@ -437,8 +444,31 @@ export default function PhonePlayer({ send }) {
     }
   }, [phoneOpen, send])
 
+  const handleComp = useCallback(() => {
+    // Switch to computer — pause phone, fade out, resume mpv
+    const phonePos = videoRef.current?.currentTime || 0
+    if (videoRef.current) videoRef.current.pause()
+    fetch('/api/stop-phone-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ position: phonePos }),
+    }).catch(() => {})
+    setCompMode(true)
+  }, [])
+
+  const handlePhone = useCallback(() => {
+    // Switch back to phone — seek phone to mpv's position, resume, mute+pause mpv
+    const pb = usePlaybackStore.getState()
+    if (videoRef.current && pb.position > 0) {
+      videoRef.current.currentTime = pb.position
+    }
+    if (videoRef.current) videoRef.current.play().catch(() => {})
+    fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
+    setCompMode(false)
+  }, [])
+
   const handleClose = useCallback(() => {
-    // Just hide — keep HLS stream loaded for instant reopen
+    setCompMode(false)
     const phonePos = videoRef.current?.currentTime || 0
     if (videoRef.current) videoRef.current.pause()
     fetch('/api/stop-phone-stream', {
@@ -453,7 +483,10 @@ export default function PhonePlayer({ send }) {
   if (!phoneOpen && !streamUrl) return null
 
   return (
-    <div className="phone-player" style={!phoneOpen ? { display: 'none' } : undefined}>
+    <div className="phone-player" style={{
+      ...((!phoneOpen && !streamUrl) ? { display: 'none' } : {}),
+      ...(compMode ? { opacity: 0.3, transition: 'opacity 0.3s' } : { opacity: 1, transition: 'opacity 0.3s' }),
+    }}>
       <video
         ref={(el) => {
           videoRef.current = el
@@ -491,12 +524,7 @@ export default function PhonePlayer({ send }) {
           <button onClick={() => nudgeRef.current?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
           <button onClick={() => nudgeRef.current?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
-        {phoneOnlyUrl && <button onClick={() => {
-          const v = videoRef.current
-          if (!v) return
-          if (v.webkitSetPresentationMode) v.webkitSetPresentationMode('picture-in-picture')
-          else if (v.requestPictureInPicture) v.requestPictureInPicture().catch(() => {})
-        }} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>PiP</button>}
+        {phoneOnlyUrl && <button onClick={compMode ? handlePhone : handleComp} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: compMode ? 'var(--green)' : 'var(--text)', border: '1px solid var(--text-dim)' }}>{compMode ? 'PHONE' : 'COMP'}</button>}
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>
     </div>

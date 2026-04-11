@@ -2522,7 +2522,6 @@ async function preparePhoneOnlyMpv(url, resumePos) {
   }
   try {
     await mpvCommand(["set_property", "mute", true]);
-    await mpvCommand(["set_property", "pause", true]);
     execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
     if (nowPlaying !== url) {
       await mpvCommand(["loadfile", url, "replace"]);
@@ -2537,12 +2536,11 @@ async function preparePhoneOnlyMpv(url, resumePos) {
   }
 }
 
-// Resume phone-only mode (re-mute+pause mpv without re-encoding)
+// Resume phone-only mode (re-mute mpv, keep playing for position tracking)
 app.post("/api/phone-only-resume", async (_req, res) => {
   if (activePlayer === "mpv" && mpvProcess) {
     try {
       await mpvCommand(["set_property", "mute", true]);
-      await mpvCommand(["set_property", "pause", true]);
       execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
     } catch {}
   }
