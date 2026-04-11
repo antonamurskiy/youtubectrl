@@ -2512,6 +2512,15 @@ app.post("/api/phone-only", async (req, res) => {
   }
 });
 
+// Save progress from phone-only playback
+app.post("/api/phone-progress", (req, res) => {
+  const { url, position, duration, title, channel, thumbnail } = req.body;
+  if (!url || !position) return res.status(400).json({ error: "Missing url/position" });
+  addToHistory(url, title || "", channel || "", thumbnail || "");
+  updateHistoryProgress(url, position, duration || 0);
+  res.json({ ok: true });
+});
+
 // VOD DASH remux: merge separate 720p video + audio into fragmented MP4
 app.get("/api/phone-vod-stream", (req, res) => {
   if (!_phoneVodUrls) return res.status(400).json({ error: "No VOD URLs" });

@@ -22,6 +22,8 @@ export const useSyncStore = create((set) => ({
   setPhoneOnly: (url) => set({ phoneOpen: true, phoneOnlyUrl: url }),
   phoneVideoCtrl: null,  // { play, pause, seek } — set by PhonePlayer in phone-only mode
   setPhoneVideoCtrl: (ctrl) => set({ phoneVideoCtrl: ctrl }),
+  silentAudioRef: null,  // ref to useMediaSession's silent audio for phone-only handoff
+  setSilentAudioRef: (ref) => set({ silentAudioRef: ref }),
   setTerminalOpen: (open) => set({ terminalOpen: open }),
   setTerminalSendKey: (fn) => set({ terminalSendKey: fn }),
   resetSync: () => set({ drift: 0, baseline: null, settling: false, settleUntil: 0 }),

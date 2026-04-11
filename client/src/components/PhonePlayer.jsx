@@ -65,16 +65,37 @@ export default function PhonePlayer({ send }) {
             bgAudio.volume = 0.01  // near-silent but not muted — iOS keeps resources alive
             bgAudio.load()
 
+            let bgMode = false
+            let saveCounter = 0
+            const phoneOnlyUrlCaptured = phoneOnlyUrl
+            const saveProgress = () => {
+              const v = videoRef.current
+              const pos = bgMode ? bgAudio.currentTime : v?.currentTime
+              const dur = v?.duration
+              if (!pos || pos < 1) return
+              fetch('/api/phone-progress', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  url: phoneOnlyUrlCaptured, position: pos,
+                  duration: (isFinite(dur) && dur > 0) ? dur : 0,
+                  title: usePlaybackStore.getState().title,
+                  channel: usePlaybackStore.getState().channel,
+                  thumbnail: usePlaybackStore.getState().thumbnail,
+                }),
+              }).catch(() => {})
+            }
             const syncState = () => {
               const v = videoRef.current
               if (!v) return
               const dur = v.duration
               usePlaybackStore.getState().update({
-                position: v.currentTime || 0,
+                position: bgMode ? bgAudio.currentTime : (v.currentTime || 0),
                 duration: (isFinite(dur) && dur > 0) ? dur : 0,
-                paused: v.paused,
+                paused: bgMode ? false : v.paused,
                 playing: true,
               })
+              if (++saveCounter % 10 === 0) saveProgress()
             }
             const stateInterval = setInterval(syncState, 1000)
 
@@ -83,14 +104,29 @@ export default function PhonePlayer({ send }) {
               const v = videoRef.current
               if (!v) return
               if (document.visibilityState === 'hidden') {
+                bgMode = true
+                v.muted = true
+                v.pause()
+                // Stop silent audio so bgAudio becomes the active media session source
+                const silentAudio = useSyncStore.getState().silentAudioRef
+                if (silentAudio) silentAudio.pause()
                 bgAudio.currentTime = v.currentTime
                 bgAudio.volume = 1
                 bgAudio.play().catch(() => {})
+                if ('mediaSession' in navigator) {
+                  navigator.mediaSession.playbackState = 'playing'
+                }
+                usePlaybackStore.getState().update({ paused: false })
               } else {
+                bgMode = false
                 v.currentTime = bgAudio.currentTime
                 bgAudio.pause()
                 bgAudio.volume = 0.01
+                v.muted = false
                 v.play().catch(() => {})
+                // Restart silent audio for media session
+                const silentAudio = useSyncStore.getState().silentAudioRef
+                if (silentAudio) silentAudio.play().catch(() => {})
               }
             }
             document.addEventListener('visibilitychange', handleVisibility)
@@ -102,6 +138,7 @@ export default function PhonePlayer({ send }) {
             })
 
             const origCleanup = () => {
+              saveProgress()
               clearInterval(stateInterval)
               document.removeEventListener('visibilitychange', handleVisibility)
               bgAudio.pause()

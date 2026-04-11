@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { usePlaybackStore } from '../stores/playback'
+import { useSyncStore } from '../stores/sync'
 
 export function useMediaSession() {
   const silentAudioRef = useRef(null)
@@ -13,6 +14,7 @@ export function useMediaSession() {
     const audio = new Audio('/silent.m4a')
     audio.volume = 1
     silentAudioRef.current = audio
+    useSyncStore.getState().setSilentAudioRef(audio)
 
     // iOS requires audio.play() from a user gesture to unlock the audio element.
     // Once unlocked, subsequent play() calls from non-gesture contexts work.
