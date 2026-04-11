@@ -2518,9 +2518,9 @@ app.post("/api/phone-only", async (req, res) => {
     const seconds = isLive ? 0 : (savedEntry?.position || 0);
     if (urls.length >= 2 && !isLive) {
       _phoneVodUrls = { video: urls[0], audio: urls[1] };
-      // Start HLS packaging in background — serving endpoint waits for segments
-      preparePhoneHls();
-      res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, seconds, videoId, isLive: false, duration });
+      // Start HLS packaging in background — seek to resume position
+      preparePhoneHls(seconds);
+      res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, seconds: 0, hlsSeekOffset: seconds, bgAudioUrl: urls[1], videoId, isLive: false, duration });
     } else {
       res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
     }
@@ -2561,14 +2561,19 @@ function cleanPhoneHls() {
 }
 
 // Prepare HLS — starts ffmpeg in background with EVENT playlist (grows as segments are produced)
-function preparePhoneHls() {
+function preparePhoneHls(seekTo) {
   if (_phoneHlsProc) { try { _phoneHlsProc.kill(); } catch {} }
   _phoneHlsReady = false;
   cleanPhoneHls();
   const { video, audio } = _phoneVodUrls;
-  console.log(`[phone-hls] starting ffmpeg, video=${video?.slice(0,60)}...`);
+  console.log(`[phone-hls] starting ffmpeg, seek=${seekTo || 0}s, video=${video?.slice(0,60)}...`);
+  const args = ["-y"];
+  if (seekTo > 0) args.push("-ss", String(seekTo));
+  args.push("-i", video);
+  if (seekTo > 0) args.push("-ss", String(seekTo));
+  args.push("-i", audio);
   const ff = spawn("ffmpeg", [
-    "-y", "-i", video, "-i", audio,
+    ...args,
     "-c:v", "copy", "-c:a", "copy",
     "-f", "hls", "-hls_time", "4", "-hls_list_size", "0",
     "-hls_playlist_type", "event",
@@ -2612,33 +2617,27 @@ app.get("/phone-hls/:file", async (req, res) => {
   fs.createReadStream(filePath).pipe(res);
 });
 
-// Proxy DASH streams for Shaka Player (avoids CORS)
-app.get("/api/phone-dash-video", async (req, res) => {
-  if (!_phoneVodUrls?.video) return res.status(400).end();
-  try {
-    const upstream = await fetch(_phoneVodUrls.video, { headers: req.headers.range ? { Range: req.headers.range } : {} });
-    res.status(upstream.status);
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || "video/mp4");
-    if (upstream.headers.get("content-length")) res.setHeader("Content-Length", upstream.headers.get("content-length"));
-    if (upstream.headers.get("content-range")) res.setHeader("Content-Range", upstream.headers.get("content-range"));
-    res.setHeader("Accept-Ranges", "bytes");
-    upstream.body.pipe(res);
-    res.on("close", () => { try { upstream.body.destroy() } catch {} });
-  } catch (e) { res.status(502).json({ error: e.message }); }
-});
-app.get("/api/phone-dash-audio", async (req, res) => {
-  if (!_phoneVodUrls?.audio) return res.status(400).end();
-  try {
-    const upstream = await fetch(_phoneVodUrls.audio, { headers: req.headers.range ? { Range: req.headers.range } : {} });
-    res.status(upstream.status);
-    res.setHeader("Content-Type", upstream.headers.get("content-type") || "audio/mp4");
-    if (upstream.headers.get("content-length")) res.setHeader("Content-Length", upstream.headers.get("content-length"));
-    if (upstream.headers.get("content-range")) res.setHeader("Content-Range", upstream.headers.get("content-range"));
-    res.setHeader("Accept-Ranges", "bytes");
-    upstream.body.pipe(res);
-    res.on("close", () => { try { upstream.body.destroy() } catch {} });
-  } catch (e) { res.status(502).json({ error: e.message }); }
-});
+// Proxy DASH streams (avoids CORS, used for background audio)
+const { Readable } = require("stream");
+function proxyDashStream(url, mimeType) {
+  return async (req, res) => {
+    if (!url()) return res.status(400).end();
+    try {
+      const headers = req.headers.range ? { Range: req.headers.range } : {};
+      const upstream = await fetch(url(), { headers });
+      res.status(upstream.status);
+      res.setHeader("Content-Type", upstream.headers.get("content-type") || mimeType);
+      if (upstream.headers.get("content-length")) res.setHeader("Content-Length", upstream.headers.get("content-length"));
+      if (upstream.headers.get("content-range")) res.setHeader("Content-Range", upstream.headers.get("content-range"));
+      res.setHeader("Accept-Ranges", "bytes");
+      const nodeStream = Readable.fromWeb(upstream.body);
+      nodeStream.pipe(res);
+      res.on("close", () => { try { nodeStream.destroy() } catch {} });
+    } catch (e) { res.status(502).json({ error: e.message }); }
+  };
+}
+app.get("/api/phone-dash-video", proxyDashStream(() => _phoneVodUrls?.video, "video/mp4"));
+app.get("/api/phone-dash-audio", proxyDashStream(() => _phoneVodUrls?.audio, "audio/mp4"));
 
 // VOD DASH remux: merge separate 720p video + audio into fragmented MP4
 app.get("/api/phone-vod-stream", (req, res) => {

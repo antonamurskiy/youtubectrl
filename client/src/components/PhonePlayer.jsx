@@ -24,6 +24,7 @@ export default function PhonePlayer({ send }) {
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const resumePosRef = useRef(0)
+  const hlsOffsetRef = useRef(0) // ffmpeg -ss offset for bgAudio position sync
   const bgAudioRef = useRef(null)
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
@@ -57,14 +58,15 @@ export default function PhonePlayer({ send }) {
           // Phone-only with single URL (live/progressive): load immediately
           if (phoneOnlyRef.current) {
             resumePosRef.current = data.seconds || 0
+            hlsOffsetRef.current = data.hlsSeekOffset || 0
             readyRef.current = true
             readyAtRef.current = Date.now()
             setLoading(false)
-            // Background audio — skip for HLS (Audio element can't play m3u8)
-            const isHlsUrl = url.includes('.m3u8')
+            // Background audio: use same URL as video (iOS Safari Audio can play HLS natively)
             const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-            const bgAudio = isHlsUrl ? null : new Audio(fullUrl)
-            if (bgAudio) { bgAudio.preload = 'auto'; bgAudio.load() }
+            const bgAudio = new Audio(fullUrl)
+            bgAudio.preload = 'auto'
+            bgAudio.load()
             bgAudioRef.current = bgAudio
 
             let bgMode = false
@@ -92,7 +94,7 @@ export default function PhonePlayer({ send }) {
               if (!v) return
               const dur = v.duration
               usePlaybackStore.getState().update({
-                position: (bgMode && bgAudio) ? bgAudio.currentTime : (v.currentTime || 0),
+                position: (bgMode && bgAudio) ? (bgAudio.currentTime - hlsOffsetRef.current) : (v.currentTime || 0),
                 duration: (isFinite(dur) && dur > 0) ? dur : 0,
                 paused: bgMode ? false : v.paused,
                 playing: true,
@@ -105,7 +107,11 @@ export default function PhonePlayer({ send }) {
               if (!v) return
               if (document.visibilityState === 'hidden') {
                 bgMode = true
-                if (bgAudio) { bgAudio.currentTime = v.currentTime; bgAudio.volume = 1; bgAudio.play().catch(() => {}) }
+                if (bgAudio) {
+                  bgAudio.currentTime = v.currentTime
+                  bgAudio.volume = 1
+                  bgAudio.play().catch(() => {})
+                }
                 v.muted = true; v.pause()
                 const silentAudio = useSyncStore.getState().silentAudioRef
                 if (silentAudio) silentAudio.pause()
@@ -113,7 +119,11 @@ export default function PhonePlayer({ send }) {
                 usePlaybackStore.getState().update({ paused: false })
               } else {
                 bgMode = false
-                if (bgAudio) { const resumeAt = bgAudio.currentTime; bgAudio.pause(); if (resumeAt > 0) v.currentTime = resumeAt }
+                if (bgAudio) {
+                  const resumeAt = bgAudio.currentTime
+                  bgAudio.pause()
+                  if (resumeAt > 0) v.currentTime = resumeAt
+                }
                 v.muted = false; v.play().catch(() => {})
                 const silentAudio = useSyncStore.getState().silentAudioRef
                 if (silentAudio) silentAudio.play().catch(() => {})
@@ -489,10 +499,15 @@ export default function PhonePlayer({ send }) {
               videoRef.current.currentTime = resumePosRef.current
             }
             resumePosRef.current = 0
-            // Unlock bgAudio from user gesture chain so it can play on background
-            if (bgAudioRef.current && bgAudioRef.current.paused) {
-              bgAudioRef.current.volume = 0.01
-              bgAudioRef.current.play().then(() => bgAudioRef.current.pause()).catch(() => {})
+            // Unlock bgAudio — wait until loaded, silent audio session keeps it alive
+            const bg = bgAudioRef.current
+            if (bg) {
+              bg.volume = 0.01
+              const tryUnlock = () => {
+                bg.play().then(() => { bg.pause(); console.log('[bgAudio] unlocked') }).catch(e => console.log('[bgAudio] unlock failed:', e.message))
+              }
+              if (bg.readyState >= 2) tryUnlock()
+              else bg.addEventListener('canplay', tryUnlock, { once: true })
             }
           }
         }}
