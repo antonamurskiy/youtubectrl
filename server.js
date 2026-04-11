@@ -2504,26 +2504,38 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Get best DASH streams (video+audio), package into HLS for iOS Safari
-    const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18",
-      "--get-url", "--print", "is_live", "--print", "duration", url,
-    ], { timeout: 15000 });
-    const lines = stdout.trim().split("\n");
-    const isLive = lines.some(l => l.trim() === "True");
-    const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
-    const duration = durLine ? parseFloat(durLine) : 0;
-    const urls = lines.filter(l => l.startsWith("http"));
+    // Get DASH (1080p) + progressive (for bgAudio) in parallel
+    const [dashResult, progResult] = await Promise.all([
+      execFileP("yt-dlp", [
+        "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140",
+        "--get-url", "--print", "is_live", "--print", "duration", url,
+      ], { timeout: 15000 }).catch(() => null),
+      execFileP("yt-dlp", [
+        "--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]",
+        "--get-url", "--print", "is_live", url,
+      ], { timeout: 15000 }),
+    ]);
+    const progLines = progResult.stdout.trim().split("\n");
+    const isLive = progLines.some(l => l.trim() === "True");
+    const progUrl = progLines.find(l => l.startsWith("http")) || "";
     const savedEntry = historyMap.get(url);
     const seconds = isLive ? 0 : (savedEntry?.position || 0);
-    if (urls.length >= 2 && !isLive) {
-      _phoneVodUrls = { video: urls[0], audio: urls[1] };
-      // Start HLS packaging in background — seek to resume position
-      preparePhoneHls(seconds);
-      res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, seconds: 0, hlsSeekOffset: seconds, bgAudioUrl: urls[1], videoId, isLive: false, duration });
-    } else {
-      res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
+
+    // If DASH available and not live, use HLS for 1080p video + progressive for bgAudio
+    if (dashResult && !isLive) {
+      const dashLines = dashResult.stdout.trim().split("\n");
+      const dashUrls = dashLines.filter(l => l.startsWith("http"));
+      const durLine = dashLines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
+      const duration = durLine ? parseFloat(durLine) : 0;
+      if (dashUrls.length >= 2) {
+        _phoneVodUrls = { video: dashUrls[0], audio: dashUrls[1] };
+        preparePhoneHls(seconds);
+        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, bgAudioUrl: progUrl, seconds: 0, hlsSeekOffset: seconds, videoId, isLive: false, duration });
+        return;
+      }
     }
+    // Fallback: progressive MP4 (720p)
+    res.json({ streamUrl: progUrl, seconds, videoId, isLive });
   } catch (err) {
     console.error("Phone-only error:", err.message);
     res.status(500).json({ error: "Failed to get stream URL" });
@@ -2540,11 +2552,10 @@ app.post("/api/phone-progress", (req, res) => {
   res.json({ ok: true });
 });
 
-// VOD HLS: package DASH video+audio into HLS for iOS Safari (seekable, best quality)
+// HLS packaging for phone-only 1080p DASH streams
 let _phoneHlsProc = null;
 let _phoneHlsReady = false;
 
-// Clean up old HLS segments
 function cleanPhoneHls() {
   try {
     const files = fs.readdirSync("/tmp").filter(f => f.startsWith("phone-hls"));
@@ -2556,17 +2567,15 @@ function cleanPhoneHls() {
         else fs.unlinkSync(p);
       } catch {}
     });
-    console.log(`[phone-hls] cleaned ${files.length} old files`);
   } catch {}
 }
 
-// Prepare HLS — starts ffmpeg in background with EVENT playlist (grows as segments are produced)
 function preparePhoneHls(seekTo) {
   if (_phoneHlsProc) { try { _phoneHlsProc.kill(); } catch {} }
   _phoneHlsReady = false;
   cleanPhoneHls();
   const { video, audio } = _phoneVodUrls;
-  console.log(`[phone-hls] starting ffmpeg, seek=${seekTo || 0}s, video=${video?.slice(0,60)}...`);
+  console.log(`[phone-hls] starting ffmpeg, seek=${seekTo || 0}s`);
   const args = ["-y"];
   if (seekTo > 0) args.push("-ss", String(seekTo));
   args.push("-i", video);
@@ -2600,58 +2609,33 @@ function preparePhoneHls(seekTo) {
   });
 }
 
-// Serve HLS playlist and segments (EVENT playlist grows as ffmpeg produces segments)
+// Serve HLS playlist and segments
 app.get("/phone-hls/:file", async (req, res) => {
   const filePath = `/tmp/${req.params.file}`;
-  const isMaster = req.params.file.endsWith('.m3u8');
   if (!fs.existsSync(filePath)) {
-    // Wait for segment/playlist to appear (up to 30s)
     const start = Date.now();
     while (!fs.existsSync(filePath) && Date.now() - start < 30000) {
       await new Promise(r => setTimeout(r, 300));
     }
     if (!fs.existsSync(filePath)) return res.status(404).end();
   }
+  const isMaster = req.params.file.endsWith('.m3u8');
   res.setHeader("Content-Type", isMaster ? "application/vnd.apple.mpegurl" : "video/mp2t");
   res.setHeader("Cache-Control", isMaster ? "no-store" : "public, max-age=3600");
   fs.createReadStream(filePath).pipe(res);
 });
 
-// Proxy DASH streams (avoids CORS, used for background audio)
-const { Readable } = require("stream");
-function proxyDashStream(url, mimeType) {
-  return async (req, res) => {
-    if (!url()) return res.status(400).end();
-    try {
-      const headers = req.headers.range ? { Range: req.headers.range } : {};
-      const upstream = await fetch(url(), { headers });
-      res.status(upstream.status);
-      res.setHeader("Content-Type", upstream.headers.get("content-type") || mimeType);
-      if (upstream.headers.get("content-length")) res.setHeader("Content-Length", upstream.headers.get("content-length"));
-      if (upstream.headers.get("content-range")) res.setHeader("Content-Range", upstream.headers.get("content-range"));
-      res.setHeader("Accept-Ranges", "bytes");
-      const nodeStream = Readable.fromWeb(upstream.body);
-      nodeStream.pipe(res);
-      res.on("close", () => { try { nodeStream.destroy() } catch {} });
-    } catch (e) { res.status(502).json({ error: e.message }); }
-  };
-}
-app.get("/api/phone-dash-video", proxyDashStream(() => _phoneVodUrls?.video, "video/mp4"));
-app.get("/api/phone-dash-audio", proxyDashStream(() => _phoneVodUrls?.audio, "audio/mp4"));
-
 // VOD DASH remux: merge separate 720p video + audio into fragmented MP4
 app.get("/api/phone-vod-stream", (req, res) => {
   if (!_phoneVodUrls) return res.status(400).json({ error: "No VOD URLs" });
   const { video, audio } = _phoneVodUrls;
-  const seekTo = parseFloat(req.query.t) || 0;
   res.setHeader("Content-Type", "video/mp4");
   res.setHeader("Cache-Control", "no-store");
-  const args = [];
-  if (seekTo > 0) args.push("-ss", String(seekTo));
-  args.push("-i", video, "-i", audio, "-c", "copy",
-    "-movflags", "frag_keyframe+empty_moov+default_base_moof",
-    "-f", "mp4", "pipe:1");
-  const ff = spawn("ffmpeg", args, { stdio: ["ignore", "pipe", "ignore"] });
+  const ff = spawn("ffmpeg", [
+    "-i", video, "-i", audio,
+    "-c", "copy", "-movflags", "frag_keyframe+empty_moov+default_base_moof",
+    "-f", "mp4", "pipe:1"
+  ], { stdio: ["ignore", "pipe", "ignore"] });
   ff.stdout.pipe(res);
   res.on("close", () => { ff.kill(); });
 });
