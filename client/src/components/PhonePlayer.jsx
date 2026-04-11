@@ -63,10 +63,8 @@ export default function PhonePlayer({ send }) {
             readyAtRef.current = Date.now()
             setLoading(false)
 
-            // Background audio: use progressive MP4 URL if available (works in Audio elements)
-            // Falls back to same URL as video for non-HLS sources
-            const bgUrl = data.bgAudioUrl
-              || (url.startsWith('/') ? `${location.origin}${url}` : url)
+            // Background audio: use same URL as video (iOS Safari Audio plays HLS natively)
+            const bgUrl = url.startsWith('/') ? `${location.origin}${url}` : url
             const bgAudio = new Audio(bgUrl)
             bgAudio.preload = 'auto'
             bgAudio.load()
@@ -112,7 +110,7 @@ export default function PhonePlayer({ send }) {
               if (!v) return
               if (document.visibilityState === 'hidden') {
                 bgMode = true
-                bgAudio.currentTime = v.currentTime + hlsOffset
+                bgAudio.currentTime = v.currentTime
                 bgAudio.volume = 1
                 bgAudio.play().catch(() => {})
                 v.muted = true
@@ -123,7 +121,7 @@ export default function PhonePlayer({ send }) {
                 usePlaybackStore.getState().update({ paused: false })
               } else {
                 bgMode = false
-                const resumeAt = bgAudio.currentTime - hlsOffset
+                const resumeAt = bgAudio.currentTime
                 bgAudio.pause()
                 // Only sync position if bgAudio actually played (advanced beyond where we set it)
                 if (resumeAt > 1 && Math.abs(resumeAt - v.currentTime) > 2) v.currentTime = resumeAt
@@ -138,7 +136,7 @@ export default function PhonePlayer({ send }) {
             useSyncStore.getState().setPhoneVideoCtrl({
               play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
               pause: () => { bgAudio.pause(); videoRef.current?.pause() },
-              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t + hlsOffset },
+              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
             })
 
             const origCleanup = () => {
