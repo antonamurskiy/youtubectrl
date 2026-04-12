@@ -16,6 +16,8 @@ export default function SecretMenu() {
   const [currentOutput, setCurrentOutput] = useState('')
   const [showOutputs, setShowOutputs] = useState(false)
   const [muted, setMuted] = useState(false)
+  const [btDevices, setBtDevices] = useState([])
+  const [showBt, setShowBt] = useState(false)
   const volAreaRef = useRef(null)
   const draggingRef = useRef(false)
 
@@ -138,6 +140,32 @@ export default function SecretMenu() {
             onClick={() => switchOutput(name)}
           >
             {name === currentOutput ? '● ' : '  '}{name}
+          </button>
+        ))}
+
+        <button className="secret-menu-item" onClick={() => {
+          if (!showBt) {
+            fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
+          }
+          setShowBt(!showBt)
+        }}>
+          Bluetooth
+        </button>
+        {showBt && btDevices.map(d => (
+          <button
+            key={d.address}
+            className="secret-menu-item"
+            style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)' }}
+            onClick={() => {
+              const action = d.connected ? 'disconnect' : 'connect'
+              fetch(`/api/bluetooth-${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: d.address }) })
+                .then(r => r.json()).then(res => {
+                  addToast(res.ok ? `${action === 'connect' ? 'Connected' : 'Disconnected'} ${d.name}` : 'Failed')
+                  fetch('/api/bluetooth-devices').then(r => r.json()).then(dd => setBtDevices(dd.devices || [])).catch(() => {})
+                }).catch(() => addToast('Failed'))
+            }}
+          >
+            {d.connected ? '● ' : '  '}{d.name}
           </button>
         ))}
 

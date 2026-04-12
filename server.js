@@ -172,6 +172,42 @@ app.post("/api/lock-mac", async (_req, res) => {
   } catch { res.status(500).json({ error: "Lock failed" }); }
 });
 
+// Live HLS proxy for phone-only live streams (uses fetchManifest which passes through)
+app.get("/api/phone-live-hls", async (_req, res) => {
+  if (!_phoneLiveHlsUrl) return res.status(404).send("No live URL");
+  try {
+    const manifest = await fetchManifest(_phoneLiveHlsUrl);
+    res.type('application/vnd.apple.mpegurl').send(manifest);
+  } catch (e) { res.status(502).send("Proxy error: " + e.message); }
+});
+
+// Bluetooth device management via blueutil
+app.get("/api/bluetooth-devices", async (_req, res) => {
+  try {
+    const { stdout } = await execP("blueutil --paired --format json", { env: { ...process.env, BLUEUTIL_USE_SYSTEM_PROFILER: "1" } });
+    const devices = JSON.parse(stdout).filter(d => d.name && !d.name.includes("Keyboard") && !d.name.includes("Mouse") && !d.name.includes("Trackpad") && !d.name.includes("Keychron") && !d.name.includes("iPhone"));
+    res.json({ devices: devices.map(d => ({ address: d.address, name: d.name, connected: d.connected })) });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/bluetooth-connect", async (req, res) => {
+  const { address } = req.body;
+  if (!address) return res.status(400).json({ error: "No address" });
+  try {
+    const mac = address.replace(/:/g, "-");
+    await execP(`BluetoothConnector --connect ${mac}`, { timeout: 15000 });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+app.post("/api/bluetooth-disconnect", async (req, res) => {
+  const { address } = req.body;
+  if (!address) return res.status(400).json({ error: "No address" });
+  try {
+    const mac = address.replace(/:/g, "-");
+    await execP(`BluetoothConnector --disconnect ${mac}`, { timeout: 15000 });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post("/api/focus-cmux", async (_req, res) => {
   try {
     const { stdout: frontOut } = await execP(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`);
@@ -2371,6 +2407,7 @@ app.get("/api/phone-sync-target", async (_req, res) => {
 // fMP4 relay — ffmpeg reads stream source, outputs fragmented MP4 for phone
 let phoneFmp4Process = null;
 let _phoneVodUrls = null; // { video, audio } for DASH remux
+let _phoneLiveHlsUrl = null; // live HLS manifest URL for phone-only live proxy
 
 app.get("/api/phone-live-stream", async (_req, res) => {
   // Stream directly from ffmpeg with Content-Length for Safari compatibility
@@ -2557,9 +2594,9 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Get DASH (1080p) or fallback to progressive
+    // Get DASH (1080p) or fallback to progressive/HLS for live
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18",
+      "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18/best",
       "--get-url", "--print", "is_live", "--print", "duration", url,
     ], { timeout: 15000 });
     const lines = stdout.trim().split("\n");
@@ -2593,8 +2630,12 @@ app.post("/api/phone-only", async (req, res) => {
       } else {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
       }
+    } else if (isLive && urls[0]) {
+      // Live — proxy HLS through server (YouTube CDN blocks direct cross-origin)
+      _phoneLiveHlsUrl = urls[0];
+      res.json({ streamUrl: `/api/phone-live-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
     } else {
-      // Progressive or live — direct URL
+      // Progressive VOD — direct URL
       res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
     }
   } catch (err) {

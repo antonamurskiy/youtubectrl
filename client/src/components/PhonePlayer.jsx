@@ -57,10 +57,13 @@ export default function PhonePlayer({ send }) {
       .then(data => {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
+          // Phone-only: always use direct stream URL. Sync mode: use proxy for HLS on iOS
           const useHls = data.isLive && Hls.isSupported()
-          const url = data.isLive
-            ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
-            : data.streamUrl
+          const url = phoneOnlyRef.current
+            ? data.streamUrl
+            : (data.isLive
+                ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
+                : data.streamUrl)
           setStreamUrl(url)
 
           const vlcBufDelay = data.vlcBufferDelay || 19
@@ -118,6 +121,7 @@ export default function PhonePlayer({ send }) {
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                 usePlaybackStore.getState().update({ paused: false })
               } else {
+                if (compModeRef.current) return // Stay paused in comp mode
                 bgMode = false
                 const resumeAt = bgAudio.currentTime
                 bgAudio.pause()
