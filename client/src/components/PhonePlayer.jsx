@@ -77,24 +77,6 @@ export default function PhonePlayer({ send }) {
             readyAtRef.current = Date.now()
             setLoading(false)
 
-            // For live: explicitly load via JS (same as sync mode) — iOS needs this
-            if (data.isLive) {
-              setTimeout(() => {
-                const v = videoRef.current
-                if (!v) return
-                const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-                v.src = fullUrl
-                v.addEventListener('loadedmetadata', () => {
-                  // Seek to live edge minus 25s for buffer
-                  if (v.seekable?.length > 0) {
-                    const end = v.seekable.end(v.seekable.length - 1)
-                    v.currentTime = Math.max(0, end - 25)
-                  }
-                  v.play().catch(() => {})
-                }, { once: true })
-              }, 200)
-            }
-
             // Background audio: use same URL as video (iOS Safari Audio plays HLS natively)
             const bgUrl = url.startsWith('/') ? `${location.origin}${url}` : url
             const bgAudio = new Audio(bgUrl)

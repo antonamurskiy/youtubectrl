@@ -2614,12 +2614,13 @@ app.post("/api/phone-only", async (req, res) => {
     const isLive = lines.some(l => l.trim() === "True");
     const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
     const duration = durLine ? parseFloat(durLine) : 0;
-    const urls = lines.filter(l => l.startsWith("http"));
-    // Extract metadata — the lines after url(s), is_live, duration are title, channel, thumbnail
-    const nonHttpLines = lines.filter(l => !l.startsWith("http") && l.trim() !== "True" && l.trim() !== "False" && !/^\d+(\.\d+)?$/.test(l.trim()) && l.trim() !== "NA");
-    const title = nonHttpLines[0] || "";
-    const channel = nonHttpLines[1] || "";
-    const thumbnail = nonHttpLines[2] || "";
+    // Filter out thumbnail URLs (contain ytimg.com) so only stream URLs remain
+    const urls = lines.filter(l => l.startsWith("http") && !l.includes("ytimg.com"));
+    const thumbnail = lines.find(l => l.startsWith("http") && l.includes("ytimg.com")) || "";
+    // Title and channel are the non-http non-numeric lines (excluding True/False/NA)
+    const metaLines = lines.filter(l => !l.startsWith("http") && l.trim() !== "True" && l.trim() !== "False" && !/^\d+(\.\d+)?$/.test(l.trim()) && l.trim() !== "NA");
+    const title = metaLines[0] || "";
+    const channel = metaLines[1] || "";
     // Seed historyMap so WS sync broadcasts title/channel
     if (title) {
       const existing = historyMap.get(url) || {};
@@ -2652,10 +2653,10 @@ app.post("/api/phone-only", async (req, res) => {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
       }
     } else if (isLive && urls[0]) {
-      // Live — reuse the sync-mode proxy (/api/phone-hls) by setting lastVlcHlsUrl
+      // Live — reuse sync-mode proxy with proxied segments (direct URLs fail on iOS)
       lastVlcHlsUrl = urls[0];
       phoneActive = true;
-      res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}&direct=1`, seconds, videoId, isLive: true, duration });
+      res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
     } else {
       // Progressive VOD — direct URL
       res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
