@@ -85,14 +85,35 @@ export default function VideoCard({ video, isPlaying }) {
     if (!isMobile) setPreviewing(false)
   }, [isMobile])
   const previewTimer = useRef(null)
-  const handleCardTouchStart = useCallback(() => {
+  const handleCardTouchStart = useCallback((e) => {
     longPressTriggered.current = false
     if (isMobile && videoId && !video.isLive && !video.live) {
       if (previewTimer.current) clearTimeout(previewTimer.current)
       setPreviewing(true)
     }
+    // Long-press anywhere on the card opens the context menu (was thumbnail-only before)
+    const touch = e.touches?.[0] || e
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY }
+    longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true
+      setContextMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
+    }, 500)
   }, [isMobile, videoId, video.isLive, video.live])
+  const handleCardTouchMove = useCallback((e) => {
+    if (!longPressTimer.current || !touchStartPos.current) return
+    const touch = e.touches?.[0] || e
+    const dx = Math.abs(touch.clientX - touchStartPos.current.x)
+    const dy = Math.abs(touch.clientY - touchStartPos.current.y)
+    if (dx > 10 || dy > 10) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }, [])
   const handleCardTouchEnd = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
     if (isMobile) {
       previewTimer.current = setTimeout(() => setPreviewing(false), 3000)
     }
@@ -129,34 +150,6 @@ export default function VideoCard({ video, isPlaying }) {
   }, [videoUrl, video.title, video.channel, video.isLive, addToast])
 
   const touchStartPos = useRef(null)
-
-  const handleTouchStart = useCallback((e) => {
-    longPressTriggered.current = false
-    const touch = e.touches?.[0] || e
-    touchStartPos.current = { x: touch.clientX, y: touch.clientY }
-    longPressTimer.current = setTimeout(() => {
-      longPressTriggered.current = true
-      setContextMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
-    }, 500)
-  }, [])
-
-  const handleTouchMove = useCallback((e) => {
-    if (!longPressTimer.current || !touchStartPos.current) return
-    const touch = e.touches?.[0] || e
-    const dx = Math.abs(touch.clientX - touchStartPos.current.x)
-    const dy = Math.abs(touch.clientY - touchStartPos.current.y)
-    if (dx > 10 || dy > 10) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-  }, [])
-
-  const handleTouchEnd = useCallback(() => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current)
-      longPressTimer.current = null
-    }
-  }, [])
 
   const handleContextMenuEvent = useCallback((e) => {
     e.preventDefault()
@@ -208,17 +201,12 @@ export default function VideoCard({ video, isPlaying }) {
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onTouchStart={handleCardTouchStart}
+        onTouchMove={handleCardTouchMove}
         onTouchEnd={handleCardTouchEnd}
         onTouchCancel={handleCardTouchEnd}
+        onContextMenu={handleContextMenuEvent}
       >
-        <div
-          className="thumb-wrap"
-          onTouchStart={handleTouchStart}
-          onTouchMove={handleTouchMove}
-          onTouchEnd={handleTouchEnd}
-          onTouchCancel={handleTouchEnd}
-          onContextMenu={handleContextMenuEvent}
-        >
+        <div className="thumb-wrap">
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
           {previewing && !terminalOpen && previewUrl && (
             <video
