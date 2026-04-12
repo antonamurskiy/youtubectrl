@@ -2642,7 +2642,6 @@ app.post("/api/phone-only", async (req, res) => {
     } else if (isLive && urls[0]) {
       // Live — reuse sync-mode proxy with proxied segments (direct URLs fail on iOS)
       lastVlcHlsUrl = urls[0];
-      phoneActive = true;
       res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
     } else {
       // Progressive VOD — direct URL
@@ -2682,8 +2681,17 @@ function cleanPhoneHls() {
   } catch {}
 }
 
-function preparePhoneHls() {
-  if (_phoneHlsProc) { try { _phoneHlsProc.kill(); } catch {} }
+async function preparePhoneHls() {
+  // Wait for previous ffmpeg to fully exit before cleaning files it might still hold
+  if (_phoneHlsProc) {
+    const prev = _phoneHlsProc;
+    await new Promise((resolve) => {
+      prev.once("exit", resolve);
+      try { prev.kill("SIGKILL"); } catch { resolve(); }
+      // Hard timeout to avoid hanging
+      setTimeout(resolve, 2000);
+    });
+  }
   _phoneHlsReady = false;
   cleanPhoneHls();
   const { video, audio } = _phoneVodUrls;
