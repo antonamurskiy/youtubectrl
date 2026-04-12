@@ -154,30 +154,47 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const seekPosRef = useRef(seekPos)
   seekPosRef.current = seekPos
 
+  // Snap raw seek time to a nearby chapter start when within a small percentage of duration.
+  // Read chapters live from storyboard so we don't create a TDZ on the later const declaration.
+  const snapToChapter = useCallback((rawTime) => {
+    const chapters = storyboard?.chapters || []
+    if (chapters.length < 2 || duration <= 0) return rawTime
+    const threshold = duration * 0.01 // 1% of total duration
+    let best = rawTime
+    let bestDist = threshold
+    for (const ch of chapters) {
+      const dist = Math.abs(rawTime - ch.start)
+      if (dist < bestDist) { bestDist = dist; best = ch.start }
+    }
+    return best
+  }, [storyboard, duration])
+
   // Override the handleUp to use ref
   const handlePointerDownFixed = useCallback((e) => {
     e.preventDefault()
-    const pos = getSeekPosition(e.clientX)
+    const bar = barRef.current
+    const rect = bar?.getBoundingClientRect()
+    const rawPos = getSeekPosition(e.clientX)
+    const pos = snapToChapter(rawPos)
     setIsSeeking(true)
     setSeekPos(pos)
+    seekPosRef.current = pos
     setCurrentPosVisible(true)
 
-    const bar = barRef.current
-
-    if (bar) {
-      const rect = bar.getBoundingClientRect()
+    if (bar && rect) {
       const x = Math.max(100, Math.min(e.clientX - rect.left, rect.width - 100))
       setSeekPreview({ x, time: pos })
     }
 
     const handleMove = (ev) => {
       const cx = ev.clientX || ev.touches?.[0]?.clientX
-      const p = getSeekPosition(cx)
+      const rawP = getSeekPosition(cx)
+      const rectNow = bar?.getBoundingClientRect()
+      const p = snapToChapter(rawP)
       setSeekPos(p)
       seekPosRef.current = p
-      if (bar) {
-        const rect = bar.getBoundingClientRect()
-        setSeekPreview({ x: Math.max(100, Math.min(cx - rect.left, rect.width - 100)), time: p })
+      if (bar && rectNow) {
+        setSeekPreview({ x: Math.max(100, Math.min(cx - rectNow.left, rectNow.width - 100)), time: p })
       }
     }
 
@@ -206,7 +223,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
 
     document.addEventListener('pointermove', handleMove)
     document.addEventListener('pointerup', handleUp)
-  }, [getSeekPosition])
+  }, [getSeekPosition, snapToChapter])
 
   // Clean up seek listeners on unmount
   useEffect(() => {
@@ -250,23 +267,26 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [phoneOpen, setPhoneOpen])
 
   const skipBack = useCallback(() => {
+    const ctrl = phoneCtrl()
+    // Phone-only: skip relative to the phone video's actual currentTime, not mpv's drifted pb.position
+    if (ctrl?.skip) { ctrl.skip(-10); addToast('-10s'); return }
     const base = skipPosRef.current ?? pb.position
     const newPos = Math.max(0, base - 10)
     skipPosRef.current = newPos
     clearTimeout(skipResetTimer.current)
     skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
-    const ctrl = phoneCtrl()
     if (ctrl) { ctrl.seek(newPos) } else { fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: newPos }) }).catch(() => {}) }
     addToast('-10s')
   }, [pb.position, addToast])
 
   const skipForward = useCallback(() => {
+    const ctrl = phoneCtrl()
+    if (ctrl?.skip) { ctrl.skip(10); addToast('+10s'); return }
     const base = skipPosRef.current ?? pb.position
     const newPos = Math.min(duration, base + 10)
     skipPosRef.current = newPos
     clearTimeout(skipResetTimer.current)
     skipResetTimer.current = setTimeout(() => { skipPosRef.current = null }, 2000)
-    const ctrl = phoneCtrl()
     if (ctrl) { ctrl.seek(newPos) } else { fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: newPos }) }).catch(() => {}) }
     addToast('+10s')
   }, [pb.position, duration, addToast])

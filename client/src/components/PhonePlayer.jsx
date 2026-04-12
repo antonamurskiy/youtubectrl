@@ -46,7 +46,10 @@ export default function PhonePlayer({ send }) {
     }
     setLoading(true)
     phoneOnlyRef.current = !!phoneOnlyUrl
-    loadedUrlRef.current = phoneOnlyUrl
+    // Clear loadedUrlRef until the fetch actually succeeds — otherwise an aborted/failed
+    // fetch leaves the ref pointing at a URL we never loaded, and the "already loaded"
+    // fast path above will falsely skip refetching on the next tap.
+    loadedUrlRef.current = null
 
     // AbortController so a newer video change cancels the in-flight fetch
     const abortCtrl = new AbortController()
@@ -69,6 +72,7 @@ export default function PhonePlayer({ send }) {
                 ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
                 : data.streamUrl)
           setStreamUrl(url)
+          loadedUrlRef.current = phoneOnlyUrl
 
           const vlcBufDelay = data.vlcBufferDelay || 19
 
@@ -99,6 +103,14 @@ export default function PhonePlayer({ send }) {
                 fetch('/api/playpause', { method: 'POST' }).catch(() => {}) // pause mpv
               },
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+              // Skip delta — reads the phone video's live currentTime instead of mpv's
+              // (pb.position) which drifts in phone-only mode.
+              skip: (delta) => {
+                const v = videoRef.current
+                if (!v) return
+                v.currentTime = Math.max(0, (v.currentTime || 0) + delta)
+                bgAudio.currentTime = v.currentTime
+              },
             })
 
             // On background: start bgAudio (or silent in comp mode), mute video.
@@ -141,6 +153,12 @@ export default function PhonePlayer({ send }) {
               play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
               pause: () => { bgAudio.pause(); videoRef.current?.pause() },
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+              skip: (delta) => {
+                const v = videoRef.current
+                if (!v) return
+                v.currentTime = Math.max(0, (v.currentTime || 0) + delta)
+                bgAudio.currentTime = v.currentTime
+              },
             })
 
             const origCleanup = () => {

@@ -2625,9 +2625,13 @@ app.post("/api/phone-only", async (req, res) => {
     const isLive = lines.some(l => l.trim() === "True");
     const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
     const duration = durLine ? parseFloat(durLine) : 0;
-    // Filter out thumbnail URLs (contain ytimg.com) so only stream URLs remain
-    const urls = lines.filter(l => l.startsWith("http") && !l.includes("ytimg.com"));
-    const thumbnail = lines.find(l => l.startsWith("http") && l.includes("ytimg.com")) || "";
+    // yt-dlp prints in order: is_live, duration, title, channel, thumbnail, then --get-url URLs.
+    // Detect thumbnail by image extension (or known image hosts) so Rumble (whose thumbs live on
+    // the same CDN as the stream) doesn't leak its thumbnail into the stream URL list.
+    const isImageUrl = (u) => /\.(jpg|jpeg|png|webp|gif)(\?|$)/i.test(u) || u.includes("ytimg.com");
+    const httpLines = lines.filter(l => l.startsWith("http"));
+    const thumbnail = httpLines.find(isImageUrl) || "";
+    const urls = httpLines.filter(l => !isImageUrl(l));
     // Title and channel are the non-http non-numeric lines (excluding True/False/NA)
     const metaLines = lines.filter(l => !l.startsWith("http") && l.trim() !== "True" && l.trim() !== "False" && !/^\d+(\.\d+)?$/.test(l.trim()) && l.trim() !== "NA");
     const title = metaLines[0] || "";
@@ -2670,9 +2674,16 @@ app.post("/api/phone-only", async (req, res) => {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
       }
     } else if (isLive && urls[0]) {
-      // Live — reuse sync-mode proxy with proxied segments (direct URLs fail on iOS)
-      lastVlcHlsUrl = urls[0];
-      res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
+      // Live — YouTube needs the proxy (PDT parsing, cookie-authed segments on googlevideo.com).
+      // Other hosts (e.g. Rumble) serve standard HLS with CORS enabled — return the direct URL
+      // so Safari plays it natively.
+      const isYouTube = urls[0].includes("googlevideo.com") || urls[0].includes("youtube.com");
+      if (isYouTube) {
+        lastVlcHlsUrl = urls[0];
+        res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
+      } else {
+        res.json({ streamUrl: urls[0], seconds, videoId, isLive: true, duration });
+      }
     } else {
       // Progressive VOD — direct URL
       res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
