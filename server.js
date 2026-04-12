@@ -2534,7 +2534,12 @@ app.post("/api/watch-on-phone", async (_req, res) => {
 
 // Phone-only playback — no mpv, just get stream URL for a given video
 // Prepare existing mpv for phone-only mode: mute, hide, load URL if different
-async function preparePhoneOnlyMpv(url, resumePos) {
+let _phoneMpvLock = Promise.resolve();
+function preparePhoneOnlyMpv(url, resumePos) {
+  _phoneMpvLock = _phoneMpvLock.then(() => _preparePhoneOnlyMpvImpl(url, resumePos)).catch(e => console.error("[phone-only] mpv lock error:", e.message));
+  return _phoneMpvLock;
+}
+async function _preparePhoneOnlyMpvImpl(url, resumePos) {
   phoneActive = true;
   if (activePlayer !== "mpv" || !mpvProcess) {
     // No mpv running — spawn one hidden+muted
@@ -2585,9 +2590,12 @@ app.post("/api/phone-only-resume", async (_req, res) => {
   res.json({ ok: true });
 });
 
+let _phoneOnlyToken = 0;
 app.post("/api/phone-only", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "No URL" });
+  const token = ++_phoneOnlyToken;
+  const isCurrent = () => token === _phoneOnlyToken;
   try {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
@@ -2597,6 +2605,7 @@ app.post("/api/phone-only", async (req, res) => {
       "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18/best",
       "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
+    if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
     const lines = stdout.trim().split("\n");
     const isLive = lines.some(l => l.trim() === "True");
     const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
@@ -2608,10 +2617,11 @@ app.post("/api/phone-only", async (req, res) => {
     const metaLines = lines.filter(l => !l.startsWith("http") && l.trim() !== "True" && l.trim() !== "False" && !/^\d+(\.\d+)?$/.test(l.trim()) && l.trim() !== "NA");
     const title = metaLines[0] || "";
     const channel = metaLines[1] || "";
-    // Seed historyMap so WS sync broadcasts title/channel
+    // Seed historyMap so WS sync broadcasts title/channel/duration
+    // (duration fallback is important because mpv returns null while loading)
     if (title) {
       const existing = historyMap.get(url) || {};
-      historyMap.set(url, { ...existing, title, channel, thumbnail, url });
+      historyMap.set(url, { ...existing, title, channel, thumbnail, url, duration: duration || existing.duration });
     }
     // Use mpv's current position if playing, otherwise fall back to history
     let seconds = 0;
@@ -2627,15 +2637,17 @@ app.post("/api/phone-only", async (req, res) => {
     }
 
     console.log(`[phone-only] mpv pos=${seconds}, url match=${nowPlaying === url}`);
-    // Mute+hide+pause mpv — phone is the active player now
-    preparePhoneOnlyMpv(url, seconds);
+    // Mute+hide+pause mpv — phone is the active player now (awaited so concurrent calls queue)
+    await preparePhoneOnlyMpv(url, seconds);
+    if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
 
     if (urls.length >= 2 && !isLive) {
       // DASH streams — full VOD HLS packaging for 1080p (slow but full seeking)
       _phoneVodUrls = { video: urls[0], audio: urls[1] };
       const ok = await preparePhoneHls();
+      if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
       if (ok) {
-        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8`, seconds, videoId, isLive: false, duration });
+        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8?t=${Date.now()}`, seconds, videoId, isLive: false, duration });
       } else {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
       }
@@ -3579,10 +3591,15 @@ function startWsSync() {
             } catch {}
           }
           _lastPolledPaused = paused;
+          // Prefer mpv's reported duration; fall back to cached history duration
+          // (mpv returns null while loading — don't broadcast 0 or it resets phone UI)
+          const histDur = historyMap.get(nowPlaying)?.duration || 0;
+          const reportedDur = dur?.data || 0;
           state = {
             type: "playback",
             playing: true, isLive: isHls, player: "mpv",
-            position: pos?.data || 0, duration: dur?.data || 0,
+            position: pos?.data || 0,
+            duration: reportedDur > 0 ? reportedDur : histDur,
             paused: pause?.data || false, phoneSyncOk: !isHls,
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",

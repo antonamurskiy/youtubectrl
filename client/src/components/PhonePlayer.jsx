@@ -27,6 +27,7 @@ export default function PhonePlayer({ send }) {
   const compModeRef = useRef(false)
   const resumePosRef = useRef(0)
   const bgAudioRef = useRef(null)
+  const loadedUrlRef = useRef(null) // last fetched phone-only URL, to detect video changes
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
@@ -34,26 +35,30 @@ export default function PhonePlayer({ send }) {
   const addToast = useUIStore(s => s.addToast)
   const phoneOnlyRef = useRef(false)
 
-  // Fetch stream URL on open — skip if already loaded (just resuming from hide)
+  // Fetch stream URL on open — skip ONLY if the same video is already loaded
   useEffect(() => {
     if (!phoneOpen) return
-    if (streamUrl && videoRef.current && videoRef.current.src) {
-      // Already loaded — just resume
+    // If the currently-loaded video matches what the user wants, just resume
+    if (streamUrl && videoRef.current?.src && loadedUrlRef.current === phoneOnlyUrl) {
       videoRef.current.play().catch(() => {})
-      // Re-mute+pause mpv
       fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
       return
     }
     setLoading(true)
     phoneOnlyRef.current = !!phoneOnlyUrl
+    loadedUrlRef.current = phoneOnlyUrl
 
+    // AbortController so a newer video change cancels the in-flight fetch
+    const abortCtrl = new AbortController()
     const fetchUrl = phoneOnlyUrl
-      ? fetch('/api/phone-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: phoneOnlyUrl }) })
-      : fetch('/api/watch-on-phone', { method: 'POST' })
+      ? fetch('/api/phone-only', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: phoneOnlyUrl }), signal: abortCtrl.signal })
+      : fetch('/api/watch-on-phone', { method: 'POST', signal: abortCtrl.signal })
 
     fetchUrl
       .then(r => r.json())
       .then(data => {
+        // Guard against stale responses after the effect was cleaned up
+        if (abortCtrl.signal.aborted) return
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
           // Phone-only: always use direct stream URL. Sync mode: use proxy for HLS on iOS
@@ -204,14 +209,19 @@ export default function PhonePlayer({ send }) {
         }
         setLoading(false)
       })
-      .catch(() => { addToast('Failed to get stream'); setLoading(false) })
+      .catch((err) => {
+        if (err?.name === 'AbortError') return // superseded by newer request
+        addToast('Failed to get stream')
+        setLoading(false)
+      })
 
     return () => {
+      abortCtrl.abort()
       if (waitForVlcRef.current?.clear) { waitForVlcRef.current.clear() }
       else if (waitForVlcRef.current) { clearInterval(waitForVlcRef.current) }
       waitForVlcRef.current = null
     }
-  }, [phoneOpen, addToast])
+  }, [phoneOpen, phoneOnlyUrl, addToast])
 
   // Imperative sync loop — reads store directly, no subscriptions that cause re-renders
   useEffect(() => {
