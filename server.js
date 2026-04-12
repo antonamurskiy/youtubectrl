@@ -2541,6 +2541,21 @@ function preparePhoneOnlyMpv(url, resumePos) {
 }
 async function _preparePhoneOnlyMpvImpl(url, resumePos) {
   phoneActive = true;
+  // If our tracking was lost (e.g. server restart before reconnect finished) but an mpv
+  // is actually running and its IPC socket responds, adopt it instead of spawning a duplicate.
+  if (activePlayer !== "mpv" || !mpvProcess) {
+    try {
+      const ping = await mpvCommand(["get_property", "path"]);
+      if (ping?.data) {
+        mpvProcess = { kill: () => { try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {} } };
+        activePlayer = "mpv";
+        const pathUrl = ping.data;
+        const m = pathUrl.match(/v=([\w-]+)/);
+        nowPlaying = m ? `https://www.youtube.com/watch?v=${m[1]}` : pathUrl;
+        console.log(`[phone-only] adopted existing mpv (${nowPlaying.substring(0, 60)})`);
+      }
+    } catch {}
+  }
   if (activePlayer !== "mpv" || !mpvProcess) {
     // No mpv running — spawn one hidden+muted
     try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
@@ -2640,6 +2655,9 @@ app.post("/api/phone-only", async (req, res) => {
     // Mute+hide+pause mpv — phone is the active player now (awaited so concurrent calls queue)
     await preparePhoneOnlyMpv(url, seconds);
     if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
+    // Record in history (sync mode's /api/play does this — phone-only must too)
+    addToHistory(url, title, channel, thumbnail);
+    startProgressTracking(url);
 
     if (urls.length >= 2 && !isLive) {
       // DASH streams — full VOD HLS packaging for 1080p (slow but full seeking)
