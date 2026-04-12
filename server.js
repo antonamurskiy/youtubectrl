@@ -2485,26 +2485,37 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
-    // Live — extract mpv's actual HLS URL so phone plays the exact same stream
+    // Live detection: try mpv's file-format first, fall back to yt-dlp
     const fmt = await mpvCommand(["get_property", "file-format"]).catch(() => null);
-    const isLiveStream = (fmt?.data || "").includes("hls");
+    let isLiveStream = (fmt?.data || "").includes("hls");
+    let hlsUrl = null;
     if (isLiveStream) {
       try {
         const sp = await mpvCommand(["get_property", "stream-path"]);
         const edl = sp?.data || "";
-        // Extract HLS manifest URL from edl:// wrapper
         const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
-        if (hlsMatch) {
-          lastVlcHlsUrl = hlsMatch[1];
-          phoneActive = true;
-          // proxyUrl for hls.js (CORS), streamUrl with direct=1 for Safari native
-          return res.json({
-            streamUrl: hlsMatch[1],
-            proxyUrl: `/api/phone-hls?t=${Date.now()}`,
-            seconds, videoId, isLive: true
-          });
+        if (hlsMatch) hlsUrl = hlsMatch[1];
+      } catch {}
+    }
+    // Fallback: check via yt-dlp
+    if (!hlsUrl) {
+      try {
+        const { stdout: ltest } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", "--get-url", "-f", "best", nowPlaying], { timeout: 15000 });
+        const lines = ltest.trim().split("\n");
+        if (lines.some(l => l.trim() === "True")) {
+          isLiveStream = true;
+          hlsUrl = lines.find(l => l.startsWith("http"));
         }
       } catch {}
+    }
+    if (isLiveStream && hlsUrl) {
+      lastVlcHlsUrl = hlsUrl;
+      phoneActive = true;
+      return res.json({
+        streamUrl: hlsUrl,
+        proxyUrl: `/api/phone-hls?t=${Date.now()}`,
+        seconds, videoId, isLive: true
+      });
     }
 
     // VOD — progressive MP4 (360p/720p)
@@ -2597,13 +2608,23 @@ app.post("/api/phone-only", async (req, res) => {
     // Get DASH (1080p) or fallback to progressive/HLS for live
     const { stdout } = await execFileP("yt-dlp", [
       "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18/best",
-      "--get-url", "--print", "is_live", "--print", "duration", url,
+      "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
     const lines = stdout.trim().split("\n");
     const isLive = lines.some(l => l.trim() === "True");
     const durLine = lines.find(l => /^\d+(\.\d+)?$/.test(l.trim()));
     const duration = durLine ? parseFloat(durLine) : 0;
     const urls = lines.filter(l => l.startsWith("http"));
+    // Extract metadata — the lines after url(s), is_live, duration are title, channel, thumbnail
+    const nonHttpLines = lines.filter(l => !l.startsWith("http") && l.trim() !== "True" && l.trim() !== "False" && !/^\d+(\.\d+)?$/.test(l.trim()) && l.trim() !== "NA");
+    const title = nonHttpLines[0] || "";
+    const channel = nonHttpLines[1] || "";
+    const thumbnail = nonHttpLines[2] || "";
+    // Seed historyMap so WS sync broadcasts title/channel
+    if (title) {
+      const existing = historyMap.get(url) || {};
+      historyMap.set(url, { ...existing, title, channel, thumbnail, url });
+    }
     // Use mpv's current position if playing, otherwise fall back to history
     let seconds = 0;
     if (!isLive && activePlayer === "mpv" && mpvProcess) {
@@ -2631,9 +2652,10 @@ app.post("/api/phone-only", async (req, res) => {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
       }
     } else if (isLive && urls[0]) {
-      // Live — proxy HLS through server (YouTube CDN blocks direct cross-origin)
-      _phoneLiveHlsUrl = urls[0];
-      res.json({ streamUrl: `/api/phone-live-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
+      // Live — reuse the sync-mode proxy (/api/phone-hls) by setting lastVlcHlsUrl
+      lastVlcHlsUrl = urls[0];
+      phoneActive = true;
+      res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}&direct=1`, seconds, videoId, isLive: true, duration });
     } else {
       // Progressive VOD — direct URL
       res.json({ streamUrl: urls[0] || "", seconds, videoId, isLive, duration });
