@@ -172,15 +172,6 @@ app.post("/api/lock-mac", async (_req, res) => {
   } catch { res.status(500).json({ error: "Lock failed" }); }
 });
 
-// Live HLS proxy for phone-only live streams (uses fetchManifest which passes through)
-app.get("/api/phone-live-hls", async (_req, res) => {
-  if (!_phoneLiveHlsUrl) return res.status(404).send("No live URL");
-  try {
-    const manifest = await fetchManifest(_phoneLiveHlsUrl);
-    res.type('application/vnd.apple.mpegurl').send(manifest);
-  } catch (e) { res.status(502).send("Proxy error: " + e.message); }
-});
-
 // Bluetooth device management via blueutil
 app.get("/api/bluetooth-devices", async (_req, res) => {
   try {
@@ -2407,7 +2398,6 @@ app.get("/api/phone-sync-target", async (_req, res) => {
 // fMP4 relay — ffmpeg reads stream source, outputs fragmented MP4 for phone
 let phoneFmp4Process = null;
 let _phoneVodUrls = null; // { video, audio } for DASH remux
-let _phoneLiveHlsUrl = null; // live HLS manifest URL for phone-only live proxy
 
 app.get("/api/phone-live-stream", async (_req, res) => {
   // Stream directly from ffmpeg with Content-Length for Safari compatibility
@@ -2441,7 +2431,6 @@ app.get("/api/phone-live-stream", async (_req, res) => {
 });
 
 // Watch on phone — get stream URL for phone playback
-let phoneSwitchedFromVlc = false; // track if we switched VLC→mpv for phone sync
 let phoneActive = false; // phone sync is active — don't show mpv window on unpause
 function killPhoneStream() {
   if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} phoneFmp4Process = null; }
@@ -2466,7 +2455,6 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     if (activePlayer === "vlc") {
       // Switch VLC → mpv for phone sync (shouldn't happen since live now uses mpv)
       console.log("Phone sync: VLC active, switching to mpv");
-      phoneSwitchedFromVlc = true;
       killVlc();
       try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
       await new Promise(r => setTimeout(r, 200));
@@ -2601,7 +2589,6 @@ app.post("/api/phone-only", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "No URL" });
   try {
-    const isRumble = url.startsWith("https://rumble.com/");
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
@@ -2755,9 +2742,8 @@ app.get("/api/phone-vod-stream", (req, res) => {
   res.on("close", () => { ff.kill(); });
 });
 
-app.post("/api/stop-phone-stream", async (req, res) => {
+app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
-  phoneSwitchedFromVlc = false;
   phoneActive = false;
   if (activePlayer === "mpv") {
     // Restore mpv: unmute, show window (each step independent so one failure doesn't block rest)

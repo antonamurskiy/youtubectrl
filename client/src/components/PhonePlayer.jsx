@@ -26,7 +26,6 @@ export default function PhonePlayer({ send }) {
   const [compMode, setCompMode] = useState(false)
   const compModeRef = useRef(false)
   const resumePosRef = useRef(0)
-  const hlsOffsetRef = useRef(0)
   const bgAudioRef = useRef(null)
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
@@ -71,8 +70,6 @@ export default function PhonePlayer({ send }) {
           // Phone-only: load immediately, no mpv sync
           if (phoneOnlyRef.current) {
             resumePosRef.current = data.seconds || 0
-            const hlsOffset = data.hlsSeekOffset || 0
-            hlsOffsetRef.current = hlsOffset
             readyRef.current = true
             readyAtRef.current = Date.now()
             setLoading(false)
@@ -488,13 +485,8 @@ export default function PhonePlayer({ send }) {
 
   const handleClose = useCallback(() => {
     setCompMode(false)
-    const phonePos = videoRef.current?.currentTime || 0
     if (videoRef.current) videoRef.current.pause()
-    fetch('/api/stop-phone-stream', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ position: phonePos }),
-    }).catch(() => {})
+    fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
     send({ type: 'mpv-speed', speed: 1.0 })
     setPhoneOpen(false)
   }, [setPhoneOpen, send])
