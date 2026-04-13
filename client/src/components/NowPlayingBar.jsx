@@ -83,6 +83,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, paused: s.paused, playing: s.playing,
     monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
+    height: s.height, videoCodec: s.videoCodec, hwdec: s.hwdec,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
@@ -441,7 +442,13 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         <div className="np-info" onClick={togglePlayPause}>
           <div className="np-label">
             {pb.channel || (pb.isLive ? 'Live' : 'Now playing')}
-            {pb.player ? ` (${pb.player})` : ''}
+            {pb.player && (() => {
+              const parts = [pb.player]
+              if (pb.height) parts.push(`${pb.height}p`)
+              if (pb.videoCodec) parts.push(pb.videoCodec.toLowerCase())
+              if (pb.hwdec) parts.push(pb.hwdec === 'no' ? 'sw' : 'hw')
+              return ` (${parts.join(' · ')})`
+            })()}
           </div>
           <div className="np-title">{pb.title || 'Untitled'}</div>
         </div>

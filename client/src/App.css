@@ -505,7 +505,13 @@ body {
   font-size: var(--font-sm);
   color: var(--text-dim);
   font-weight: 500;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  scrollbar-width: none;
 }
+.np-label::-webkit-scrollbar { display: none; }
 
 .np-title {
   font-size: var(--font-lg);
@@ -722,7 +728,7 @@ body {
 /* ── Secret menu ── */
 .secret-menu {
   position: fixed;
-  bottom: 290px;
+  top: calc(env(safe-area-inset-top) + 8px);
   right: 16px;
   background: #151515;
   border: 1px solid var(--border);
@@ -757,6 +763,7 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
+.vol-area:active { background: none !important; }
 
 .vol-fill {
   position: absolute;
@@ -1106,6 +1113,9 @@ body {
 }
 .status-dot.disconnected {
   background: var(--red);
+}
+.status-dot.idle {
+  background: var(--text-dim);
 }
 
 .header-status {

@@ -37,45 +37,81 @@ export default function SecretMenu() {
   }, [])
 
   const lastSentVol = useRef(null)
+  const inFlightRef = useRef(false)
+  const pendingVolRef = useRef(null)
+  const sendVolume = useCallback(() => {
+    if (inFlightRef.current || pendingVolRef.current == null) return
+    const vol = pendingVolRef.current
+    pendingVolRef.current = null
+    if (lastSentVol.current === vol) return
+    lastSentVol.current = vol
+    inFlightRef.current = true
+    fetch('/api/volume', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volume: vol }),
+    }).catch(() => {}).finally(() => {
+      inFlightRef.current = false
+      if (pendingVolRef.current != null) sendVolume()
+    })
+  }, [])
+
   const updateVolume = useCallback((clientY) => {
     const el = volAreaRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
+    if (rect.height <= 0) return
     const y = clientY - rect.top
     const clamped = Math.max(0, Math.min(y, rect.height))
     const vol = Math.round(100 - (clamped / rect.height) * 100)
     setVolume(vol)
-    if (lastSentVol.current !== vol) {
-      lastSentVol.current = vol
-      fetch('/api/volume', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ volume: vol }),
-      }).catch(() => {})
-    }
-  }, [])
+    pendingVolRef.current = vol
+    sendVolume()
+  }, [sendVolume])
 
-  const handlePointerDown = useCallback((e) => {
-    e.preventDefault()
-    e.stopPropagation()
+  useEffect(() => {
     const el = volAreaRef.current
-    if (el) el.setPointerCapture(e.pointerId)
-    draggingRef.current = true
-    updateVolume(e.clientY)
-  }, [updateVolume])
-
-  const handlePointerMove = useCallback((e) => {
-    if (draggingRef.current) {
+    if (!el) return
+    const onTouchStart = (e) => {
+      if (!e.touches || e.touches.length === 0) return
       e.preventDefault()
+      draggingRef.current = true
+      updateVolume(e.touches[0].clientY)
+    }
+    const onTouchMove = (e) => {
+      if (!draggingRef.current || !e.touches || e.touches.length === 0) return
+      e.preventDefault()
+      updateVolume(e.touches[0].clientY)
+    }
+    const onTouchEnd = () => {
+      // keep dragging flag briefly so the overlay click doesn't close the menu
+      setTimeout(() => { draggingRef.current = false }, 50)
+    }
+    const onMouseDown = (e) => {
+      draggingRef.current = true
       updateVolume(e.clientY)
+      const move = (ev) => { if (draggingRef.current) updateVolume(ev.clientY) }
+      const up = () => {
+        setTimeout(() => { draggingRef.current = false }, 50)
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+      }
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    el.addEventListener('mousedown', onMouseDown)
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('mousedown', onMouseDown)
     }
   }, [updateVolume])
-
-  const handlePointerUp = useCallback((e) => {
-    draggingRef.current = false
-    const el = volAreaRef.current
-    if (el) el.releasePointerCapture(e.pointerId)
-  }, [])
 
   const switchOutput = useCallback((name) => {
     fetch('/api/audio-output', {
@@ -91,26 +127,24 @@ export default function SecretMenu() {
     <>
       <div style={{ position: 'fixed', inset: 0, zIndex: 599 }} onClick={() => { if (!draggingRef.current) toggleSecretMenu() }} />
       <div className="secret-menu">
-        <div className="secret-menu-item" style={{ display: 'flex', gap: 16, alignItems: 'center', justifyContent: 'center', padding: '10px 12px' }}>
+        <div className="secret-menu-item" style={{ display: 'flex', gap: 10, alignItems: 'center', justifyContent: 'center', padding: '10px 8px' }}>
           {[
             { on: connected, label: 'WS' },
             { on: macStatus.ethernet, label: 'ETH' },
             { on: !macStatus.locked, label: 'UNLK' },
             { on: !macStatus.screenOff, label: 'SCR' },
-          ].map(({ on, label }) => (
-            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <div className={`status-dot ${on ? 'connected' : 'disconnected'}`} />
-              <span style={{ fontSize: 'var(--font-lg)', color: 'var(--text-dim)' }}>{label}</span>
+            // Keep-awake: gray when off instead of red (not an error state)
+            { on: macStatus.keepAwake, label: 'AWK', offState: 'idle' },
+          ].map(({ on, label, offState }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+              <div className={`status-dot ${on ? 'connected' : (offState || 'disconnected')}`} />
+              <span style={{ fontSize: 'var(--font-sm)', color: 'var(--text-dim)' }}>{label}</span>
             </div>
           ))}
         </div>
         <div
           className="secret-menu-item vol-area"
           ref={volAreaRef}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
         >
           <div className="vol-fill" style={{ height: `${volume}%` }} />
           <div className="vol-label">{volume}%</div>
@@ -191,10 +225,22 @@ export default function SecretMenu() {
           Refresh cookies
         </button>
         <button className="secret-menu-item" onClick={() => {
-          fetch('/api/lock-mac', { method: 'POST' }).then(() => addToast('Mac locked')).catch(() => addToast('Lock failed'))
+          const wake = macStatus.screenOff
+          const endpoint = wake ? '/api/wake-mac' : '/api/lock-mac'
+          const okMsg = wake ? 'Waking' : 'Mac locked'
+          const failMsg = wake ? 'Wake failed' : 'Lock failed'
+          fetch(endpoint, { method: 'POST' }).then(() => addToast(okMsg)).catch(() => addToast(failMsg))
           toggleSecretMenu()
         }}>
-          Lock Mac
+          {macStatus.screenOff ? 'Wake Mac' : 'Lock Mac'}
+        </button>
+        <button className="secret-menu-item" style={{ color: macStatus.keepAwake ? 'var(--green)' : undefined }} onClick={() => {
+          const next = !macStatus.keepAwake
+          fetch('/api/keep-awake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: next }) })
+            .then(() => addToast(next ? 'Keep awake on' : 'Keep awake off'))
+            .catch(() => addToast('Keep awake failed'))
+        }}>
+          Keep awake {macStatus.keepAwake ? '✓' : ''}
         </button>
         <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>
           Close

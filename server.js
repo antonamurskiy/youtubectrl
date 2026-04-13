@@ -172,6 +172,31 @@ app.post("/api/lock-mac", async (_req, res) => {
   } catch { res.status(500).json({ error: "Lock failed" }); }
 });
 
+app.post("/api/wake-mac", async (_req, res) => {
+  try {
+    // caffeinate -u -t 1 briefly asserts user activity, which wakes the display
+    await execP(`caffeinate -u -t 1`);
+    res.json({ ok: true });
+  } catch { res.status(500).json({ error: "Wake failed" }); }
+});
+
+// Keep-awake: long-running caffeinate that prevents display + system sleep
+let _caffeinateProc = null;
+app.post("/api/keep-awake", (req, res) => {
+  const enable = req.body?.enable;
+  if (enable) {
+    if (!_caffeinateProc) {
+      // -d: prevent display sleep, -i: prevent idle sleep, -s: prevent system sleep on AC
+      _caffeinateProc = spawn("caffeinate", ["-d", "-i", "-s"], { stdio: "ignore" });
+      _caffeinateProc.on("exit", () => { _caffeinateProc = null; });
+    }
+  } else {
+    if (_caffeinateProc) { try { _caffeinateProc.kill(); } catch {} _caffeinateProc = null; }
+  }
+  _macStatusCache.keepAwake = !!_caffeinateProc;
+  res.json({ ok: true, keepAwake: _macStatusCache.keepAwake });
+});
+
 // Bluetooth device management via blueutil
 app.get("/api/bluetooth-devices", async (_req, res) => {
   try {
@@ -3547,7 +3572,7 @@ setInterval(() => {
 // Push playback state to all connected phones
 let wsSyncInterval = null;
 // Cached mac status — refreshed every 10s to avoid expensive shell calls per WS tick
-let _macStatusCache = { locked: false, screenOff: false, frontApp: '', ethernet: false };
+let _macStatusCache = { locked: false, screenOff: false, frontApp: '', ethernet: false, keepAwake: false };
 let _macStatusInterval = null;
 async function refreshMacStatus() {
   const results = await Promise.allSettled([
@@ -3601,11 +3626,14 @@ function startWsSync() {
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
         try {
-          const [pos, dur, pause, fmt] = await Promise.all([
+          const [pos, dur, pause, fmt, height, vcodec, hwdec] = await Promise.all([
             mpvCommand(["get_property", "time-pos"]),
             mpvCommand(["get_property", "duration"]),
             mpvCommand(["get_property", "pause"]),
             mpvCommand(["get_property", "file-format"]).catch(() => null),
+            mpvCommand(["get_property", "height"]).catch(() => null),
+            mpvCommand(["get_property", "video-format"]).catch(() => null),
+            mpvCommand(["get_property", "hwdec-current"]).catch(() => null),
           ]);
           const isHls = (fmt?.data || "").includes("hls");
           const paused = !!pause?.data;
@@ -3635,7 +3663,10 @@ function startWsSync() {
             channel: historyMap.get(nowPlaying)?.channel || "",
             thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
             monitor: currentMonitor, windowMode: windowMode || "floating",
-            visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen")
+            visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen"),
+            height: height?.data || null,
+            videoCodec: vcodec?.data || null,
+            hwdec: hwdec?.data || null,
           };
         } catch {
           state = { type: "playback", playing: false };

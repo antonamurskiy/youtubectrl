@@ -82,6 +82,7 @@ function App() {
             <div className={`status-dot ${macStatus.ethernet ? 'connected' : 'disconnected'}`} title="Ethernet" />
             <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
             <div className={`status-dot ${macStatus.screenOff ? 'disconnected' : 'connected'}`} title="Screen" />
+            <div className={`status-dot ${macStatus.keepAwake ? 'connected' : 'idle'}`} title="Keep awake" />
           </div>
         </header>
 
