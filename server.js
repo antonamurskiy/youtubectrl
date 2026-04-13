@@ -2917,7 +2917,7 @@ app.get("/api/comments", async (req, res) => {
     const { stdout } = await execFileP(
       "yt-dlp", [
         "--cookies", COOKIES_FILE,
-        "--extractor-args", "youtube:max_comments=20",
+        "--extractor-args", "youtube:max_comments=50,all,0,0;comment_sort=top",
         "--write-comments", "--skip-download", "--dump-json",
         "--no-warnings",
         `https://www.youtube.com/watch?v=${videoId}`,
@@ -2925,12 +2925,16 @@ app.get("/api/comments", async (req, res) => {
       { timeout: 20000, maxBuffer: 5 * 1024 * 1024 }
     );
     const data = JSON.parse(stdout);
-    const comments = (data.comments || []).map((c) => ({
-      author: c.author || "Unknown",
-      text: c.text || "",
-      likes: c.like_count || 0,
-      publishedAt: c.timestamp ? timeAgo(new Date(c.timestamp * 1000).toISOString()) : "",
-    }));
+    // Top-level comments only, sorted by likes desc as a safety net
+    const comments = (data.comments || [])
+      .filter((c) => !c.parent || c.parent === "root")
+      .map((c) => ({
+        author: c.author || "Unknown",
+        text: c.text || "",
+        likes: c.like_count || 0,
+        publishedAt: c.timestamp ? timeAgo(new Date(c.timestamp * 1000).toISOString()) : "",
+      }))
+      .sort((a, b) => (b.likes || 0) - (a.likes || 0));
     res.json(comments);
   } catch (err) {
     console.error("Comments error:", err.message);

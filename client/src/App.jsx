@@ -8,6 +8,7 @@ import VideoGrid from './components/VideoGrid'
 import NowPlayingBar from './components/NowPlayingBar'
 import PhonePlayer from './components/PhonePlayer'
 import SecretMenu from './components/SecretMenu'
+import CommentsPanel from './components/CommentsPanel'
 import SearchBar from './components/SearchBar'
 import Toast from './components/Toast'
 import { lazy, Suspense } from 'react'
@@ -163,6 +164,7 @@ function App() {
         </Suspense>
       )}
       {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}
+      {useSyncStore(s => s.commentsOpen) && playing && <CommentsPanel />}
       {secretMenuOpen && <SecretMenu />}
 
       <Toast />

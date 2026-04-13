@@ -11,6 +11,8 @@ export const useSyncStore = create((set) => ({
   phoneOnlyUrl: null,    // when set, phone plays this URL directly (no mpv)
   terminalOpen: false,
   terminalSendKey: null, // function to send key to terminal pty
+  commentsOpen: false,
+  toggleComments: () => set((s) => ({ commentsOpen: !s.commentsOpen })),
 
   setDrift: (drift) => set({ drift }),
   nudgeOffset: (delta) => set((s) => ({ userOffset: +(s.userOffset + delta).toFixed(1) })),

@@ -457,10 +457,16 @@ body {
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   padding: 4px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  flex-wrap: nowrap;
 }
+.np-btn-row::-webkit-scrollbar { display: none; }
 
 .np-btn {
-  flex: 1 1 0;
+  flex: 1 0 auto;
+  min-width: 44px;
   height: 36px;
   border: none;
   background: none;
@@ -469,6 +475,13 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  font-family: var(--font);
+  font-size: var(--font-lg);
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .np-btn:active { color: var(--text); }
@@ -723,6 +736,83 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* ── Comments / live chat panel ── */
+.comments-panel {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  bottom: var(--np-height, 220px);
+  background: #0c0c0c;
+  border-bottom: 1px solid var(--border);
+  z-index: 550;
+  display: flex;
+  flex-direction: column;
+  font-family: var(--font);
+}
+.comments-panel .comments-list {
+  flex: 1;
+  min-height: 0;
+}
+.comments-close {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  background: rgba(0,0,0,0.6);
+  border: none;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  cursor: pointer;
+  z-index: 1;
+}
+.comments-list {
+  overflow-y: auto;
+  padding: 8px 0;
+  -webkit-overflow-scrolling: touch;
+}
+.comments-loading {
+  padding: 24px 12px;
+  color: var(--text-dim);
+  font-size: var(--font-sm);
+  text-align: center;
+}
+.comment {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.comment-author {
+  font-size: var(--font-sm);
+  font-weight: 700;
+  color: var(--blue);
+}
+.comment-text {
+  font-size: var(--font-lg);
+  color: var(--text);
+  margin-top: 2px;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.comment-meta {
+  font-size: var(--font-sm);
+  color: var(--text-dim);
+  margin-top: 2px;
+}
+.chat-msg {
+  padding: 3px 12px;
+  font-size: var(--font-sm);
+  word-wrap: break-word;
+}
+.chat-author {
+  font-weight: 700;
+  margin-right: 6px;
+}
+.chat-text {
+  color: var(--text);
+  font-size: var(--font-lg);
 }
 
 /* ── Secret menu ── */

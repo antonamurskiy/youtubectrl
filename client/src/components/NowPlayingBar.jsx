@@ -88,6 +88,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
+  const commentsOpen = useSyncStore(s => s.commentsOpen)
+  const toggleComments = useSyncStore(s => s.toggleComments)
   const addToast = useUIStore(s => s.addToast)
 
   const phoneCtrl = () => useSyncStore.getState().phoneVideoCtrl
@@ -231,6 +233,23 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     return () => { if (seekCleanupRef.current) seekCleanupRef.current() }
   }, [])
 
+  // Expose live now-playing height as a CSS var so other overlays can sit above it
+  const rootRef = useRef(null)
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const update = () => {
+      document.documentElement.style.setProperty('--np-height', `${Math.ceil(el.getBoundingClientRect().height)}px`)
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    return () => {
+      ro.disconnect()
+      document.documentElement.style.removeProperty('--np-height')
+    }
+  }, [])
+
   const togglePlayPause = useCallback(() => {
     const ctrl = phoneCtrl()
     if (ctrl) { pb.paused ? ctrl.play() : ctrl.pause(); return }
@@ -310,7 +329,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const frame = seekPreview ? getStoryboardFrame(seekPreview.time) : null
 
   return (
-    <div className="now-playing">
+    <div className="now-playing" ref={rootRef}>
       {/* Progress bar — on top of everything */}
       <div
         className="np-progress-bar"
@@ -427,8 +446,37 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         >
           {Icons.phone}
         </button>
+        <button
+          className={`np-btn${commentsOpen ? ' active' : ''}`}
+          onClick={toggleComments}
+          title={pb.isLive ? 'Live chat' : 'Comments'}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        </button>
         <button className="np-btn" onClick={stopPlayback}>
           {Icons.stop}
+        </button>
+        <button
+          className="np-btn"
+          onPointerDown={(e) => {
+            e.preventDefault()
+            e.currentTarget.setPointerCapture(e.pointerId)
+            e.currentTarget.classList.add('active')
+            fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 2 }) }).catch(() => {})
+          }}
+          onPointerUp={(e) => {
+            e.currentTarget.classList.remove('active')
+            fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 1 }) }).catch(() => {})
+          }}
+          onPointerCancel={(e) => {
+            e.currentTarget.classList.remove('active')
+            fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 1 }) }).catch(() => {})
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          2×
         </button>
       </div>
 
