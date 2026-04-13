@@ -1148,6 +1148,9 @@ let vlcProcess = null;
 let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let _lastPolledPaused = null; // track mpv pause state for auto-hide on external pause (AirPods etc)
+// Cache immutable-per-video mpv properties so the WS tick doesn't re-query them every second.
+// Invalidated when nowPlaying changes.
+let _mpvVideoInfoCache = { url: null, height: null, videoCodec: null, hwdec: null };
 let currentMonitor = "lg"; // tracked server-side, updated on move-monitor
 let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
@@ -1295,6 +1298,9 @@ function startProgressTracking(url) {
   const gen = ++progressGen;
   progressInterval = setInterval(async () => {
     if (gen !== progressGen) { clearInterval(progressInterval); return; }
+    // Skip IPC + save while paused — position hasn't moved, save is pointless.
+    // WS tick keeps _lastPolledPaused up to date.
+    if (_lastPolledPaused === true) return;
     try {
       const [pos, dur] = await Promise.all([
         mpvCommand(["get_property", "time-pos"]),
@@ -3630,15 +3636,34 @@ function startWsSync() {
         };
       } else if (activePlayer === "mpv" && nowPlaying) {
         try {
-          const [pos, dur, pause, fmt, height, vcodec, hwdec] = await Promise.all([
+          // Invalidate immutable cache when video changes
+          if (_mpvVideoInfoCache.url !== nowPlaying) {
+            _mpvVideoInfoCache = { url: nowPlaying, height: null, videoCodec: null, hwdec: null };
+          }
+          const needInfo = _mpvVideoInfoCache.height == null
+            || _mpvVideoInfoCache.videoCodec == null
+            || _mpvVideoInfoCache.hwdec == null;
+          const calls = [
             mpvCommand(["get_property", "time-pos"]),
             mpvCommand(["get_property", "duration"]),
             mpvCommand(["get_property", "pause"]),
             mpvCommand(["get_property", "file-format"]).catch(() => null),
-            mpvCommand(["get_property", "height"]).catch(() => null),
-            mpvCommand(["get_property", "video-format"]).catch(() => null),
-            mpvCommand(["get_property", "hwdec-current"]).catch(() => null),
-          ]);
+          ];
+          if (needInfo) {
+            calls.push(
+              mpvCommand(["get_property", "height"]).catch(() => null),
+              mpvCommand(["get_property", "video-format"]).catch(() => null),
+              mpvCommand(["get_property", "hwdec-current"]).catch(() => null),
+            );
+          }
+          const results = await Promise.all(calls);
+          const [pos, dur, pause, fmt] = results;
+          if (needInfo) {
+            const [, , , , height, vcodec, hwdec] = results;
+            if (height?.data != null) _mpvVideoInfoCache.height = height.data;
+            if (vcodec?.data != null) _mpvVideoInfoCache.videoCodec = vcodec.data;
+            if (hwdec?.data != null) _mpvVideoInfoCache.hwdec = hwdec.data;
+          }
           const isHls = (fmt?.data || "").includes("hls");
           const paused = !!pause?.data;
           // Auto-hide/show on external pause (AirPods, media keys) — same logic as /api/playpause
@@ -3668,9 +3693,9 @@ function startWsSync() {
             thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
             monitor: currentMonitor, windowMode: windowMode || "floating",
             visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen"),
-            height: height?.data || null,
-            videoCodec: vcodec?.data || null,
-            hwdec: hwdec?.data || null,
+            height: _mpvVideoInfoCache.height,
+            videoCodec: _mpvVideoInfoCache.videoCodec,
+            hwdec: _mpvVideoInfoCache.hwdec,
           };
         } catch {
           state = { type: "playback", playing: false };
