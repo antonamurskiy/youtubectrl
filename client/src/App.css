@@ -125,27 +125,47 @@ body {
   font-family: var(--font);
   font-size: var(--font-lg);
   outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  box-shadow: none;
 }
 
 .search-input::placeholder { color: var(--text-dim); text-align: left; }
-.search-input:focus { border-color: var(--accent2); }
+/* Kill iOS Safari autofill yellow box / outline when input has a value */
+.search-input:-webkit-autofill,
+.search-input:-webkit-autofill:hover,
+.search-input:-webkit-autofill:focus,
+.search-input:-internal-autofill-selected {
+  -webkit-text-fill-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg) inset;
+  box-shadow: 0 0 0 1000px var(--bg) inset;
+  transition: background-color 9999s ease-in-out 0s;
+  caret-color: var(--text);
+}
 
-.search-clear {
+/* When the search input is focused, hide tabs/status so search gets the full header width */
+.header:focus-within .tabs,
+.header:focus-within .header-status { display: none; }
+
+.search-clear { display: none; }
+.header:focus-within .search-clear {
+  display: flex;
   position: absolute;
-  right: 8px;
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
   width: 24px;
   height: 24px;
   background: none;
-  border: 1px solid var(--border);
-  color: var(--accent2);
-  font-size: var(--font-lg);
+  border: none;
+  color: var(--text-dim);
+  font-size: 18px;
   font-family: var(--font);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
+  padding: 0;
 }
 
 /* ── Section label ── */
