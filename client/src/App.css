@@ -1225,6 +1225,13 @@ body {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  transition: background 0.05s, color 0.05s, border-color 0.05s;
+}
+.claude-quick-reply button:active,
+.claude-quick-reply button.pressed {
+  background: var(--magenta);
+  color: var(--bg);
+  border-color: var(--magenta);
 }
 
 .claude-question {

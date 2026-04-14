@@ -25,6 +25,8 @@ function App() {
   const playing = usePlaybackStore(s => s.playing)
   const rawClaudeState = usePlaybackStore(s => s.claudeState)
   const [claudeState, setClaudeState] = useState('idle')
+  const [claudePressed, setClaudePressed] = useState(null)
+  useEffect(() => { if (rawClaudeState === 'waiting') setClaudePressed(null) }, [rawClaudeState])
   useEffect(() => {
     if (rawClaudeState === 'waiting') {
       setClaudeState('waiting')
@@ -113,7 +115,17 @@ function App() {
           {[1,2,3].map(n => {
             const opt = claudeOptions?.find(o => o.n === String(n))
             const label = opt ? `${n} ${opt.text}` : String(n)
-            return <button key={n} onClick={() => { const fn = useSyncStore.getState().terminalSendKey; if (fn) fn(String(n)); }}>{label}</button>
+            return (
+              <button
+                key={n}
+                className={claudePressed === n ? 'pressed' : ''}
+                onClick={() => {
+                  setClaudePressed(n)
+                  const fn = useSyncStore.getState().terminalSendKey
+                  if (fn) fn(String(n))
+                }}
+              >{label}</button>
+            )
           })}
         </div>
       )}
