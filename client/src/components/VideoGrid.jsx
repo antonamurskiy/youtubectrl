@@ -82,6 +82,7 @@ export default function VideoGrid() {
   const refresh = useUIStore(s => s.refresh)
   const setFilteredVideos = useUIStore(s => s.setFilteredVideos)
   const nowPlayingUrl = usePlaybackStore(s => s.url)
+  const nowPaused = usePlaybackStore(s => s.paused)
 
   const [videos, setVideos] = useState([])
   const [shorts, setShorts] = useState([])
@@ -243,6 +244,7 @@ export default function VideoGrid() {
               nowPlayingUrl === video.url ||
               nowPlayingUrl.includes(video.videoId)
             )}
+            isActive={!nowPaused}
           />
         ))}
       </div>

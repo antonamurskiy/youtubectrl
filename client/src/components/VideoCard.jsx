@@ -50,7 +50,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(months / 12)}y ago`
 }
 
-export default function VideoCard({ video, isPlaying }) {
+export default function VideoCard({ video, isPlaying, isActive }) {
   const addToast = useUIStore(s => s.addToast)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
@@ -209,7 +209,7 @@ export default function VideoCard({ video, isPlaying }) {
     <>
       <div
         ref={cardRef}
-        className={`video-card${isPlaying ? ' playing' : ''}`}
+        className={`video-card${isPlaying ? ' playing' : ''}${isPlaying && isActive ? ' active' : ''}`}
         onClick={handlePlay}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}

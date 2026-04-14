@@ -1298,7 +1298,7 @@ body {
   transform: translate(-50%, -50%) scale(0);
   width: 32px;
   height: 32px;
-  background: var(--accent);
+  background: var(--red);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1306,10 +1306,18 @@ body {
   pointer-events: none;
 }
 
-.play-indicator svg { width: 14px; height: 14px; fill: #151515; }
+.play-indicator svg { width: 14px; height: 14px; fill: var(--text); }
 
 .video-card.playing .play-indicator {
   animation: pop-in 0.2s ease forwards;
+}
+.video-card.playing.active .play-indicator {
+  animation: pop-in 0.2s ease forwards, pulse-red-bright 1.2s ease-in-out infinite 0.2s;
+}
+
+@keyframes pulse-red-bright {
+  0%, 100% { background: var(--red); }
+  50% { background: #ff5a5a; }
 }
 
 @keyframes pop-in {
