@@ -3,6 +3,19 @@ import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 
+// Module-level dedup cache: videoId -> Promise<url|null>.
+// Multiple VideoCard instances for the same video share one fetch.
+const previewUrlCache = new Map()
+function getPreviewUrl(videoId) {
+  if (previewUrlCache.has(videoId)) return previewUrlCache.get(videoId)
+  const p = fetch(`/api/preview-url?id=${videoId}`)
+    .then(r => r.json())
+    .then(d => d?.url || null)
+    .catch(() => { previewUrlCache.delete(videoId); return null })
+  previewUrlCache.set(videoId, p)
+  return p
+}
+
 function formatDuration(val) {
   if (!val) return null
   // Already formatted string like "16:27" or "1:02:30" — pass through
@@ -66,15 +79,15 @@ export default function VideoCard({ video, isPlaying }) {
     return () => observer.disconnect()
   }, [videoId, video.isLive, video.live, isMobile])
 
-  // Fetch preview URL when in view (prefetch) or previewing (desktop hover)
+  // Fetch preview URL when in view (prefetch) or previewing (desktop hover).
+  // Dedups across VideoCard instances sharing the same videoId.
   useEffect(() => {
     if ((!inView && !previewing) || terminalOpen || !videoId || previewUrl || video.isLive || video.live) return
-    const controller = new AbortController()
-    fetch(`/api/preview-url?id=${videoId}`, { signal: controller.signal })
-      .then(r => r.json())
-      .then(d => { if (d.url) setPreviewUrl(d.url) })
-      .catch(() => {})
-    return () => controller.abort()
+    let cancelled = false
+    getPreviewUrl(videoId).then((url) => {
+      if (!cancelled && url) setPreviewUrl(url)
+    })
+    return () => { cancelled = true }
   }, [inView, previewing, terminalOpen, videoId, previewUrl, video.isLive, video.live])
 
   // Mobile: preview on tap-hold; Desktop: hover
