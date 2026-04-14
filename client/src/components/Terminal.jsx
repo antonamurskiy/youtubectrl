@@ -2,7 +2,15 @@ import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { useSyncStore } from '../stores/sync'
+import { currentFont, currentFontSize, FONTS } from '../fonts'
 import '@xterm/xterm/css/xterm.css'
+
+// xterm needs a plain family string like "'JetBrains Mono', monospace"
+function xtermFontFamily() {
+  const label = currentFont()
+  const entry = FONTS.find(f => f[0] === label) || FONTS[0]
+  return entry[1]
+}
 
 export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, visible }) {
   const termRef = useRef(null)
@@ -14,8 +22,8 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     const css = getComputedStyle(document.documentElement)
     const v = (name) => css.getPropertyValue(name).trim()
     const term = new XTerm({
-      fontFamily: 'JetBrains Mono, monospace',
-      fontSize: 14,
+      fontFamily: xtermFontFamily(),
+      fontSize: currentFontSize(),
       theme: {
         background: v('--bg'),
         foreground: v('--text'),
@@ -80,6 +88,15 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     const handleResize = () => fitAddon.fit()
     window.addEventListener('resize', handleResize)
 
+    const handleFontChange = () => {
+      try {
+        term.options.fontFamily = xtermFontFamily()
+        term.options.fontSize = currentFontSize()
+        fitAddon.fit()
+      } catch {}
+    }
+    window.addEventListener('app-font-change', handleFontChange)
+
     // Resize terminal panel when iOS keyboard opens/closes
     const panel = termRef.current?.closest('.terminal-panel')
     const vv = window.visualViewport
@@ -107,6 +124,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     return () => {
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
       window.removeEventListener('resize', handleResize)
+      window.removeEventListener('app-font-change', handleFontChange)
       if (wsRef.current) wsRef.current.close()
       term.dispose()
     }
@@ -136,6 +154,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       <div className="terminal-container" ref={termRef} />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>
+        <button onClick={() => sendKey('\x02')}>^B</button>
         <button onClick={() => sendKey('\x03')}>^C</button>
         <button onClick={() => sendKey('\x0c')}>^L</button>
         <button onClick={() => sendKey('\x04')}>^D</button>

@@ -287,8 +287,9 @@ export default function VideoCard({ video, isPlaying }) {
                 const maxY = window.innerHeight - bottomBar - rect.height
                 // Position above the tap point, clamped to viewport
                 let y = contextMenu.y - rect.height - 8
-                const safeTop = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--safe-top')) || 48
-                if (y < safeTop) y = safeTop
+                const header = document.querySelector('.header')
+                const headerBottom = header ? header.getBoundingClientRect().bottom + 8 : 48
+                if (y < headerBottom) y = headerBottom
                 if (y > maxY) y = maxY
                 el.style.top = `${y}px`
                 el.style.left = `${Math.min(Math.max(contextMenu.x - rect.width / 2, 8), maxX)}px`

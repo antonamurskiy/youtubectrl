@@ -2,7 +2,77 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
-import { FONTS, applyFont, currentFont } from '../fonts'
+import { FONTS, applyFont, currentFont, FONT_SIZES, applyFontSize, currentFontSize } from '../fonts'
+
+const MIN_SIZE = 9
+const MAX_SIZE = 20
+
+function FontSizeScrubber({ value, onChange }) {
+  const ref = useRef(null)
+  const draggingRef = useRef(false)
+
+  const update = useCallback((clientX) => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width))
+    const pct = x / rect.width
+    const n = Math.round(MIN_SIZE + pct * (MAX_SIZE - MIN_SIZE))
+    if (n !== value) onChange(n)
+  }, [value, onChange])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onTouchStart = (e) => {
+      if (!e.touches || e.touches.length === 0) return
+      e.preventDefault()
+      draggingRef.current = true
+      update(e.touches[0].clientX)
+    }
+    const onTouchMove = (e) => {
+      if (!draggingRef.current || !e.touches || e.touches.length === 0) return
+      e.preventDefault()
+      update(e.touches[0].clientX)
+    }
+    const onTouchEnd = () => {
+      setTimeout(() => { draggingRef.current = false }, 50)
+    }
+    const onMouseDown = (e) => {
+      draggingRef.current = true
+      update(e.clientX)
+      const move = (ev) => { if (draggingRef.current) update(ev.clientX) }
+      const up = () => {
+        setTimeout(() => { draggingRef.current = false }, 50)
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+      }
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    el.addEventListener('mousedown', onMouseDown)
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('mousedown', onMouseDown)
+    }
+  }, [update])
+
+  const pct = ((value - MIN_SIZE) / (MAX_SIZE - MIN_SIZE)) * 100
+  return (
+    <div className="secret-menu-item size-area" ref={ref}>
+      <div className="size-fill" style={{ width: `${pct}%` }} />
+      <div className="size-label">{value}px</div>
+    </div>
+  )
+}
 
 export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
@@ -21,6 +91,7 @@ export default function SecretMenu() {
   const [showBt, setShowBt] = useState(false)
   const [showFonts, setShowFonts] = useState(false)
   const [fontSel, setFontSel] = useState(currentFont())
+  const [fontSize, setFontSize] = useState(currentFontSize())
   const volAreaRef = useRef(null)
   const draggingRef = useRef(false)
 
@@ -206,6 +277,7 @@ export default function SecretMenu() {
           </button>
         ))}
 
+        <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
         <button className="secret-menu-item" onClick={() => setShowFonts(!showFonts)}>
           Font: {fontSel}
         </button>

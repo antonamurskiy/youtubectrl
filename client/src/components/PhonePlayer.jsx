@@ -24,6 +24,9 @@ export default function PhonePlayer({ send }) {
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [compMode, setCompMode] = useState(false)
+  const [mini, setMini] = useState(false)
+  const [miniPos, setMiniPos] = useState(null) // {x, y} from top-left, null = default bottom-right
+  const dragRef = useRef(null)
   const compModeRef = useRef(false)
   const resumePosRef = useRef(0)
   const bgAudioRef = useRef(null)
@@ -524,7 +527,16 @@ export default function PhonePlayer({ send }) {
   return (
     <div className="phone-player" style={{
       ...((!phoneOpen && !streamUrl) ? { display: 'none' } : {}),
-      ...(compMode ? { transform: 'translateY(calc(-100% + 30px))', opacity: 0.4, transition: 'transform 0.3s, opacity 0.3s' } : { transform: 'translateY(0)', transition: 'transform 0.3s, opacity 0.3s' }),
+      ...(mini ? {
+        position: 'fixed',
+        ...(miniPos
+          ? { left: `${miniPos.x}px`, top: `${miniPos.y}px`, right: 'auto', bottom: 'auto' }
+          : { bottom: 'calc(env(safe-area-inset-bottom, 0px) + 120px)', right: '8px', left: 'auto', top: 'auto' }),
+        width: '180px',
+        zIndex: 200,
+        boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
+        touchAction: 'none',
+      } : (compMode ? { transform: 'translateY(calc(-100% + 30px))', opacity: 0.4, transition: 'transform 0.3s, opacity 0.3s' } : { transform: 'translateY(0)', transition: 'transform 0.3s, opacity 0.3s' })),
     }}>
       <video
         ref={(el) => {
@@ -535,7 +547,42 @@ export default function PhonePlayer({ send }) {
         playsInline
         autoPlay
         muted
-        controls
+        controls={!mini}
+        onPointerDown={(e) => {
+          if (!mini) return
+          e.preventDefault()
+          const el = e.currentTarget.parentElement
+          const rect = el.getBoundingClientRect()
+          dragRef.current = {
+            dx: e.clientX - rect.left,
+            dy: e.clientY - rect.top,
+            w: rect.width,
+            h: rect.height,
+            moved: false,
+            startX: e.clientX,
+            startY: e.clientY,
+            pointerId: e.pointerId,
+          }
+          e.currentTarget.setPointerCapture(e.pointerId)
+        }}
+        onPointerMove={(e) => {
+          const d = dragRef.current
+          if (!d || d.pointerId !== e.pointerId) return
+          const dist = Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY)
+          if (dist > 4) d.moved = true
+          if (!d.moved) return
+          const x = Math.max(4, Math.min(window.innerWidth - d.w - 4, e.clientX - d.dx))
+          const y = Math.max(4, Math.min(window.innerHeight - d.h - 4, e.clientY - d.dy))
+          setMiniPos({ x, y })
+        }}
+        onPointerUp={(e) => {
+          const d = dragRef.current
+          if (!d || d.pointerId !== e.pointerId) return
+          const wasMoved = d.moved
+          dragRef.current = null
+          try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+          if (!wasMoved && mini) setMini(false)
+        }}
         onLoadedMetadata={() => {
           if (phoneOnlyUrl && videoRef.current && resumePosRef.current > 0) {
             videoRef.current.currentTime = resumePosRef.current
@@ -563,6 +610,7 @@ export default function PhonePlayer({ send }) {
           <button onClick={() => nudgeRef.current?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
           <button onClick={() => nudgeRef.current?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
+        <button onClick={() => setMini(true)} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>MIN</button>
         {phoneOnlyUrl && <button onClick={compMode ? handlePhone : handleComp} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: compMode ? 'var(--green)' : 'var(--text)', border: '1px solid var(--text-dim)' }}>{compMode ? 'PHONE' : 'COMP'}</button>}
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>

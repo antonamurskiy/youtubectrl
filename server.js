@@ -3328,6 +3328,142 @@ const wss = new WebSocket.Server({ noServer: true });
 let pty;
 try { pty = require("@lydell/node-pty"); } catch { try { pty = require("node-pty"); } catch (e) { console.error("node-pty not available:", e.message); } }
 const wssTerm = new WebSocket.Server({ noServer: true });
+
+// ── Live chat WebSocket: server polls YouTube, drips messages to subscribers ──
+const wssChat = new WebSocket.Server({ noServer: true });
+// Map<videoId, { clients, chatId, seen, pageToken, pollTimer, flushTimer, queue, nextPollAt, primed, buffer }>
+const chatRooms = new Map();
+const CHAT_BUFFER_SIZE = 30;   // last-N messages replayed to late joiners
+const CHAT_INITIAL_SHOW = 12;  // how many backlog messages the first client sees
+
+function chatBroadcast(room, msg) {
+  const str = JSON.stringify(msg);
+  for (const ws of room.clients) {
+    if (ws.readyState === 1) ws.send(str);
+  }
+}
+
+function chatStopRoom(videoId) {
+  const room = chatRooms.get(videoId);
+  if (!room) return;
+  if (room.pollTimer) clearTimeout(room.pollTimer);
+  if (room.flushTimer) clearTimeout(room.flushTimer);
+  chatRooms.delete(videoId);
+}
+
+async function chatPollOnce(videoId) {
+  const room = chatRooms.get(videoId);
+  if (!room) return;
+  try {
+    const token = await getAccessToken();
+    if (!room.chatId) {
+      const vidData = await ytFetch("videos", { part: "liveStreamingDetails", id: videoId }, token);
+      room.chatId = vidData.items?.[0]?.liveStreamingDetails?.activeLiveChatId;
+      if (!room.chatId) {
+        chatBroadcast(room, { type: "error", error: "No active chat" });
+        // Retry every 30s in case the stream goes live later
+        room.pollTimer = setTimeout(() => chatPollOnce(videoId), 30000);
+        return;
+      }
+    }
+    const params = { part: "snippet,authorDetails", liveChatId: room.chatId, maxResults: 200 };
+    if (room.pageToken) params.pageToken = room.pageToken;
+    const chatData = await ytFetch("liveChat/messages", params, token);
+    const nextMs = chatData.pollingIntervalMillis || 5000;
+    room.nextPollAt = Date.now() + nextMs;
+    room.pageToken = chatData.nextPageToken || null;
+    const fresh = [];
+    for (const m of chatData.items || []) {
+      const id = m.id || ((m.snippet?.publishedAt || "") + (m.authorDetails?.displayName || ""));
+      if (room.seen.has(id)) continue;
+      room.seen.add(id);
+      fresh.push({
+        id,
+        author: m.authorDetails?.displayName || "",
+        text: m.snippet?.displayMessage || "",
+        isMod: !!m.authorDetails?.isChatModerator,
+        isOwner: !!m.authorDetails?.isChatOwner,
+        time: m.snippet?.publishedAt,
+      });
+    }
+    // Trim seen set so it doesn't grow forever
+    if (room.seen.size > 2000) {
+      const arr = Array.from(room.seen);
+      room.seen = new Set(arr.slice(-1000));
+    }
+    for (const m of fresh) {
+      room.buffer.push(m);
+      if (room.buffer.length > CHAT_BUFFER_SIZE) room.buffer.shift();
+    }
+    // On the very first poll, the API can return up to 200 messages of
+    // backlog. Broadcast just the last CHAT_INITIAL_SHOW so clients see
+    // recent context immediately without being overwhelmed.
+    const toSend = room.primed ? fresh : fresh.slice(-CHAT_INITIAL_SHOW);
+    for (const m of toSend) room.queue.push(m);
+    if (toSend.length && !room.flushTimer) chatFlushStep(videoId);
+    room.primed = true;
+    room.pollTimer = setTimeout(() => chatPollOnce(videoId), nextMs);
+  } catch (err) {
+    console.error("Live chat poll error:", err.message);
+    room.pollTimer = setTimeout(() => chatPollOnce(videoId), 5000);
+  }
+}
+
+function chatFlushStep(videoId) {
+  const room = chatRooms.get(videoId);
+  if (!room) return;
+  room.flushTimer = null;
+  if (room.queue.length === 0) return;
+  // Target: finish flushing the queue before the next poll. If the backlog is
+  // huge, burst multiple messages per step so we don't fall behind a fast chat.
+  const remaining = Math.max(200, (room.nextPollAt || Date.now() + 1000) - Date.now());
+  const idealPerMsg = remaining / room.queue.length;
+  const perMsg = Math.max(40, Math.min(500, idealPerMsg));
+  // How many messages to drip this step
+  const burst = idealPerMsg < 40 ? Math.max(1, Math.ceil(40 / idealPerMsg)) : 1;
+  for (let i = 0; i < burst && room.queue.length > 0; i++) {
+    chatBroadcast(room, { type: "message", message: room.queue.shift() });
+  }
+  if (room.queue.length === 0) return;
+  room.flushTimer = setTimeout(() => chatFlushStep(videoId), perMsg);
+}
+
+wssChat.on("connection", (ws, req) => {
+  const url = new URL(req.url, "http://x");
+  const videoId = url.searchParams.get("videoId");
+  if (!videoId) { ws.close(); return; }
+  let room = chatRooms.get(videoId);
+  if (!room) {
+    room = {
+      clients: new Set(),
+      chatId: null,
+      seen: new Set(),
+      pageToken: null,
+      pollTimer: null,
+      flushTimer: null,
+      queue: [],
+      nextPollAt: 0,
+      primed: false,
+      buffer: [],
+    };
+    chatRooms.set(videoId, room);
+    chatPollOnce(videoId);
+  }
+  room.clients.add(ws);
+  // Replay recent buffer so late joiners get context. Only send if the room
+  // has already been primed (otherwise the buffer is the backlog the first
+  // client explicitly wants to skip).
+  if (room.primed && room.buffer.length > 0) {
+    for (const m of room.buffer) {
+      try { ws.send(JSON.stringify({ type: "message", message: m })); } catch {}
+    }
+  }
+  ws.on("close", () => {
+    room.clients.delete(ws);
+    if (room.clients.size === 0) chatStopRoom(videoId);
+  });
+  ws.on("error", () => {});
+});
 let claudeState = 'idle'; // 'idle' | 'thinking' | 'waiting'
 let claudeOptions = []; // [{n: '1', text: 'Option A'}, ...]
 let claudeQuestion = '';
@@ -3431,6 +3567,8 @@ httpServer.on("upgrade", (req, socket, head) => {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
   } else if (req.url === "/ws/terminal") {
     wssTerm.handleUpgrade(req, socket, head, (ws) => wssTerm.emit("connection", ws, req));
+  } else if (req.url && req.url.startsWith("/ws/livechat")) {
+    wssChat.handleUpgrade(req, socket, head, (ws) => wssChat.emit("connection", ws, req));
   } else {
     socket.destroy();
   }

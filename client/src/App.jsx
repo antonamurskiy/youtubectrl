@@ -64,30 +64,34 @@ function App() {
     <>
       {phoneOpen && <PhonePlayer send={send} />}
 
-      <div className="app" style={terminalOpen ? { display: 'none' } : undefined}>
+      <div style={terminalOpen ? { display: 'none' } : undefined}>
         <header className="header">
-          <SearchBar />
-          <div className="tabs">
-            {tabs.map(t => (
-              <button
-                key={t}
-                className={`tab${activeTab === t ? ' active' : ''}`}
-                onClick={() => setTab(t)}
-              >
-                {t.charAt(0).toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-          <div className="header-status" onClick={toggleSecretMenu}>
-            <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} title="WebSocket" />
-            <div className={`status-dot ${macStatus.ethernet ? 'connected' : 'disconnected'}`} title="Ethernet" />
-            <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
-            <div className={`status-dot ${macStatus.screenOff ? 'disconnected' : 'connected'}`} title="Screen" />
-            <div className={`status-dot ${macStatus.keepAwake ? 'connected' : 'idle'}`} title="Keep awake" />
+          <div className="header-inner">
+            <SearchBar />
+            <div className="tabs">
+              {tabs.map(t => (
+                <button
+                  key={t}
+                  className={`tab${activeTab === t ? ' active' : ''}`}
+                  onClick={() => setTab(t)}
+                >
+                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                </button>
+              ))}
+            </div>
+            <div className="header-status" onClick={toggleSecretMenu}>
+              <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} title="WebSocket" />
+              <div className={`status-dot ${macStatus.ethernet ? 'connected' : 'disconnected'}`} title="Ethernet" />
+              <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
+              <div className={`status-dot ${macStatus.screenOff ? 'disconnected' : 'connected'}`} title="Screen" />
+              <div className={`status-dot ${macStatus.keepAwake ? 'connected' : 'idle'}`} title="Keep awake" />
+            </div>
           </div>
         </header>
 
-        <VideoGrid />
+        <div className="app">
+          <VideoGrid />
+        </div>
       </div>
 
       {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (

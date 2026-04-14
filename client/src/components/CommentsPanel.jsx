@@ -2,6 +2,15 @@ import { useEffect, useRef, useState } from 'react'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 
+// Deterministic per-author color via djb2 hash → HSL.
+// Keeps saturation/lightness fixed so the Afterglow bg stays readable.
+function authorColor(name) {
+  let h = 5381
+  for (let i = 0; i < (name || '').length; i++) h = ((h << 5) + h + name.charCodeAt(i)) | 0
+  const hue = Math.abs(h) % 360
+  return `hsl(${hue}, 65%, 72%)`
+}
+
 export default function CommentsPanel() {
   const toggleComments = useSyncStore(s => s.toggleComments)
   const url = usePlaybackStore(s => s.url)
@@ -11,16 +20,16 @@ export default function CommentsPanel() {
   const [comments, setComments] = useState(null) // null = loading
   const [chatMessages, setChatMessages] = useState([])
   const chatListRef = useRef(null)
-  const seenIdsRef = useRef(new Set())
-  const pollTimerRef = useRef(null)
-  const pageTokenRef = useRef(null)
   const aliveRef = useRef(true)
+  const stickToBottomRef = useRef(true)
+  const programmaticScrollRef = useRef(0)
+  const chatWsRef = useRef(null)
 
   useEffect(() => {
     aliveRef.current = true
     return () => {
       aliveRef.current = false
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+      if (chatWsRef.current) { try { chatWsRef.current.close() } catch {} chatWsRef.current = null }
     }
   }, [])
 
@@ -34,47 +43,48 @@ export default function CommentsPanel() {
       .catch(() => { if (aliveRef.current) setComments([]) })
   }, [videoId, isLive])
 
-  // Live: poll chat
+  // Live: subscribe to server-paced /ws/livechat feed
   useEffect(() => {
     if (!videoId || !isLive) return
     setChatMessages([])
-    seenIdsRef.current = new Set()
-    pageTokenRef.current = null
 
-    const poll = async () => {
-      try {
-        const tok = pageTokenRef.current
-        const r = await fetch(`/api/livechat?videoId=${videoId}${tok ? `&pageToken=${tok}` : ''}`)
-        const data = await r.json()
-        if (!aliveRef.current) return
-        if (data.messages?.length) {
-          const fresh = []
-          for (const m of data.messages) {
-            const id = (m.time || '') + (m.author || '')
-            if (seenIdsRef.current.has(id)) continue
-            seenIdsRef.current.add(id)
-            fresh.push(m)
-          }
-          if (fresh.length) {
-            setChatMessages(prev => [...prev, ...fresh].slice(-500))
-            // auto-scroll if near bottom
-            requestAnimationFrame(() => {
-              const el = chatListRef.current
-              if (el && el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
-                el.scrollTop = el.scrollHeight
-              }
-            })
-          }
-        }
-        pageTokenRef.current = data.nextPageToken || null
-        pollTimerRef.current = setTimeout(poll, data.pollingMs || 5000)
-      } catch {
-        pollTimerRef.current = setTimeout(poll, 5000)
-      }
+    const scrollToBottom = () => {
+      requestAnimationFrame(() => {
+        const el = chatListRef.current
+        if (!el || !stickToBottomRef.current) return
+        programmaticScrollRef.current = Date.now() + 700
+        try { el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' }) }
+        catch { el.scrollTop = el.scrollHeight }
+      })
     }
-    poll()
+
+    let closed = false
+    let reconnectTimer = null
+    const connect = () => {
+      if (closed) return
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
+      const ws = new WebSocket(`${proto}//${location.host}/ws/livechat?videoId=${videoId}`)
+      chatWsRef.current = ws
+      ws.onmessage = (e) => {
+        try {
+          const data = JSON.parse(e.data)
+          if (data.type === 'message' && data.message) {
+            setChatMessages(prev => [...prev, data.message].slice(-500))
+            scrollToBottom()
+          }
+        } catch {}
+      }
+      ws.onclose = () => {
+        if (closed) return
+        reconnectTimer = setTimeout(connect, 2000)
+      }
+      ws.onerror = () => { try { ws.close() } catch {} }
+    }
+    connect()
     return () => {
-      if (pollTimerRef.current) clearTimeout(pollTimerRef.current)
+      closed = true
+      if (reconnectTimer) clearTimeout(reconnectTimer)
+      if (chatWsRef.current) { try { chatWsRef.current.close() } catch {} chatWsRef.current = null }
     }
   }, [videoId, isLive])
 
@@ -84,13 +94,23 @@ export default function CommentsPanel() {
     <div className="comments-panel">
       <button className="comments-close" onClick={toggleComments}>×</button>
       {isLive ? (
-        <div className="comments-list" ref={chatListRef}>
+        <div
+          className="comments-list"
+          ref={chatListRef}
+          onScroll={(e) => {
+            // Ignore scroll events triggered by our own smooth-scroll animation
+            if (Date.now() < programmaticScrollRef.current) return
+            const el = e.currentTarget
+            // Re-enable stick when the user scrolls back within 40px of the bottom
+            stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40
+          }}
+        >
           {chatMessages.length === 0 && <div className="comments-loading">Waiting for messages…</div>}
           {chatMessages.map((m, i) => (
             <div key={i} className="chat-msg">
               <span
                 className="chat-author"
-                style={{ color: m.isOwner ? 'var(--green)' : m.isMod ? 'var(--blue)' : 'var(--text-dim)' }}
+                style={{ color: m.isOwner ? 'var(--green)' : m.isMod ? 'var(--blue)' : authorColor(m.author) }}
               >
                 {m.author}
               </span>

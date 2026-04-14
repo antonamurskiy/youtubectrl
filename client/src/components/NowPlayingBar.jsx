@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
@@ -99,6 +100,10 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const [seekPreview, setSeekPreview] = useState(null)
   const [currentPosVisible, setCurrentPosVisible] = useState(false)
   const [storyboard, setStoryboard] = useState(null)
+  const [titleMenu, setTitleMenu] = useState(null) // {x,y}
+  const longPressTimer = useRef(null)
+  const longPressTriggered = useRef(false)
+  const touchStartPos = useRef(null)
 
   const barRef = useRef(null)
   const seekConfirmTimeout = useRef(null)
@@ -250,11 +255,63 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     }
   }, [])
 
+  // iOS Safari PWA bug: position:fixed elements keep a stale composited snapshot
+  // when the tab is backgrounded. Force a repaint on visibilitychange / pageshow
+  // by briefly toggling display, which flushes the layer tree.
+  useEffect(() => {
+    const el = rootRef.current
+    if (!el) return
+    const nudge = () => {
+      if (document.visibilityState !== 'visible') return
+      const prev = el.style.display
+      el.style.display = 'none'
+      // force reflow
+      // eslint-disable-next-line no-unused-expressions
+      el.offsetHeight
+      el.style.display = prev
+    }
+    document.addEventListener('visibilitychange', nudge)
+    window.addEventListener('pageshow', nudge)
+    return () => {
+      document.removeEventListener('visibilitychange', nudge)
+      window.removeEventListener('pageshow', nudge)
+    }
+  }, [])
+
   const togglePlayPause = useCallback(() => {
     const ctrl = phoneCtrl()
     if (ctrl) { pb.paused ? ctrl.play() : ctrl.pause(); return }
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})
   }, [pb.paused])
+
+  const handleTitleTouchStart = useCallback((e) => {
+    longPressTriggered.current = false
+    const touch = e.touches?.[0] || e
+    touchStartPos.current = { x: touch.clientX, y: touch.clientY }
+    longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true
+      setTitleMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
+    }, 500)
+  }, [])
+  const handleTitleTouchMove = useCallback((e) => {
+    if (!longPressTimer.current || !touchStartPos.current) return
+    const touch = e.touches?.[0] || e
+    if (Math.abs(touch.clientX - touchStartPos.current.x) > 10 || Math.abs(touch.clientY - touchStartPos.current.y) > 10) {
+      clearTimeout(longPressTimer.current)
+      longPressTimer.current = null
+    }
+  }, [])
+  const handleTitleTouchEnd = useCallback(() => {
+    if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null }
+  }, [])
+  const handleTitleContextMenu = useCallback((e) => {
+    e.preventDefault()
+    setTitleMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+  const handleTitleClick = useCallback(() => {
+    if (longPressTriggered.current) return
+    togglePlayPause()
+  }, [togglePlayPause])
 
   const stopPlayback = useCallback(() => {
     fetch('/api/stop', { method: 'POST' }).catch(() => {})
@@ -487,7 +544,15 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
           style={{ backgroundImage: thumbnail ? `url(${thumbnail})` : 'none' }}
           onClick={togglePlayPause}
         />
-        <div className="np-info" onClick={togglePlayPause}>
+        <div
+          className="np-info"
+          onClick={handleTitleClick}
+          onTouchStart={handleTitleTouchStart}
+          onTouchMove={handleTitleTouchMove}
+          onTouchEnd={handleTitleTouchEnd}
+          onTouchCancel={handleTitleTouchEnd}
+          onContextMenu={handleTitleContextMenu}
+        >
           <div className="np-label">
             {pb.channel || (pb.isLive ? 'Live' : 'Now playing')}
             {pb.player && (() => {
@@ -505,6 +570,48 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         </button>
       </div>
 
+      {titleMenu && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            onClick={() => setTitleMenu(null)}
+          />
+          <div
+            className="context-menu"
+            ref={el => {
+              if (!el) return
+              const rect = el.getBoundingClientRect()
+              const maxX = window.innerWidth - rect.width - 8
+              let y = titleMenu.y - rect.height - 8
+              if (y < 8) y = titleMenu.y + 8
+              el.style.top = `${y}px`
+              el.style.left = `${Math.min(Math.max(titleMenu.x - rect.width / 2, 8), maxX)}px`
+              el.style.zIndex = 9999
+            }}
+          >
+            <button className="context-menu-item" onClick={() => {
+              if (pb.channel) useUIStore.getState().setChannel({ name: pb.channel })
+              setTitleMenu(null)
+            }}>
+              More from {pb.channel || 'channel'}
+            </button>
+            <button className="context-menu-item" onClick={() => {
+              if (pb.url) {
+                navigator.clipboard?.writeText(pb.url)
+                  .then(() => addToast('Link copied'))
+                  .catch(() => addToast('Copy failed'))
+              }
+              setTitleMenu(null)
+            }}>
+              Copy link
+            </button>
+            <button className="context-menu-item" onClick={() => setTitleMenu(null)} style={{ color: 'var(--accent2)' }}>
+              Close
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
     </div>
   )
 }

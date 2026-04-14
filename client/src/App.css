@@ -58,21 +58,28 @@ body {
   z-index: 1;
   max-width: 480px;
   margin: 0 auto;
-  padding: 0 16px calc(var(--safe-bottom) + 200px);
+  padding: 8px 16px calc(var(--safe-bottom) + 200px);
 }
 
 /* ── Header ── */
 .header {
+  position: sticky;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  z-index: 50;
+}
+
+.header-inner {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  padding: 4px 16px;
   padding-top: calc(env(safe-area-inset-top, 0px) + 4px);
-  border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
-  background: var(--bg);
-  z-index: 50;
+  max-width: 480px;
+  margin: 0 auto;
 }
 
 .logo-text {
@@ -195,7 +202,6 @@ body {
   padding: 8px 0;
   background: transparent;
   border: none;
-  border-bottom: 1px solid var(--border);
   cursor: pointer;
   position: relative;
   overflow: hidden;
@@ -384,7 +390,6 @@ body {
   display: flex;
   gap: 10px;
   padding: 8px;
-  border: 1px solid var(--border);
 }
 
 .skeleton-thumb {
@@ -445,13 +450,18 @@ body {
 }
 
 /* ── Now Playing bar ── */
+.now-playing, .now-playing * {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+  -webkit-touch-callout: none !important;
+  -webkit-tap-highlight-color: transparent;
+}
 .now-playing {
   display: flex;
   flex-direction: column;
   padding: 10px 12px;
   padding-bottom: calc(8px + var(--safe-bottom));
   background: var(--bg);
-  border-top: 1px solid var(--accent);
   position: fixed;
   bottom: 0;
   left: 0;
@@ -461,19 +471,19 @@ body {
   z-index: 100;
   gap: 4px;
   overflow: visible;
-  animation: slide-up 0.2s ease;
-}
-
-@keyframes slide-up {
-  from { transform: translateY(100%); }
-  to { transform: translateY(0); }
+  transform: translateZ(0);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  -webkit-transform-style: preserve-3d;
+  contain: layout paint;
 }
 
 .np-btn-row {
   display: flex;
   flex-direction: row;
   align-items: center;
-  width: 100%;
+  width: calc(100% + 24px);
+  margin: 0 -12px;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   padding: 4px 0;
@@ -513,6 +523,9 @@ body {
   gap: 8px;
   width: 100%;
   min-width: 0;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   overflow: hidden;
 }
 
@@ -527,6 +540,11 @@ body {
   cursor: pointer;
 }
 
+.np-top-row *, .np-info, .np-info *, .np-label, .np-title {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -webkit-touch-callout: none !important;
+}
 .np-info {
   flex: 1;
   min-width: 0;
@@ -584,20 +602,23 @@ body {
 
 .np-progress-bar {
   flex: none;
-  width: 100%;
+  width: calc(100% + 24px);
   height: 28px;
   background:
     repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
     repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
     var(--surface-hover);
   background-size: 2px 2px, 2px 2px, 100% 100%;
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-origin: border-box;
   position: relative;
   cursor: pointer;
   -webkit-user-select: none;
   user-select: none;
   touch-action: none;
   order: -1;
-  margin-bottom: 2px;
+  margin: -10px -12px 2px;
 }
 
 .np-progress-bar::before {
@@ -613,6 +634,9 @@ body {
     repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
     var(--text-dim);
   background-size: 2px 2px, 2px 2px, 100% 100%;
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-origin: border-box;
   width: 0%;
   pointer-events: none;
 }
@@ -825,6 +849,12 @@ body {
   padding: 3px 12px;
   font-size: var(--font-sm);
   word-wrap: break-word;
+  animation: chat-fade-in 280ms ease-out both;
+}
+
+@keyframes chat-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 .chat-author {
   font-weight: 700;
@@ -875,15 +905,85 @@ body {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--surface-hover);
+  background-size: 2px 2px, 2px 2px, 100% 100%;
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-origin: border-box;
+  overflow: hidden;
 }
-.vol-area:active { background: none !important; }
+.vol-area:active { background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--surface-hover) !important;
+  background-size: 2px 2px, 2px 2px, 100% 100% !important;
+}
+
+/* ── Font size scrubber (matches timeline scrubber) ── */
+.size-area {
+  position: relative;
+  height: 28px;
+  padding: 0;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--surface-hover);
+  background-size: 2px 2px, 2px 2px, 100% 100%;
+  overflow: hidden;
+}
+.size-area:active { background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--surface-hover) !important;
+  background-size: 2px 2px, 2px 2px, 100% 100% !important;
+}
+.size-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--text-dim);
+  background-size: 2px 2px, 2px 2px, 100% 100%;
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-origin: border-box;
+  pointer-events: none;
+}
+.size-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding-left: 12px;
+  font-family: var(--font);
+  font-size: var(--font-lg);
+  color: var(--text);
+  pointer-events: none;
+}
 
 .vol-fill {
   position: absolute;
   bottom: 0;
   left: 0;
   right: 0;
-  background: var(--surface-hover);
+  background:
+    repeating-linear-gradient(90deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, #151515 1px, #151515 2px),
+    var(--text-dim);
+  background-size: 2px 2px, 2px 2px, 100% 100%;
+  background-position: 0 0;
+  background-repeat: repeat;
+  background-origin: border-box;
   pointer-events: none;
 }
 
@@ -895,7 +995,7 @@ body {
   text-align: center;
   font-family: var(--font);
   font-size: var(--font-lg);
-  color: var(--text-dim);
+  color: var(--text);
   pointer-events: none;
 }
 
@@ -1247,6 +1347,11 @@ body {
   .app {
     max-width: 1200px;
     padding: 16px 24px calc(var(--safe-bottom) + 120px);
+  }
+
+  .header-inner {
+    max-width: 1200px;
+    padding: 4px 24px;
   }
 
   .now-playing { max-width: 1200px; }

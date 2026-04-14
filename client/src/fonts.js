@@ -33,6 +33,7 @@ export function applyFont(label) {
   ensureLink(entry[2])
   document.documentElement.style.setProperty('--font', entry[1])
   try { localStorage.setItem(STORAGE_KEY, entry[0]) } catch {}
+  window.dispatchEvent(new CustomEvent('app-font-change'))
 }
 
 export function loadSavedFont() {
@@ -43,4 +44,30 @@ export function loadSavedFont() {
 
 export function currentFont() {
   try { return localStorage.getItem(STORAGE_KEY) || FONTS[0][0] } catch { return FONTS[0][0] }
+}
+
+// Font size (global UI scale). Applied by overriding --font-lg and --font-sm.
+export const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16]
+const SIZE_KEY = 'uiFontSize'
+const DEFAULT_SIZE = 14
+
+export function applyFontSize(px) {
+  const n = Number(px) || DEFAULT_SIZE
+  document.documentElement.style.setProperty('--font-lg', `${n}px`)
+  document.documentElement.style.setProperty('--font-sm', `${Math.max(8, n - 2)}px`)
+  try { localStorage.setItem(SIZE_KEY, String(n)) } catch {}
+  window.dispatchEvent(new CustomEvent('app-font-change'))
+}
+
+export function loadSavedFontSize() {
+  let saved = null
+  try { saved = localStorage.getItem(SIZE_KEY) } catch {}
+  applyFontSize(saved ? Number(saved) : DEFAULT_SIZE)
+}
+
+export function currentFontSize() {
+  try {
+    const v = localStorage.getItem(SIZE_KEY)
+    return v ? Number(v) : DEFAULT_SIZE
+  } catch { return DEFAULT_SIZE }
 }
