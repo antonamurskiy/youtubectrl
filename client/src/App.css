@@ -475,7 +475,6 @@ body {
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   -webkit-transform-style: preserve-3d;
-  contain: layout paint;
 }
 
 .np-btn-row {

@@ -494,6 +494,7 @@ export default function PhonePlayer({ send }) {
     useSyncStore.getState().setPhoneVideoCtrl(null)
     compModeRef.current = true
     setCompMode(true)
+    setMini(true)
   }, [])
 
   const handlePhone = useCallback(() => {
@@ -512,6 +513,7 @@ export default function PhonePlayer({ send }) {
     fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
     compModeRef.current = false
     setCompMode(false)
+    setMini(false)
   }, [])
 
   const handleClose = useCallback(() => {
@@ -581,7 +583,19 @@ export default function PhonePlayer({ send }) {
           const wasMoved = d.moved
           dragRef.current = null
           try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
-          if (!wasMoved && mini) setMini(false)
+          if (!wasMoved && mini) {
+            // Block the synthetic click that follows this pointer sequence —
+            // expanding removes the video from under the pointer, so the click
+            // would otherwise land on the video card below.
+            const suppress = (ev) => {
+              ev.stopPropagation()
+              ev.preventDefault()
+              window.removeEventListener('click', suppress, true)
+            }
+            window.addEventListener('click', suppress, true)
+            setTimeout(() => window.removeEventListener('click', suppress, true), 400)
+            setMini(false)
+          }
         }}
         onLoadedMetadata={() => {
           if (phoneOnlyUrl && videoRef.current && resumePosRef.current > 0) {
