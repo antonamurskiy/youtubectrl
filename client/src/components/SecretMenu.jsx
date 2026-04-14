@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
+import { FONTS, applyFont, currentFont } from '../fonts'
 
 export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
@@ -18,6 +19,8 @@ export default function SecretMenu() {
   const [muted, setMuted] = useState(false)
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
+  const [showFonts, setShowFonts] = useState(false)
+  const [fontSel, setFontSel] = useState(currentFont())
   const volAreaRef = useRef(null)
   const draggingRef = useRef(false)
 
@@ -200,6 +203,20 @@ export default function SecretMenu() {
             }}
           >
             {d.connected ? '● ' : '  '}{d.name}
+          </button>
+        ))}
+
+        <button className="secret-menu-item" onClick={() => setShowFonts(!showFonts)}>
+          Font: {fontSel}
+        </button>
+        {showFonts && FONTS.map(([label, family]) => (
+          <button
+            key={label}
+            className="secret-menu-item"
+            style={{ paddingLeft: 24, fontFamily: family, color: label === fontSel ? 'var(--green)' : 'var(--text)' }}
+            onClick={() => { applyFont(label); setFontSel(label) }}
+          >
+            {label === fontSel ? '● ' : '  '}{label}
           </button>
         ))}
 
