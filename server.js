@@ -3076,6 +3076,7 @@ app.post("/api/playpause", async (_req, res) => {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
         } else if (!phoneActive) {
           execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+          execSync(`osascript -e 'tell application "System Events" to set frontmost of process "mpv" to true'`, { stdio: "ignore" });
           if (windowMode === "maximize") {
             const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
             if (wid) {
@@ -3878,6 +3879,14 @@ function startWsSync() {
                 execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
               } else if (!phoneActive) {
                 execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+                execSync(`osascript -e 'tell application "System Events" to set frontmost of process "mpv" to true'`, { stdio: "ignore" });
+                if (windowMode === "maximize") {
+                  const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+                  if (wid) {
+                    execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+                    execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+                  }
+                }
               }
             } catch {}
           }
