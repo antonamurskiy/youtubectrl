@@ -198,11 +198,46 @@ app.post("/api/keep-awake", (req, res) => {
 });
 
 // Bluetooth device management via blueutil
+const BT_BATTERY_BIN = path.join(__dirname, "bin", "bt-battery");
+const BT_BATTERY_SRC = path.join(__dirname, "bin", "bt-battery.swift");
+if (!fs.existsSync(BT_BATTERY_BIN) && fs.existsSync(BT_BATTERY_SRC)) {
+  try {
+    execSync(`swiftc ${JSON.stringify(BT_BATTERY_SRC)} -o ${JSON.stringify(BT_BATTERY_BIN)}`, { stdio: "inherit" });
+  } catch (e) { console.warn("[bt-battery] compile failed:", e.message); }
+}
+async function getBluetoothBatteryMap() {
+  try {
+    const { stdout } = await execP(BT_BATTERY_BIN, { timeout: 3000 });
+    const arr = JSON.parse(stdout);
+    const map = {};
+    for (const d of arr) {
+      const addr = (d.address || "").toLowerCase();
+      if (!addr) continue;
+      const single = d.batteryPercentSingle ?? null;
+      const left = d.batteryPercentLeft ?? null;
+      const right = d.batteryPercentRight ?? null;
+      const cse = d.batteryPercentCase ?? null;
+      const combined = d.batteryPercentCombined ?? null;
+      let battery = single ?? combined;
+      if (battery == null && left != null && right != null) battery = Math.min(left, right);
+      else if (battery == null) battery = left ?? right ?? cse;
+      map[addr] = { battery, left, right, case: cse };
+    }
+    return map;
+  } catch { return {}; }
+}
+
 app.get("/api/bluetooth-devices", async (_req, res) => {
   try {
-    const { stdout } = await execP("blueutil --paired --format json", { env: { ...process.env, BLUEUTIL_USE_SYSTEM_PROFILER: "1" } });
+    const [{ stdout }, batteryMap] = await Promise.all([
+      execP("blueutil --paired --format json", { env: { ...process.env, BLUEUTIL_USE_SYSTEM_PROFILER: "1" } }),
+      getBluetoothBatteryMap(),
+    ]);
     const devices = JSON.parse(stdout).filter(d => d.name && !d.name.includes("Keyboard") && !d.name.includes("Mouse") && !d.name.includes("Trackpad") && !d.name.includes("Keychron") && !d.name.includes("iPhone"));
-    res.json({ devices: devices.map(d => ({ address: d.address, name: d.name, connected: d.connected })) });
+    res.json({ devices: devices.map(d => {
+      const bat = batteryMap[(d.address || "").toLowerCase()] || {};
+      return { address: d.address, name: d.name, connected: d.connected, battery: bat.battery ?? null, batteryLeft: bat.left ?? null, batteryRight: bat.right ?? null, batteryCase: bat.case ?? null };
+    }) });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post("/api/bluetooth-connect", async (req, res) => {
@@ -3520,6 +3555,20 @@ app.post("/api/tmux-send", (req, res) => {
   try {
     execSync(`tmux send-keys -t 0 "${keys}" Enter`, { stdio: "ignore" });
     res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/tmux-rename", (req, res) => {
+  const { index, name } = req.body;
+  if (index == null || !name) return res.status(400).json({ error: "index and name required" });
+  const safe = String(name).replace(/[^a-zA-Z0-9_\-. ]/g, "").slice(0, 32);
+  if (!safe) return res.status(400).json({ error: "name empty after sanitize" });
+  try {
+    execSync(`tmux rename-window -t 0:${parseInt(index)} ${JSON.stringify(safe)}`, { stdio: "ignore" });
+    refreshTmuxWindows();
+    res.json({ ok: true, name: safe });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

@@ -259,23 +259,32 @@ export default function SecretMenu() {
         }}>
           Bluetooth
         </button>
-        {showBt && btDevices.map(d => (
-          <button
-            key={d.address}
-            className="secret-menu-item"
-            style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)' }}
-            onClick={() => {
-              const action = d.connected ? 'disconnect' : 'connect'
-              fetch(`/api/bluetooth-${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: d.address }) })
-                .then(r => r.json()).then(res => {
-                  addToast(res.ok ? `${action === 'connect' ? 'Connected' : 'Disconnected'} ${d.name}` : 'Failed')
-                  fetch('/api/bluetooth-devices').then(r => r.json()).then(dd => setBtDevices(dd.devices || [])).catch(() => {})
-                }).catch(() => addToast('Failed'))
-            }}
-          >
-            {d.connected ? '● ' : '  '}{d.name}
-          </button>
-        ))}
+        {showBt && btDevices.map(d => {
+          const hasSplit = d.batteryLeft != null && d.batteryRight != null
+          const batText = hasSplit
+            ? `L${d.batteryLeft} R${d.batteryRight}${d.batteryCase != null ? ` C${d.batteryCase}` : ''}`
+            : (d.battery != null ? `${d.battery}%` : '')
+          const lowest = hasSplit ? Math.min(d.batteryLeft, d.batteryRight) : d.battery
+          const batColor = lowest != null && lowest <= 20 ? 'var(--red)' : 'var(--text-dim)'
+          return (
+            <button
+              key={d.address}
+              className="secret-menu-item"
+              style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              onClick={() => {
+                const action = d.connected ? 'disconnect' : 'connect'
+                fetch(`/api/bluetooth-${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: d.address }) })
+                  .then(r => r.json()).then(res => {
+                    addToast(res.ok ? `${action === 'connect' ? 'Connected' : 'Disconnected'} ${d.name}` : 'Failed')
+                    fetch('/api/bluetooth-devices').then(r => r.json()).then(dd => setBtDevices(dd.devices || [])).catch(() => {})
+                  }).catch(() => addToast('Failed'))
+              }}
+            >
+              <span>{d.connected ? '● ' : '  '}{d.name}</span>
+              {batText && <span style={{ fontSize: 'var(--font-sm)', color: batColor }}>{batText}</span>}
+            </button>
+          )
+        })}
 
         <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
         <button className="secret-menu-item" onClick={() => setShowFonts(!showFonts)}>

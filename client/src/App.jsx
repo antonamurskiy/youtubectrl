@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { flushSync } from 'react-dom'
+import { tick as hapticTick } from './haptics'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useUIStore } from './stores/ui'
@@ -14,6 +16,78 @@ import Toast from './components/Toast'
 import { lazy, Suspense } from 'react'
 const Terminal = lazy(() => import('./components/Terminal'))
 import './App.css'
+
+function TmuxTabButton({ window: w }) {
+  const pressStartRef = useRef(0)
+  const inputRef = useRef(null)
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(w.name)
+
+  const commit = () => {
+    const next = value.trim()
+    if (next && next !== w.name) {
+      fetch('/api/tmux-rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index, name: next }) }).catch(() => {})
+    }
+    setEditing(false)
+  }
+  const cancel = () => { setValue(w.name); setEditing(false) }
+
+  const enterEdit = () => {
+    hapticTick()
+    setValue(w.name)
+    flushSync(() => setEditing(true))
+    if (inputRef.current) {
+      inputRef.current.focus()
+      const len = inputRef.current.value.length
+      inputRef.current.setSelectionRange(len, len)
+    }
+  }
+
+  const handleEnd = (e) => {
+    const dur = Date.now() - pressStartRef.current
+    pressStartRef.current = 0
+    if (dur >= 500) {
+      e.preventDefault()
+      e.stopPropagation()
+      enterEdit()
+    } else {
+      e.stopPropagation()
+      fetch('/api/tmux-select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index }) }).catch(() => {})
+    }
+  }
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        className="tmux-tab-input"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') { e.preventDefault(); commit() }
+          else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+        }}
+        maxLength={32}
+      />
+    )
+  }
+
+  return (
+    <button
+      style={w.active ? { color: 'var(--green)', borderColor: 'var(--green)' } : undefined}
+      onTouchStart={() => { pressStartRef.current = Date.now() }}
+      onTouchEnd={handleEnd}
+      onTouchCancel={() => { pressStartRef.current = 0 }}
+      onMouseDown={() => { pressStartRef.current = Date.now() }}
+      onMouseUp={handleEnd}
+      onMouseLeave={() => { pressStartRef.current = 0 }}
+      onContextMenu={(e) => e.preventDefault()}
+    >
+      {w.name.match(/^\d+\.\d+/) ? w.index : w.name}
+    </button>
+  )
+}
 
 function App() {
   const { send } = useSync()
@@ -129,13 +203,7 @@ function App() {
       {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (
         <div className="tmux-tabs">
           {tmuxWindows.map(w => (
-            <button
-              key={w.index}
-              style={w.active ? { color: 'var(--green)', borderColor: 'var(--green)' } : undefined}
-              onClick={(e) => { e.stopPropagation(); fetch('/api/tmux-select', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index }) }).catch(() => {}) }}
-            >
-              {w.name.match(/^\d+\.\d+/) ? w.index : w.name.slice(0, 3)}
-            </button>
+            <TmuxTabButton key={w.index} window={w} />
           ))}
         </div>
       )}

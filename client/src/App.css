@@ -1262,6 +1262,24 @@ body {
   font-size: var(--font-sm);
   cursor: pointer;
   border: 1px solid rgba(60,56,54,0.6);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.tmux-tab-input {
+  padding: 4px 8px;
+  background: #151515;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  border: 1px solid var(--green);
+  border-radius: 0;
+  outline: none;
+  width: 8ch;
+  -webkit-appearance: none;
+  appearance: none;
+  caret-color: var(--green);
 }
 
 .fab-tmux {
