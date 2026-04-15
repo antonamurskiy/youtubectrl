@@ -948,6 +948,23 @@ let homeFeedType = null;
 let recShortsCache = [];
 let recFilteredCache = [];
 
+function getFinishedIds() {
+  const ids = new Set();
+  for (const h of historyMap.values()) {
+    if (h.duration > 0 && h.position / h.duration >= 0.95) {
+      const m = h.url?.match(/v=([\w-]+)/);
+      if (m) ids.add(m[1]);
+    }
+  }
+  return ids;
+}
+function filterFinished(videos, finished) {
+  return videos.filter(v => {
+    const id = v.id || v.url?.match(/v=([\w-]+)/)?.[1];
+    return !id || !finished.has(id);
+  });
+}
+
 app.get("/api/home", async (req, res) => {
   const page = parseInt(req.query.page) || 0;
   const feed = req.query.feed || 'home'; // 'home' (mixed), 'recommended', 'subscriptions'
@@ -956,26 +973,27 @@ app.get("/api/home", async (req, res) => {
     // Recommended uses browse API with continuation for infinite scroll, falls back to yt-dlp
     if (feed === 'recommended') {
       // Always fetch fresh — browse API for initial, continuation for more
+      const finished = getFinishedIds();
       if (page === 0 || homeFeedType !== feed) {
         recContinuation = null;
         try {
           const result = await browseRecommended();
           if (result.videos.length < 5) throw new Error("too few results");
-          homeFeedCache = result.videos;
+          homeFeedCache = filterFinished(result.videos, finished);
           recShortsCache = result.shorts || [];
           recFilteredCache = result.filtered || [];
         } catch {
-          homeFeedCache = await getSingleFeed('recommended', 150);
+          homeFeedCache = filterFinished(await getSingleFeed('recommended', 150), finished);
           recContinuation = null;
         }
         homeFeedType = feed;
       }
-      // Fetch continuations until we have enough videos for this page
+      // Fetch continuations until we have enough videos for this page (post-filter)
       while (recContinuation && (page + 1) * pageSize > homeFeedCache.length) {
         try {
           const result = await browseRecommended(recContinuation);
           if (!result.videos.length) break;
-          homeFeedCache = [...homeFeedCache, ...result.videos];
+          homeFeedCache = [...homeFeedCache, ...filterFinished(result.videos, finished)];
           if (result.filtered?.length) recFilteredCache = [...recFilteredCache, ...result.filtered];
         } catch { break; }
       }

@@ -48,6 +48,36 @@ function App() {
   useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
   const refresh = useUIStore(s => s.refresh)
   const longPressRef = useRef(null)
+
+  // Desktop keyboard shortcuts: space play/pause, ←/→ skip 5s
+  const kbSkipPosRef = useRef(null)
+  const kbSkipResetRef = useRef(null)
+  useEffect(() => {
+    if (!playing) return
+    const onKey = (e) => {
+      const target = e.target
+      const tag = target?.tagName
+      if (target?.isContentEditable || tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.code === 'Space') {
+        e.preventDefault()
+        fetch('/api/playpause', { method: 'POST' }).catch(() => {})
+      } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+        e.preventDefault()
+        const delta = e.code === 'ArrowLeft' ? -5 : 5
+        const pb = usePlaybackStore.getState()
+        const base = kbSkipPosRef.current ?? (pb.position || 0)
+        const newPos = Math.max(0, Math.min(pb.duration || Infinity, base + delta))
+        kbSkipPosRef.current = newPos
+        clearTimeout(kbSkipResetRef.current)
+        kbSkipResetRef.current = setTimeout(() => { kbSkipPosRef.current = null }, 2000)
+        fetch('/api/seek', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ position: newPos }) }).catch(() => {})
+        useUIStore.getState().addToast(`${delta > 0 ? '+' : ''}${delta}s`)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [playing])
   const didLongPressRef = useRef(false)
   const [macStatus, setMacStatus] = useState({ locked: false, screenOff: false })
 

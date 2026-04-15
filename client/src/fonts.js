@@ -54,7 +54,7 @@ const DEFAULT_SIZE = 14
 export function applyFontSize(px) {
   const n = Number(px) || DEFAULT_SIZE
   document.documentElement.style.setProperty('--font-lg', `${n}px`)
-  document.documentElement.style.setProperty('--font-sm', `${Math.max(8, n - 2)}px`)
+  document.documentElement.style.setProperty('--font-sm', `${n}px`)
   try { localStorage.setItem(SIZE_KEY, String(n)) } catch {}
   window.dispatchEvent(new CustomEvent('app-font-change'))
 }

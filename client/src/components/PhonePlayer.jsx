@@ -24,9 +24,29 @@ export default function PhonePlayer({ send }) {
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
   const [compMode, setCompMode] = useState(false)
-  const [mini, setMini] = useState(false)
-  const [miniPos, setMiniPos] = useState(null) // {x, y} from top-left, null = default bottom-right
+  const [mini, setMini] = useState(() => {
+    try { return localStorage.getItem('phone-mini') === '1' } catch { return false }
+  })
+  useEffect(() => {
+    try { localStorage.setItem('phone-mini', mini ? '1' : '0') } catch {}
+  }, [mini])
+  const [miniPos, setMiniPos] = useState(() => {
+    try { const v = localStorage.getItem('phone-mini-pos'); return v ? JSON.parse(v) : null } catch { return null }
+  })
+  const [miniWidth, setMiniWidth] = useState(() => {
+    try { const v = parseInt(localStorage.getItem('phone-mini-width'), 10); return Number.isFinite(v) && v >= 140 ? v : 260 } catch { return 260 }
+  })
+  useEffect(() => {
+    try {
+      if (miniPos) localStorage.setItem('phone-mini-pos', JSON.stringify(miniPos))
+      else localStorage.removeItem('phone-mini-pos')
+    } catch {}
+  }, [miniPos])
+  useEffect(() => {
+    try { localStorage.setItem('phone-mini-width', String(miniWidth)) } catch {}
+  }, [miniWidth])
   const dragRef = useRef(null)
+  const resizeRef = useRef(null)
   const compModeRef = useRef(false)
   const resumePosRef = useRef(0)
   const bgAudioRef = useRef(null)
@@ -534,7 +554,7 @@ export default function PhonePlayer({ send }) {
         ...(miniPos
           ? { left: `${miniPos.x}px`, top: `${miniPos.y}px`, right: 'auto', bottom: 'auto' }
           : { bottom: 'calc(env(safe-area-inset-bottom, 0px) + 120px)', right: '8px', left: 'auto', top: 'auto' }),
-        width: '180px',
+        width: `${miniWidth}px`,
         zIndex: 200,
         boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
         touchAction: 'none',
@@ -615,7 +635,51 @@ export default function PhonePlayer({ send }) {
         }}
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: 'var(--bg)' }}
       />
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
+      {mini && (
+        <div
+          onPointerDown={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            resizeRef.current = {
+              pointerId: e.pointerId,
+              startX: e.clientX,
+              startWidth: miniWidth,
+              startPosX: miniPos?.x ?? null,
+            }
+            e.currentTarget.setPointerCapture(e.pointerId)
+          }}
+          onPointerMove={(e) => {
+            const r = resizeRef.current
+            if (!r || r.pointerId !== e.pointerId) return
+            const dx = r.startX - e.clientX // drag left → positive → grow
+            const newW = Math.max(140, Math.min(window.innerWidth - 16, r.startWidth + dx))
+            setMiniWidth(newW)
+            if (r.startPosX !== null) {
+              // Anchor right edge: move left by the width delta
+              const deltaW = newW - r.startWidth
+              setMiniPos(p => p ? { x: Math.max(4, r.startPosX - deltaW), y: p.y } : p)
+            }
+          }}
+          onPointerUp={(e) => {
+            const r = resizeRef.current
+            if (!r || r.pointerId !== e.pointerId) return
+            resizeRef.current = null
+            try { e.currentTarget.releasePointerCapture(e.pointerId) } catch {}
+          }}
+          style={{
+            position: 'absolute',
+            left: -22,
+            bottom: -22,
+            width: 44,
+            height: 44,
+            cursor: 'nesw-resize',
+            touchAction: 'none',
+            background: 'transparent',
+            zIndex: 2,
+          }}
+        />
+      )}
+      <div style={{ display: mini ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <button onClick={() => nudgeRef.current?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>

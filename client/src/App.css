@@ -349,14 +349,14 @@ body {
 
 .shorts-card {
   flex-shrink: 0;
-  width: 140px;
+  width: 180px;
   cursor: pointer;
 }
 
 .shorts-thumb-wrap {
   position: relative;
-  width: 140px;
-  height: 249px;
+  width: 180px;
+  height: 320px;
   overflow: hidden;
   border: 1px solid var(--border);
 }
@@ -1359,21 +1359,25 @@ body {
 /* ── Desktop layout ── */
 @media (min-width: 768px) {
   .app {
-    max-width: 1200px;
+    max-width: none;
     padding: 16px 24px calc(var(--safe-bottom) + 120px);
   }
 
   .header-inner {
-    max-width: 1200px;
+    max-width: none;
     padding: 4px 24px;
   }
 
-  .now-playing { max-width: 1200px; }
+  .now-playing {
+    max-width: none;
+    padding-left: 24px;
+    padding-right: 24px;
+  }
 
   .video-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-    gap: 16px;
+    gap: 20px;
   }
 
   .video-card {
@@ -1398,5 +1402,11 @@ body {
   .video-title {
     font-size: var(--font-lg);
     -webkit-line-clamp: 2;
+  }
+}
+
+@media (min-width: 1400px) {
+  .video-grid {
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   }
 }

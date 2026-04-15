@@ -210,7 +210,10 @@ export default function VideoCard({ video, isPlaying, isActive }) {
       <div
         ref={cardRef}
         className={`video-card${isPlaying ? ' playing' : ''}${isPlaying && isActive ? ' active' : ''}`}
+        role="button"
+        tabIndex={0}
         onClick={handlePlay}
+        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handlePlay() } }}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onTouchStart={handleCardTouchStart}
