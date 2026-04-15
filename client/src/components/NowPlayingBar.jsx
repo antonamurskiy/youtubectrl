@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
+import { copyText } from '../clipboard'
 
 function formatTime(s) {
   if (!s || s < 0) return '0:00'
@@ -595,11 +596,10 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             }}>
               More from {pb.channel || 'channel'}
             </button>
-            <button className="context-menu-item" onClick={() => {
+            <button className="context-menu-item" onClick={async () => {
               if (pb.url) {
-                navigator.clipboard?.writeText(pb.url)
-                  .then(() => addToast('Link copied'))
-                  .catch(() => addToast('Copy failed'))
+                const ok = await copyText(pb.url)
+                addToast(ok ? 'Link copied' : 'Copy failed')
               }
               setTitleMenu(null)
             }}>

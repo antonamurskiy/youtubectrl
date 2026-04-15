@@ -1267,6 +1267,20 @@ body {
   user-select: none;
 }
 
+/* View Transitions API: smooth reshuffle on silent tab refresh */
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: 280ms;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+/* Give chrome elements their own snapshots so tagged video-card snapshots
+   don't paint over them. Stacking order follows DOM order. */
+.now-playing { view-transition-name: now-playing-bar; }
+.header { view-transition-name: app-header; }
+.fab-refresh { view-transition-name: fab-refresh; }
+.fab-cmux { view-transition-name: fab-cmux; }
+.fab-tmux { view-transition-name: fab-tmux; }
+
 .tmux-tab-input {
   padding: 4px 8px;
   background: #151515;

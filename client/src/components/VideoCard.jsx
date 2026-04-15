@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
+import { copyText } from '../clipboard'
 
 // Module-level dedup cache: videoId -> Promise<url|null>.
 // Multiple VideoCard instances for the same video share one fetch.
@@ -192,10 +193,9 @@ export default function VideoCard({ video, isPlaying, isActive }) {
     setContextMenu(null)
   }, [videoUrl, video.title, video.channel, video.thumbnail, video.isLive, video.live])
 
-  const handleCopyLink = useCallback(() => {
-    navigator.clipboard?.writeText(videoUrl)
-      .then(() => addToast('Link copied'))
-      .catch(() => addToast('Copy failed'))
+  const handleCopyLink = useCallback(async () => {
+    const ok = await copyText(videoUrl)
+    addToast(ok ? 'Link copied' : 'Copy failed')
     setContextMenu(null)
   }, [videoUrl, addToast])
 
@@ -210,6 +210,7 @@ export default function VideoCard({ video, isPlaying, isActive }) {
       <div
         ref={cardRef}
         className={`video-card${isPlaying ? ' playing' : ''}${isPlaying && isActive ? ' active' : ''}`}
+        style={{ viewTransitionName: `vc-${(video.videoId || video.id || videoUrl).replace(/[^a-zA-Z0-9_-]/g, '_')}` }}
         role="button"
         tabIndex={0}
         onClick={handlePlay}

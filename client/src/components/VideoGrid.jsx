@@ -1,10 +1,19 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import { useUIStore } from '../stores/ui'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import VideoCard from './VideoCard'
 
 const PAGE_SIZE = 24
+
+const tabCache = new Map()
+function cacheKeyFor(tab, searchQuery, channelQuery) {
+  if (tab === 'filtered') return null
+  if (tab === 'search') return searchQuery ? `search:${searchQuery}` : null
+  if (tab === 'channel') return channelQuery ? `channel:${channelQuery.id || channelQuery.name}` : null
+  return tab
+}
 
 function ShortCard({ short }) {
   const terminalOpen = useSyncStore(s => s.terminalOpen)
@@ -94,10 +103,11 @@ export default function VideoGrid() {
   const genRef = useRef(0)
   const loadMoreRef = useRef(null)
 
-  const fetchVideos = useCallback(async (page = null) => {
+  const fetchVideos = useCallback(async (page = null, opts = {}) => {
+    const { silent = false } = opts
     const gen = genRef.current
 
-    if (!page) {
+    if (!page && !silent) {
       setLoading(true)
       setVideos([])
       setShorts([])
@@ -167,27 +177,58 @@ export default function VideoGrid() {
       const items = data.videos || data.items || data || []
       const token = data.nextPageToken || null
 
-      if (page) {
-        setVideos(prev => [...prev, ...items])
-      } else {
-        setVideos(items)
-        setShorts(data.shorts || [])
-        if (data.filtered?.length) setFilteredVideos(data.filtered)
-        setSectionLabel(
-          tab === 'search' ? `Search: ${searchQuery}` :
-          tab === 'rec' ? 'Recommended' :
-          tab === 'subs' ? 'Subscriptions' :
-          tab === 'home' ? 'Home' :
-          tab === 'live' ? 'Live' :
-          tab === 'history' ? 'History' :
-          tab === 'ru' ? 'Rumble' :
-          tab === 'channel' ? (channelQuery?.name || 'Channel') :
-          tab === 'filtered' ? 'Filtered' : ''
-        )
+      const label =
+        tab === 'search' ? `Search: ${searchQuery}` :
+        tab === 'rec' ? 'Recommended' :
+        tab === 'subs' ? 'Subscriptions' :
+        tab === 'home' ? 'Home' :
+        tab === 'live' ? 'Live' :
+        tab === 'history' ? 'History' :
+        tab === 'ru' ? 'Rumble' :
+        tab === 'channel' ? (channelQuery?.name || 'Channel') :
+        tab === 'filtered' ? 'Filtered' : ''
+
+      const newHasMore = (tab === 'home' || tab === 'rec' || tab === 'subs') && !!token
+
+      const apply = () => {
+        if (page) {
+          setVideos(prev => {
+            const next = [...prev, ...items]
+            const key = cacheKeyFor(tab, searchQuery, channelQuery)
+            if (key) {
+              const prevCache = tabCache.get(key) || {}
+              tabCache.set(key, { ...prevCache, videos: next, hasMore: newHasMore, nextPage: token })
+            }
+            return next
+          })
+        } else {
+          setVideos(items)
+          setShorts(data.shorts || [])
+          if (data.filtered?.length) setFilteredVideos(data.filtered)
+          setSectionLabel(label)
+          const key = cacheKeyFor(tab, searchQuery, channelQuery)
+          if (key) {
+            tabCache.set(key, {
+              videos: items,
+              shorts: data.shorts || [],
+              sectionLabel: label,
+              hasMore: newHasMore,
+              nextPage: token,
+            })
+          }
+        }
+        setHasMore(newHasMore)
+        setNextPage(token)
       }
 
-      setHasMore((tab === 'home' || tab === 'rec' || tab === 'subs') && !!token)
-      setNextPage(token)
+      // Silent background refresh: animate the reshuffle via the View
+      // Transitions API so cards slide to their new positions instead of
+      // popping. Falls back to a plain setState in browsers without it.
+      if (silent && typeof document !== 'undefined' && document.startViewTransition) {
+        document.startViewTransition(() => flushSync(apply))
+      } else {
+        apply()
+      }
     } catch (err) {
       console.error('Failed to fetch videos:', err)
     } finally {
@@ -197,11 +238,30 @@ export default function VideoGrid() {
     }
   }, [activeTab, searchQuery, channelQuery])
 
-  // Re-fetch when tab, search, or refreshKey changes
+  // Re-fetch when tab, search, or refreshKey changes.
+  // If we have cached data for this tab, render it instantly and refresh in
+  // the background so the swap is invisible.
+  const prevRefreshKeyRef = useRef(refreshKey)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     genRef.current += 1
-    fetchVideos()
+    const tab = activeTab === 'search' ? 'search' : activeTab
+    const key = cacheKeyFor(tab, searchQuery, channelQuery)
+    const isRefresh = refreshKey !== prevRefreshKeyRef.current
+    prevRefreshKeyRef.current = refreshKey
+    if (isRefresh && key) tabCache.delete(key)
+    const cached = key && !isRefresh ? tabCache.get(key) : null
+    if (cached) {
+      setVideos(cached.videos)
+      setShorts(cached.shorts)
+      setSectionLabel(cached.sectionLabel)
+      setHasMore(cached.hasMore)
+      setNextPage(cached.nextPage)
+      setLoading(false)
+      fetchVideos(null, { silent: true })
+    } else {
+      fetchVideos()
+    }
   }, [activeTab, searchQuery, channelQuery, refreshKey])
 
   // Infinite scroll for home tab
