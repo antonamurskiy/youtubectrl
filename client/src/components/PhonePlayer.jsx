@@ -527,8 +527,8 @@ export default function PhonePlayer({ send }) {
           send({ type: 'vlc-rate', rate: 1.0 })
         }
       } else {
-        // VOD sync — seek when drift accumulates past threshold. Rate
-        // control oscillated at the ~4s control-loop latency floor.
+        // VOD sync — hard seek on big drift, plus a "steady state" seek
+        // once drift has stabilised in the sub-second band.
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed
@@ -543,10 +543,8 @@ export default function PhonePlayer({ send }) {
         send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvPos.toFixed(2), phone: +phonePos.toFixed(2) })
 
         const now3 = Date.now()
-        // Two-tier cooldown:
-        //  - drift > 1.0s: quick seek, short 2.5s cooldown (catches reload)
-        //  - drift > 0.3s: slower 6s cooldown (catches gradual accumulation
-        //    without chasing the oscillation we saw at tighter thresholds)
+
+        // --- Big-drift seek ---
         const threshold = now3 - lastSeekRef.current > 6000 ? 0.3 : 1.0
         if (Math.abs(drift) > threshold && now3 - lastSeekRef.current > 2500) {
           const target = mpvPos + (isNativeIOS ? 0 : 0.2)
@@ -559,8 +557,42 @@ export default function PhonePlayer({ send }) {
           }
           lastSeekRef.current = now3
           driftSamplesRef.current = []
-          // Belt-and-suspenders: reset rate in case any path sent a nudge
+          steadyDriftAtRef.current = 0
           send({ type: 'mpv-speed', speed: 1.0 })
+          return
+        }
+
+        // --- Steady-state one-shot seek ---
+        // If drift has been stable (within ±0.05s of its mean) for 4s,
+        // and we're outside 30ms, fire a single seek. Since drift is
+        // steady there's no oscillation feedback — this one correction
+        // should stick.
+        if (Math.abs(drift) > 0.03) {
+          if (!steadyDriftAtRef.current) {
+            steadyDriftAtRef.current = now3
+            driftAtSteadyRef.current = drift
+          } else if (Math.abs(drift - driftAtSteadyRef.current) > 0.05) {
+            // Moved too much — not steady, restart the clock
+            steadyDriftAtRef.current = now3
+            driftAtSteadyRef.current = drift
+          } else if (
+            now3 - steadyDriftAtRef.current > 4000 &&
+            now3 - lastSeekRef.current > 8000
+          ) {
+            const target = mpvPos + (isNativeIOS ? 0 : 0.2)
+            if (isNativeIOS) {
+              NativePlayer.seek(target).catch(() => {})
+              _nativePos = target
+              _nativePosAt = Date.now()
+            } else {
+              video.currentTime = target
+            }
+            lastSeekRef.current = now3
+            driftSamplesRef.current = []
+            steadyDriftAtRef.current = 0
+          }
+        } else {
+          steadyDriftAtRef.current = 0
         }
       }
     }, 1000)
