@@ -223,7 +223,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         cmd.changePlaybackPositionCommand.isEnabled = true
         cmd.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
-            self?.player?.seek(to: CMTime(seconds: positionEvent.positionTime, preferredTimescale: 600))
+            self?.player?.seek(to: CMTime(seconds: positionEvent.positionTime, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
             self?.notifyListeners("remoteSeek", data: ["position": positionEvent.positionTime])
             return .success
         }
@@ -427,7 +427,11 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             return
         }
         DispatchQueue.main.async {
-            self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+            // Composition items require zero tolerances and waiting for the
+            // current seek to complete before issuing the next one — otherwise
+            // AVPlayer silently drops the request.
+            let time = CMTime(seconds: position, preferredTimescale: 600)
+            self.player?.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero) { _ in }
             self.updateNowPlayingPlaybackState()
             call.resolve()
         }
