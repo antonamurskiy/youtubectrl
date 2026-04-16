@@ -6,6 +6,84 @@ import { useUIStore } from '../stores/ui'
 import { isNativeIOS, NativePlayer } from '../native/player'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
+// Controls overlay shown on top of the native AVPlayer's video when we
+// can't use the HTML <video> element's built-in controls (native iOS).
+// Tap the overlay to toggle play/pause via phoneVideoCtrl. Fades out
+// after inactivity.
+function NativeControlsOverlay({ videoRef }) {
+  const [visible, setVisible] = useState(true)
+  const [paused, setPaused] = useState(false)
+  const hideTimer = useRef(null)
+  useEffect(() => {
+    // Poll native state so the icon reflects actual playback
+    let alive = true
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await NativePlayer.getState()
+        if (s && typeof s.paused === 'boolean') setPaused(s.paused)
+      } catch {}
+      setTimeout(() => alive && tick(), 500)
+    }
+    tick()
+    return () => { alive = false }
+  }, [])
+  const show = () => {
+    setVisible(true)
+    if (hideTimer.current) clearTimeout(hideTimer.current)
+    hideTimer.current = setTimeout(() => setVisible(false), 2500)
+  }
+  useEffect(() => { show() }, [])
+  const toggle = (e) => {
+    e.stopPropagation()
+    hapticTick()
+    const ctrl = useSyncStore.getState().phoneVideoCtrl
+    if (ctrl) {
+      if (paused) { ctrl.play?.(); setPaused(false) }
+      else { ctrl.pause?.(); setPaused(true) }
+    }
+    show()
+  }
+  return (
+    <div
+      onClick={show}
+      style={{
+        position: 'absolute',
+        inset: 0,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        background: visible ? 'rgba(0,0,0,0.2)' : 'transparent',
+        transition: 'background 0.2s',
+        zIndex: 1,
+      }}
+    >
+      <button
+        onClick={toggle}
+        style={{
+          width: 56,
+          height: 56,
+          background: 'rgba(0,0,0,0.5)',
+          border: '1px solid rgba(255,255,255,0.6)',
+          color: '#fff',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: visible ? 1 : 0,
+          transition: 'opacity 0.2s',
+          pointerEvents: visible ? 'auto' : 'none',
+          padding: 0,
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="28" height="28" fill="currentColor">
+          {paused ? <polygon points="5,3 19,12 5,21" /> : <g><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></g>}
+        </svg>
+      </button>
+    </div>
+  )
+}
+
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
   const userOffsetRef = useRef(0)
@@ -698,6 +776,9 @@ export default function PhonePlayer({ send }) {
         }}
         style={{ width: '100%', maxHeight: '30vh', display: 'block', background: 'var(--bg)' }}
       />
+      {isNativeIOS && phoneOnlyUrl && !mini && (
+        <NativeControlsOverlay videoRef={videoRef} />
+      )}
       {mini && (
         <div
           onPointerDown={(e) => {

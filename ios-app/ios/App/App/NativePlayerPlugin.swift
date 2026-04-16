@@ -127,14 +127,22 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let visible = call.getBool("visible") ?? true
         DispatchQueue.main.async {
             self.ensureLayer()
-            guard let container = self.playerContainer, let layer = self.playerLayer else {
+            guard let container = self.playerContainer, let layer = self.playerLayer,
+                  let wv = self.bridge?.webView else {
                 call.resolve(["ok": false]); return
             }
             if visible {
-                // Logical points (WKWebView uses the same coordinate space)
-                container.frame = CGRect(x: x, y: y, width: max(1, w), height: max(1, h))
+                // getBoundingClientRect returns coordinates in the WebView's
+                // viewport. Convert to the parent view's coordinate space by
+                // adding the WebView's origin.
+                let wvOrigin = wv.frame.origin
+                container.frame = CGRect(
+                    x: wvOrigin.x + x,
+                    y: wvOrigin.y + y,
+                    width: max(1, w),
+                    height: max(1, h)
+                )
             } else {
-                // Park offscreen but don't destroy — PiP needs the layer alive
                 container.frame = CGRect(x: -9999, y: -9999, width: 1, height: 1)
             }
             CATransaction.begin()
