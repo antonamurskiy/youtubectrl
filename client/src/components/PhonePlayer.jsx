@@ -416,45 +416,12 @@ export default function PhonePlayer({ send }) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive && pb.player === 'mpv') {
-        // mpv live: mpv's time-pos is PTS (huge absolute value), phone's
-        // AVPlayer currentTime is 0-based from HLS load. Need calibration
-        // offset — track the initial difference, then measure drift
-        // relative to it. Also compensate for mpv audio output lag.
-        const MPV_AUDIO_LAG = 0.4
-        const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
-        const rawDiff = pb.position - phonePos // huge on first call (PTS vs 0-based)
-        if (calibOffsetRef.current === null) {
-          calibOffsetRef.current = rawDiff
-          setDrift('calibrated (mpv live)')
-          return
-        }
-        // drift = how far phonePos has drifted from the calibrated offset.
-        // Negative means phone is behind; positive means phone is ahead.
-        const drift = (rawDiff - calibOffsetRef.current) + MPV_AUDIO_LAG + userOffsetRef.current
-
-        driftSamplesRef.current.push(drift)
-        if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
-        const smoothed = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
-
-        setDrift(`drift: ${smoothed.toFixed(2)}s`)
-        send({ type: 'phone-state', drift: +smoothed.toFixed(2) })
-
-        const now = Date.now()
-        const threshold = now - lastSeekRef.current > 6000 ? 0.3 : 1.0
-        if (Math.abs(smoothed) > threshold && now - lastSeekRef.current > 2500) {
-          const targetPhone = phonePos + smoothed
-          if (isNativeIOS) {
-            NativePlayer.seek(targetPhone).catch(() => {})
-            _nativePos = targetPhone
-            _nativePosAt = Date.now()
-          } else {
-            video.currentTime = targetPhone
-          }
-          lastSeekRef.current = now
-          driftSamplesRef.current = []
-          if (Math.abs(smoothed) > 5) calibOffsetRef.current = null
-          send({ type: 'mpv-speed', speed: 1.0 })
-        }
+        // Live: don't fight the live edge. AVPlayer on iOS maintains a
+        // stable latency from live, mpv does the same. Both naturally
+        // converge near live edge. Trying to force-sync produced worse
+        // results than leaving them alone.
+        setDrift('live (no sync)')
+        send({ type: 'phone-state', drift: 0 })
       } else if (pb.isLive && pb.player === 'vlc') {
         // Detect DVR seeks by large position jumps
         const lastVlcPos = vlcLastPosRef.current || pb.position
@@ -486,57 +453,10 @@ export default function PhonePlayer({ send }) {
           }
           return
         }
-        // PDT-based absolute time sync
-        // Interpolate VLC time forward since last server update to avoid sawtooth
-        const clockOffset = useSyncStore.getState().clockOffset || 0
-        // clockOffset = serverClock - clientClock, so clientNow + clockOffset ≈ serverNow
-        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) : 0
-        const vlcAbsMs = pb.absoluteMs ? pb.absoluteMs + elapsed : null
-        let phoneAbsMs = null
-
-        // Note: getStartDate() is unstable on Safari live HLS — shifts as manifest
-        // sliding window moves. Skip PDT path for live, use behind-live fallback only.
-
-        // Simplified VLC live: one drift calculation, big-seek-only.
-        // Prefer PDT absolute time when available, fall back to vlcTime.
-        const phonePos = isNativeIOS ? nativePosNow() : video.currentTime
-        let rawDrift = null
-        if (vlcAbsMs && phoneAbsMs) {
-          rawDrift = (vlcAbsMs - phoneAbsMs) / 1000 + userOffsetRef.current
-        } else if (pb.vlcTime != null) {
-          rawDrift = (pb.vlcTime - phonePos) + userOffsetRef.current
-        }
-        if (rawDrift == null || Math.abs(rawDrift) > 300) return
-
-        if (calibOffsetRef.current === null) {
-          calibOffsetRef.current = rawDrift
-          setDrift('calibrated')
-          return
-        }
-        driftSamplesRef.current.push(rawDrift - calibOffsetRef.current)
-        if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
-        const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
-
-        setDrift(`drift: ${drift.toFixed(2)}s`)
-        send({ type: 'phone-state', drift: +drift.toFixed(2) })
-
-        const now = Date.now()
-        if (Math.abs(drift) > 1.5 && now - lastSeekRef.current > 5000) {
-          if (isNativeIOS) {
-            NativePlayer.seek(phonePos + drift).catch(() => {})
-            _nativePos = phonePos + drift
-            _nativePosAt = Date.now()
-          } else {
-            video.currentTime += drift
-          }
-          if (Math.abs(drift) > 5) {
-            calibOffsetRef.current = null
-            driftSamplesRef.current = []
-          }
-          lastSeekRef.current = now
-          // Reset rate in case a previous session left it nudged
-          send({ type: 'vlc-rate', rate: 1.0 })
-        }
+        // Live: don't fight the live edge. Phone + VLC both naturally
+        // stay at live edge; drift-chasing made things worse.
+        setDrift('live (no sync)')
+        send({ type: 'phone-state', drift: 0 })
       } else {
         // VOD sync — hard seek on big drift, plus a "steady state" seek
         // once drift has stabilised in the sub-second band.
