@@ -335,6 +335,18 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
 
   const stopPlayback = useCallback(() => {
     fetch('/api/stop', { method: 'POST' }).catch(() => {})
+    // Also kill any native AVPlayer — it wouldn't be affected by /api/stop
+    // (which targets mpv). Handles PiP dismissal + layer park offscreen.
+    import('../native/player').then(({ NativePlayer, isNativeIOS }) => {
+      if (isNativeIOS) NativePlayer.stop().catch(() => {})
+    }).catch(() => {})
+    // Also close phone-only session if one is active
+    const syncStore = useSyncStore.getState()
+    if (syncStore.phoneOnlyUrl) {
+      fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+      syncStore.setPhoneOnly(null)
+      syncStore.setPhoneOpen(false)
+    }
   }, [])
 
   const moveMonitor = useCallback((monitor) => {

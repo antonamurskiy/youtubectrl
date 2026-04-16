@@ -415,6 +415,13 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             self.pipController?.stopPictureInPicture()
             self.player?.pause()
             self.player?.replaceCurrentItem(with: nil)
+            // Tear down fully so the video layer and audio session go away
+            self.playerLayer?.player = nil
+            self.playerContainer?.removeFromSuperview()
+            self.playerContainer = nil
+            self.playerLayer = nil
+            self.pipController = nil
+            self.player = nil
             self.setIdleTimer(disabled: false)
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             call.resolve()
