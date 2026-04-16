@@ -198,25 +198,25 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             return .success
         }
 
-        cmd.skipForwardCommand.preferredIntervals = [15]
+        cmd.skipForwardCommand.preferredIntervals = [10]
         cmd.skipForwardCommand.isEnabled = true
         cmd.skipForwardCommand.addTarget { [weak self] _ in
             if let p = self?.player {
                 let now = p.currentTime().seconds
-                p.seek(to: CMTime(seconds: now + 15, preferredTimescale: 600))
+                p.seek(to: CMTime(seconds: now + 10, preferredTimescale: 600))
             }
-            self?.notifyListeners("remoteSkip", data: ["delta": 15])
+            self?.notifyListeners("remoteSkip", data: ["delta": 10])
             return .success
         }
 
-        cmd.skipBackwardCommand.preferredIntervals = [15]
+        cmd.skipBackwardCommand.preferredIntervals = [10]
         cmd.skipBackwardCommand.isEnabled = true
         cmd.skipBackwardCommand.addTarget { [weak self] _ in
             if let p = self?.player {
                 let now = p.currentTime().seconds
-                p.seek(to: CMTime(seconds: max(0, now - 15), preferredTimescale: 600))
+                p.seek(to: CMTime(seconds: max(0, now - 10), preferredTimescale: 600))
             }
-            self?.notifyListeners("remoteSkip", data: ["delta": -15])
+            self?.notifyListeners("remoteSkip", data: ["delta": -10])
             return .success
         }
 
