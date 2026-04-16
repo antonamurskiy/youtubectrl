@@ -588,6 +588,8 @@ export default function PhonePlayer({ send }) {
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
     send({ type: 'mpv-speed', speed: 1.0 })
     setPhoneOpen(false)
+    setStreamUrl(null)
+    loadedUrlRef.current = null
   }, [setPhoneOpen, send])
 
   // On native iOS in phone-only mode, poll the AVPlayer's state and push
@@ -649,7 +651,7 @@ export default function PhonePlayer({ send }) {
     return () => { alive = false; cancelAnimationFrame(id) }
   }, [phoneOpen, streamUrl])
 
-  if (!phoneOpen && !streamUrl) return null
+  if (!phoneOpen) return null
 
   return (
     <div className="phone-player" style={{
