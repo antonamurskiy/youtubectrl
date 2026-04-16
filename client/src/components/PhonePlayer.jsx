@@ -698,7 +698,7 @@ export default function PhonePlayer({ send }) {
         zIndex: 200,
         boxShadow: '0 4px 16px rgba(0,0,0,0.6)',
         touchAction: 'none',
-      } : (compMode ? { transform: 'translateY(calc(-100% + 30px))', opacity: 0.4, transition: 'transform 0.3s, opacity 0.3s' } : { transform: 'translateY(0)', transition: 'transform 0.3s, opacity 0.3s' })),
+      } : { transform: 'translateY(0)', transition: 'transform 0.3s, opacity 0.3s' }),
     }}>
       <video
         ref={(el) => {
