@@ -72,8 +72,6 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var volumeSlider: UISlider?
     private var volumeObserver: NSKeyValueObservation?
     private var restoringVolume = false
-    // Rapid-press acceleration
-    private var lastVolumeButtonAt: Date?
 
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
@@ -523,18 +521,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             guard let newValue = change.newValue else { return }
             let delta = newValue - self.volumeBaseline
             if abs(delta) < 0.005 { return }
-            // Rapid-press acceleration: first press = 8, subsequent within
-            // 300ms ramp up through 10 / 15 / 20.
-            let now = Date()
-            var bumpMag = 8
-            if let last = self.lastVolumeButtonAt {
-                let gap = now.timeIntervalSince(last)
-                if gap < 0.12 { bumpMag = 20 }
-                else if gap < 0.25 { bumpMag = 15 }
-                else if gap < 0.4 { bumpMag = 10 }
-            }
-            self.lastVolumeButtonAt = now
-            let bump = delta > 0 ? bumpMag : -bumpMag
+            let bump = delta > 0 ? 5 : -5
             self.notifyListeners("volumeButton", data: ["delta": bump])
             self.restoreVolume(to: self.volumeBaseline)
         }

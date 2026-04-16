@@ -16,6 +16,7 @@ import NowPlayingBar from './components/NowPlayingBar'
 import SecretMenu from './components/SecretMenu'
 import CommentsPanel from './components/CommentsPanel'
 import SearchBar from './components/SearchBar'
+import VolumeHud from './components/VolumeHud'
 import { useRouting } from './hooks/useRouting'
 import Toast from './components/Toast'
 import { lazy, Suspense } from 'react'
@@ -365,6 +366,7 @@ function App() {
       {secretMenuOpen && <SecretMenu />}
 
       <Toast />
+      <VolumeHud />
     </>
   )
 }

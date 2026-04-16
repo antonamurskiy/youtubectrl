@@ -35,6 +35,10 @@ export function useVolumeButtons() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delta }),
+      }).then(r => r.json()).then(d => {
+        if (typeof d.volume === 'number') {
+          window.dispatchEvent(new CustomEvent('mac-volume', { detail: { volume: d.volume } }))
+        }
       }).catch(() => {})
     })
     return () => {
