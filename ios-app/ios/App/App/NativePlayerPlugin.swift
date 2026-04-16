@@ -4,6 +4,7 @@ import AVKit
 import AVFoundation
 import MediaPlayer
 import UIKit
+import ActivityKit
 
 /**
  * Native video player + PiP + system integration for YouTubeCtrl.
@@ -42,7 +43,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "clearNowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showAirPlayPicker", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setVolumeIntercept", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "setVolumeIntercept", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "startLiveActivity", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateLiveActivity", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "endLiveActivity", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -73,6 +77,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var volumeSlider: UISlider?
     private var volumeObserver: NSKeyValueObservation?
     private var restoringVolume = false
+
+    // Live Activity (lock screen widget)
+    private var liveActivity: Any? // Activity<YouTubeCtrlActivityAttributes> on iOS 16.1+
 
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
@@ -562,6 +569,83 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             self?.restoringVolume = false
+        }
+    }
+
+    // MARK: - Live Activity
+
+    @objc func startLiveActivity(_ call: CAPPluginCall) {
+        guard #available(iOS 16.2, *) else { call.resolve(["ok": false, "reason": "iOS 16.1+ required"]); return }
+        if !ActivityAuthorizationInfo().areActivitiesEnabled {
+            call.resolve(["ok": false, "reason": "Activities disabled in Settings"])
+            return
+        }
+        let title = call.getString("title") ?? ""
+        let channel = call.getString("channel") ?? ""
+        let artworkUrl = call.getString("artworkUrl") ?? ""
+        let volume = call.getInt("volume") ?? 50
+        let paused = call.getBool("paused") ?? false
+        let position = call.getDouble("position") ?? 0
+        let duration = call.getDouble("duration") ?? 0
+        let isLive = call.getBool("isLive") ?? false
+
+        // End any existing activity first
+        endLiveActivityInternal()
+
+        let state = YouTubeCtrlActivityAttributes.ContentState(
+            title: title, channel: channel, artworkUrl: artworkUrl,
+            volume: volume, paused: paused, position: position,
+            duration: duration, isLive: isLive
+        )
+        let attributes = YouTubeCtrlActivityAttributes()
+        do {
+            let act = try Activity<YouTubeCtrlActivityAttributes>.request(
+                attributes: attributes,
+                content: .init(state: state, staleDate: nil),
+                pushType: nil
+            )
+            self.liveActivity = act
+            call.resolve(["ok": true, "id": act.id])
+        } catch {
+            call.resolve(["ok": false, "reason": "\(error)"])
+        }
+    }
+
+    @objc func updateLiveActivity(_ call: CAPPluginCall) {
+        guard #available(iOS 16.2, *) else { call.resolve(["ok": false]); return }
+        guard let act = self.liveActivity as? Activity<YouTubeCtrlActivityAttributes> else {
+            call.resolve(["ok": false, "reason": "no active activity"]); return
+        }
+        let title = call.getString("title") ?? act.content.state.title
+        let channel = call.getString("channel") ?? act.content.state.channel
+        let artworkUrl = call.getString("artworkUrl") ?? act.content.state.artworkUrl
+        let volume = call.getInt("volume") ?? act.content.state.volume
+        let paused = call.getBool("paused") ?? act.content.state.paused
+        let position = call.getDouble("position") ?? act.content.state.position
+        let duration = call.getDouble("duration") ?? act.content.state.duration
+        let isLive = call.getBool("isLive") ?? act.content.state.isLive
+
+        let state = YouTubeCtrlActivityAttributes.ContentState(
+            title: title, channel: channel, artworkUrl: artworkUrl,
+            volume: volume, paused: paused, position: position,
+            duration: duration, isLive: isLive
+        )
+        Task {
+            await act.update(.init(state: state, staleDate: nil))
+            call.resolve(["ok": true])
+        }
+    }
+
+    @objc func endLiveActivity(_ call: CAPPluginCall) {
+        endLiveActivityInternal()
+        call.resolve()
+    }
+
+    private func endLiveActivityInternal() {
+        guard #available(iOS 16.2, *) else { return }
+        if let act = self.liveActivity as? Activity<YouTubeCtrlActivityAttributes> {
+            Task { await act.end(nil, dismissalPolicy: .immediate) }
+            self.liveActivity = nil
         }
     }
 

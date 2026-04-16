@@ -8,6 +8,7 @@ import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useVolumeButtons } from './hooks/useVolumeButtons'
+import { useLiveActivity } from './hooks/useLiveActivity'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -103,6 +104,7 @@ function App() {
   useNativeNowPlaying({ send })
   useClaudeNotification()
   useVolumeButtons()
+  useLiveActivity()
   const { activeTab, setTab, secretMenuOpen, toggleSecretMenu, refresh, refreshing } = useUIStore(
     useShallow(s => ({
       activeTab: s.activeTab,

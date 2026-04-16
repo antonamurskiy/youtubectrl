@@ -39,6 +39,10 @@
 	<string>Connects to your YouTubeCtrl server on the local network.</string>
 	<key>NSUserNotificationUsageDescription</key>
 	<string>Lets YouTubeCtrl alert you when Claude is waiting for input.</string>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>NSSupportsLiveActivitiesFrequentUpdates</key>
+	<true/>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
