@@ -2473,30 +2473,45 @@ app.get("/api/volume", async (_req, res) => {
   }
 });
 
+// Mac volume cache — avoids round-tripping osascript on every button press
+let _cachedVolume = null;
+let _pendingVolumeTimer = null;
+
 app.post("/api/volume", async (req, res) => {
   const vol = parseInt(req.body.volume);
   if (isNaN(vol) || vol < 0 || vol > 100) return res.status(400).json({ error: "Invalid volume" });
   try {
     await execP(`osascript -e 'set volume output volume ${vol}'`);
+    _cachedVolume = vol;
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Volume failed" });
   }
 });
 
-// Relative bump — used by phone hardware volume buttons
+// Relative bump — used by phone hardware volume buttons.
 app.post("/api/volume-bump", async (req, res) => {
   const delta = parseInt(req.body.delta);
   if (isNaN(delta)) return res.status(400).json({ error: "Invalid delta" });
   try {
-    const cur = parseInt((await execP(`osascript -e 'output volume of (get volume settings)'`)).stdout.trim()) || 0;
-    const next = Math.max(0, Math.min(100, cur + delta));
-    await execP(`osascript -e 'set volume output volume ${next}'`);
+    if (_cachedVolume == null) {
+      _cachedVolume = parseInt((await execP(`osascript -e 'output volume of (get volume settings)'`)).stdout.trim()) || 0;
+    }
+    _cachedVolume = Math.max(0, Math.min(100, _cachedVolume + delta));
+    // Respond immediately with the expected value — the osascript call is
+    // debounced so rapid presses only fire one system call at the end.
+    const next = _cachedVolume;
     res.json({ ok: true, volume: next });
+    if (_pendingVolumeTimer) clearTimeout(_pendingVolumeTimer);
+    _pendingVolumeTimer = setTimeout(() => {
+      _pendingVolumeTimer = null;
+      execP(`osascript -e 'set volume output volume ${next}'`).catch(() => {});
+    }, 30);
   } catch {
     res.status(500).json({ error: "Volume failed" });
   }
 });
+
 
 // Refresh cookies from Firefox (requires Mac to be unlocked)
 app.post("/api/refresh-cookies", async (_req, res) => {
