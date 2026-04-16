@@ -539,7 +539,7 @@ export default function PhonePlayer({ send }) {
         // audible playback; phone being visibly behind audio means we need
         // phone to TARGET a later position. Add the compensation rather
         // than subtract.
-        const MPV_AUDIO_LAG = 0.8
+        const MPV_AUDIO_LAG = 0.4
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed + MPV_AUDIO_LAG
