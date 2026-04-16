@@ -441,6 +441,17 @@ body {
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+.fab-refresh svg.spin {
+  animation: spin 1s linear infinite;
+  transform-origin: 50% 50%;
+  transform-box: fill-box;
+}
+
+.fab-refresh:has(svg.spin) {
+  color: var(--green);
+  border-color: var(--green);
+}
+
 .empty-state {
   text-align: center;
   padding: 48px 20px;
@@ -867,7 +878,7 @@ body {
 /* ── Secret menu ── */
 .secret-menu {
   position: fixed;
-  top: calc(env(safe-area-inset-top) + 8px);
+  top: calc(env(safe-area-inset-top) + 36px);
   right: 16px;
   background: #151515;
   border: 1px solid var(--border);
@@ -1364,8 +1375,8 @@ body {
 
 /* ── Status dot ── */
 .status-dot {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 .status-dot.connected {
   background: var(--green);
@@ -1383,9 +1394,8 @@ body {
   color: var(--text-dim);
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   padding: 8px;
-  gap: 5px;
 }
 
 /* ── Desktop layout ── */

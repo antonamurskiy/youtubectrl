@@ -8,6 +8,8 @@ export const useUIStore = create((set) => ({
   toasts: [],
   loadGen: 0, // generation counter to discard stale responses
   refreshKey: 0, // increment to trigger VideoGrid refresh
+  refreshing: false,
+  setRefreshing: (v) => set({ refreshing: v }),
   cachedVolume: null, // persists across SecretMenu open/close
   setCachedVolume: (v) => set({ cachedVolume: v }),
   filteredVideos: [], // ads filtered from recommended feed

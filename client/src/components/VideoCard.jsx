@@ -123,7 +123,7 @@ export default function VideoCard({ video, isPlaying, isActive }) {
       longPressTimer.current = null
     }
   }, [])
-  const handleCardTouchEnd = useCallback(() => {
+  const handleCardTouchEnd = useCallback((e) => {
     if (longPressTimer.current) {
       clearTimeout(longPressTimer.current)
       longPressTimer.current = null
@@ -131,7 +131,19 @@ export default function VideoCard({ video, isPlaying, isActive }) {
     if (isMobile) {
       previewTimer.current = setTimeout(() => setPreviewing(false), 3000)
     }
-  }, [isMobile])
+    // Fire play immediately on touch end to avoid click delay
+    if (!longPressTriggered.current && touchStartPos.current) {
+      const touch = e.changedTouches?.[0]
+      if (touch) {
+        const dx = Math.abs(touch.clientX - touchStartPos.current.x)
+        const dy = Math.abs(touch.clientY - touchStartPos.current.y)
+        if (dx < 10 && dy < 10) {
+          e.preventDefault() // prevent subsequent onClick
+          handlePlay()
+        }
+      }
+    }
+  }, [isMobile, handlePlay])
 
   // Clean up preview video resources on unmount
   useEffect(() => {

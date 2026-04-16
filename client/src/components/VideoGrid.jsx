@@ -89,6 +89,8 @@ export default function VideoGrid() {
   const nextLoadGen = useUIStore(s => s.nextLoadGen)
   const refreshKey = useUIStore(s => s.refreshKey)
   const refresh = useUIStore(s => s.refresh)
+  const addToast = useUIStore(s => s.addToast)
+  const setRefreshing = useUIStore(s => s.setRefreshing)
   const setFilteredVideos = useUIStore(s => s.setFilteredVideos)
   const nowPlayingUrl = usePlaybackStore(s => s.url)
   const nowPaused = usePlaybackStore(s => s.paused)
@@ -104,7 +106,7 @@ export default function VideoGrid() {
   const loadMoreRef = useRef(null)
 
   const fetchVideos = useCallback(async (page = null, opts = {}) => {
-    const { silent = false } = opts
+    const { silent = false, toastOnDone = false } = opts
     const gen = genRef.current
 
     if (!page && !silent) {
@@ -169,6 +171,7 @@ export default function VideoGrid() {
 
     try {
       const res = await fetch(url)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const data = await res.json()
 
       // Discard stale responses
@@ -229,14 +232,19 @@ export default function VideoGrid() {
       } else {
         apply()
       }
+      if (toastOnDone && gen === genRef.current) {
+        addToast(items.length ? 'Updated' : 'No new videos')
+      }
     } catch (err) {
       console.error('Failed to fetch videos:', err)
+      if (toastOnDone && gen === genRef.current) addToast('Refresh failed')
     } finally {
       if (gen === genRef.current) {
         setLoading(false)
+        if (toastOnDone) setRefreshing(false)
       }
     }
-  }, [activeTab, searchQuery, channelQuery])
+  }, [activeTab, searchQuery, channelQuery, addToast, setRefreshing])
 
   // Re-fetch when tab, search, or refreshKey changes.
   // If we have cached data for this tab, render it instantly and refresh in
@@ -249,8 +257,14 @@ export default function VideoGrid() {
     const key = cacheKeyFor(tab, searchQuery, channelQuery)
     const isRefresh = refreshKey !== prevRefreshKeyRef.current
     prevRefreshKeyRef.current = refreshKey
-    if (isRefresh && key) tabCache.delete(key)
-    const cached = key && !isRefresh ? tabCache.get(key) : null
+    if (isRefresh) {
+      // Manual refresh: keep current videos visible, reshuffle in the
+      // background via view transitions, toast the outcome.
+      setRefreshing(true)
+      fetchVideos(null, { silent: true, toastOnDone: true })
+      return
+    }
+    const cached = key ? tabCache.get(key) : null
     if (cached) {
       setVideos(cached.videos)
       setShorts(cached.shorts)

@@ -1414,9 +1414,7 @@ app.post("/api/play", async (req, res) => {
     // If mpv is already running, load new video in existing player
     if (mpvProcess) {
       try {
-        // Verify mpv is actually responsive
-        await mpvCommand(["get_property", "pid"]);
-        // Save current video's progress before switching (with timeout)
+        // Save current video's progress before switching (also verifies mpv is responsive)
         try {
           const timeout = (p, ms) => Promise.race([p, new Promise((_, rej) => setTimeout(() => rej('timeout'), ms))]);
           const [pos, dur] = await timeout(Promise.all([
@@ -1427,17 +1425,28 @@ app.post("/api/play", async (req, res) => {
         } catch {}
         // Stop progress tracking BEFORE switching videos
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-        await mpvCommand(["loadfile", url, "replace"]);
-        await mpvCommand(["set_property", "pause", false]).catch(() => {});
-        await mpvCommand(["set_property", "mute", false]).catch(() => {}); // ensure unmuted
-        await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
-        // Unhide if it was hidden from pause
-        try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
+        // Load new video + reset state in parallel
+        await Promise.all([
+          mpvCommand(["loadfile", url, "replace"]),
+          mpvCommand(["set_property", "pause", false]).catch(() => {}),
+          mpvCommand(["set_property", "mute", false]).catch(() => {}),
+          mpvCommand(["set_property", "vid", "auto"]).catch(() => {}),
+        ]);
+        // Unhide in background (don't await)
+        execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true'], () => {});
         nowPlaying = url;
         addToHistory(url, reqTitle || "", reqChannel || "", reqThumb || "");
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
+        // Re-apply window mode immediately after loadfile (don't wait for video to load)
+        try {
+          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+          if (wid && windowMode === "maximize") {
+            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
+            execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+          }
+        } catch {}
         res.json({ ok: true });
         const expectedUrl = url;
         const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
@@ -1482,7 +1491,7 @@ app.post("/api/play", async (req, res) => {
               await mpvCommand(["seek", 0, "absolute"]);
             }
           } catch {}
-          // Re-apply window mode in case loadfile disrupted it
+          // Re-apply window mode again after video loads (aspect ratio change can disrupt it)
           try {
             const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
             if (wid) {

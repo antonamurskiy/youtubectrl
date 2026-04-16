@@ -12,6 +12,7 @@ import PhonePlayer from './components/PhonePlayer'
 import SecretMenu from './components/SecretMenu'
 import CommentsPanel from './components/CommentsPanel'
 import SearchBar from './components/SearchBar'
+import { useRouting } from './hooks/useRouting'
 import Toast from './components/Toast'
 import { lazy, Suspense } from 'react'
 const Terminal = lazy(() => import('./components/Terminal'))
@@ -92,6 +93,7 @@ function TmuxTabButton({ window: w }) {
 function App() {
   const { send } = useSync()
   useMediaSession()
+  useRouting()
   const activeTab = useUIStore(s => s.activeTab)
   const setTab = useUIStore(s => s.setTab)
   const secretMenuOpen = useUIStore(s => s.secretMenuOpen)
@@ -121,6 +123,7 @@ function App() {
   const [terminalEverOpened, setTerminalEverOpened] = useState(false)
   useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
   const refresh = useUIStore(s => s.refresh)
+  const refreshing = useUIStore(s => s.refreshing)
   const longPressRef = useRef(null)
 
   // Desktop keyboard shortcuts: space play/pause, ←/→ skip 5s
@@ -263,7 +266,7 @@ function App() {
               <line x1="19" y1="12" x2="5" y2="12" /><polyline points="12 19 5 12 12 5" />
             </svg>
           ) : (
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter" className={refreshing ? 'spin' : undefined}>
               <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
             </svg>
           )}
