@@ -87,9 +87,18 @@ function syncLive(pb, video, phonePos, getPlayingDate, send, sync, behindLive) {
 }
 
 function syncVod(pb, video, phonePos, send, sync) {
-  const drift = pb.position - phonePos
+  // pb.position is from mpv's last broadcast (~1s old at most). Extrapolate
+  // forward by the wall-clock time since the broadcast so we compare the
+  // phone against where mpv actually IS now, not where it was 500ms ago.
+  let mpvNow = pb.position
+  if (pb.serverTs) {
+    const elapsed = (Date.now() + (sync.clockOffset || 0) - pb.serverTs) / 1000
+    if (elapsed > 0 && elapsed < 5) mpvNow = pb.position + elapsed
+  }
+
+  const drift = mpvNow - phonePos
   useSyncStore.getState().setDrift(drift)
-  send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +pb.position.toFixed(1), phone: +phonePos.toFixed(1) })
+  send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvNow.toFixed(1), phone: +phonePos.toFixed(1) })
 
   // Pause/resume
   if (isNativeIOS) {
@@ -103,15 +112,13 @@ function syncVod(pb, video, phonePos, send, sync) {
   }
 
   if (Math.abs(drift) > 5) {
-    // Large drift: hard seek phone to mpv position
+    // Large drift: hard seek phone to mpv's *current* position
     if (isNativeIOS) {
-      NativePlayer.seek(pb.position).catch(() => {})
-      // Also update our cache immediately so next tick computes from the
-      // target, not the stale pre-seek value.
-      _nativePos = pb.position
+      NativePlayer.seek(mpvNow).catch(() => {})
+      _nativePos = mpvNow
       _nativePosAt = Date.now()
     } else if (video) {
-      video.currentTime = pb.position
+      video.currentTime = mpvNow
     }
     useSyncStore.getState().setSettling(Date.now() + 3000)
   } else if (Math.abs(drift) > 0.5) {
