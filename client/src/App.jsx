@@ -6,6 +6,7 @@ import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
+import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -186,6 +187,19 @@ function App() {
 
   const tabs = ['rec', 'subs', 'live', 'ru', 'history']
 
+  // Pull-to-refresh: pull down from top to refresh the current tab
+  const doRefresh = useCallback(() => {
+    if (activeTab === 'channel' || activeTab === 'search' || activeTab === 'filtered') {
+      setTab('rec')
+    } else {
+      refresh()
+    }
+  }, [activeTab, setTab, refresh])
+  const ptr = usePullToRefresh({
+    onRefresh: doRefresh,
+    enabled: !terminalOpen && !phoneOpen,
+  })
+
   return (
     <>
       {phoneOpen && (
@@ -194,7 +208,36 @@ function App() {
         </Suspense>
       )}
 
-      <div style={terminalOpen ? { display: 'none' } : undefined}>
+      {ptr.active && (
+        <div
+          className="ptr-indicator"
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: `${ptr.translateY}px`,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            pointerEvents: 'none',
+            zIndex: 100,
+            paddingTop: 'env(safe-area-inset-top, 0)',
+            color: ptr.armed ? 'var(--green)' : 'var(--text-dim)',
+            fontSize: 'var(--font-sm)',
+            fontFamily: 'var(--font)',
+            letterSpacing: '2px',
+            transition: ptr.translateY > 0 ? 'none' : 'height 0.2s',
+          }}
+        >
+          {ptr.armed ? '◉ RELEASE' : '◯ PULL'}
+        </div>
+      )}
+      <div style={{
+        ...(terminalOpen ? { display: 'none' } : undefined),
+        transform: ptr.active ? `translateY(${ptr.translateY}px)` : undefined,
+        transition: ptr.active ? 'none' : 'transform 0.25s cubic-bezier(.2,.8,.2,1)',
+      }}>
         <header className="header">
           <div className="header-inner">
             <SearchBar />
@@ -267,6 +310,10 @@ function App() {
           onClick={() => {
             if (didLongPressRef.current) { didLongPressRef.current = false; return }
             hapticTick()
+            // Smooth scroll only if we're not already at top
+            if (window.scrollY > 4) {
+              window.scrollTo({ top: 0, behavior: 'smooth' })
+            }
             if (activeTab === 'channel' || activeTab === 'search' || activeTab === 'filtered') {
               setTab('rec')
             } else {
