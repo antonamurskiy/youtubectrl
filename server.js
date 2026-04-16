@@ -3003,6 +3003,21 @@ app.get("/api/phone-vod-stream", (req, res) => {
   res.on("close", () => { ff.kill(); });
 });
 
+// Phone (or any client) pushing its playback position into our history map.
+// Used by the native AVPlayer in phone-only mode where mpv is muted+hidden
+// so the server's progress poll isn't authoritative.
+app.post("/api/save-progress", (req, res) => {
+  const { url, position, duration } = req.body || {};
+  if (!url || typeof position !== "number" || typeof duration !== "number") {
+    return res.status(400).json({ error: "url, position, duration required" });
+  }
+  if (position < 0 || duration <= 0 || position > duration * 1.05) {
+    return res.status(400).json({ error: "invalid position/duration" });
+  }
+  updateHistoryProgress(url, position, duration);
+  res.json({ ok: true });
+});
+
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
   phoneActive = false;

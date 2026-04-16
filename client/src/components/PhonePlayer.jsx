@@ -580,17 +580,52 @@ export default function PhonePlayer({ send }) {
     hapticThump()
   }, [])
 
+  const saveProgress = useCallback(async () => {
+    const url = phoneOnlyUrl
+    if (!url) return
+    let position = 0
+    let duration = 0
+    if (isNativeIOS) {
+      try {
+        const s = await NativePlayer.getState()
+        position = s?.position || 0
+        duration = s?.duration || 0
+      } catch {}
+    } else if (videoRef.current) {
+      position = videoRef.current.currentTime || 0
+      duration = videoRef.current.duration || 0
+    }
+    if (position > 0 && duration > 0) {
+      fetch('/api/save-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, position, duration }),
+      }).catch(() => {})
+    }
+  }, [phoneOnlyUrl])
+
   const handleClose = useCallback(() => {
     hapticThump()
     setCompMode(false)
-    if (videoRef.current) videoRef.current.pause()
-    if (isNativeIOS) NativePlayer.stop().catch(() => {})
-    fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
-    send({ type: 'mpv-speed', speed: 1.0 })
-    setPhoneOpen(false)
-    setStreamUrl(null)
-    loadedUrlRef.current = null
-  }, [setPhoneOpen, send])
+    // Save progress BEFORE tearing down the player
+    saveProgress().finally(() => {
+      if (videoRef.current) videoRef.current.pause()
+      if (isNativeIOS) NativePlayer.stop().catch(() => {})
+      fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+      send({ type: 'mpv-speed', speed: 1.0 })
+      setPhoneOpen(false)
+      setStreamUrl(null)
+      loadedUrlRef.current = null
+    })
+  }, [setPhoneOpen, send, saveProgress])
+
+  // Periodic progress save — every 10s while phone-only is active. Also
+  // ensures progress survives app backgrounding / crashes.
+  useEffect(() => {
+    if (!phoneOnlyUrl) return
+    const iv = setInterval(() => { saveProgress() }, 10000)
+    return () => clearInterval(iv)
+  }, [phoneOnlyUrl, saveProgress])
 
   // On native iOS in phone-only mode, poll the AVPlayer's state and push
   // it into the playback store so the NowPlayingBar (which reads mpv's
