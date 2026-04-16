@@ -6,6 +6,15 @@ import { useUIStore } from '../stores/ui'
 import { isNativeIOS, NativePlayer } from '../native/player'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
+// Native AVPlayer position cache — polled on a separate interval so the
+// sync loop can read it without awaiting every tick.
+let _nativePos = 0
+let _nativePosAt = 0
+function nativePosNow() {
+  const elapsed = (Date.now() - _nativePosAt) / 1000
+  return _nativePos + elapsed
+}
+
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
@@ -526,7 +535,10 @@ export default function PhonePlayer({ send }) {
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed
-        const rawDiff = mpvPos - video.currentTime
+        // On native, the HTML <video> has no src (AVPlayer is the player).
+        // Read AVPlayer position from our 250ms poll cache instead of HTML.
+        const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
+        const rawDiff = mpvPos - phonePos
 
         const drift = rawDiff + userOffsetRef.current
         setDrift(`drift: ${drift.toFixed(1)}s`)
@@ -536,7 +548,14 @@ export default function PhonePlayer({ send }) {
         const now3 = Date.now()
         const cooldown = lastSeekRef.current === 0 ? 0 : 5000
         if (Math.abs(drift) > 0.2 && now3 - lastSeekRef.current > cooldown) {
-          video.currentTime = mpvPos + 0.5
+          const target = mpvPos + 0.5
+          if (isNativeIOS) {
+            NativePlayer.seek(target).catch(() => {})
+            _nativePos = target
+            _nativePosAt = Date.now()
+          } else {
+            video.currentTime = target
+          }
           lastSeekRef.current = now3
         }
       }
@@ -627,6 +646,26 @@ export default function PhonePlayer({ send }) {
     const iv = setInterval(() => { syncToMpv() }, 10000)
     return () => clearInterval(iv)
   }, [phoneOnlyUrl, syncToMpv])
+
+  // Poll native AVPlayer's position into the nativePosNow() cache so the
+  // sync loop can compute drift against it without awaiting every tick.
+  useEffect(() => {
+    if (!isNativeIOS || !phoneOpen) return
+    let alive = true
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await NativePlayer.getState()
+        if (s && typeof s.position === 'number') {
+          _nativePos = s.position
+          _nativePosAt = Date.now()
+        }
+      } catch {}
+      if (alive) setTimeout(tick, 250)
+    }
+    tick()
+    return () => { alive = false }
+  }, [phoneOpen])
 
   // On native iOS in phone-only mode, poll the AVPlayer's state and push
   // it into the playback store so the NowPlayingBar (which reads mpv's
