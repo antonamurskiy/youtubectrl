@@ -148,9 +148,25 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     /// Starts a silent looping audio track so the audio session stays active
     /// and iOS shows the Now Playing widget even when local AVPlayer isn't
     /// playing anything (e.g. audio is actually coming from desktop mpv).
+    ///
+    /// The file itself must be truly silent audio (not volume 0) — iOS suspends
+    /// the audio session if it detects silence via the mixer.
     private func startSilentAudioIfNeeded() {
-        if silentPlayer != nil { return }
-        // Bundled silent.m4a (served by the web app under /silent.m4a)
+        // Make sure the audio session is active and configured for playback.
+        // Other apps (or iOS) may have deactivated it since app launch.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(
+                .playback, mode: .moviePlayback, options: [.allowAirPlay]
+            )
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            NSLog("[NativePlayer] Audio session activate failed: \(error)")
+        }
+
+        if silentPlayer != nil {
+            silentPlayer?.play()
+            return
+        }
         guard let url = URL(string: "http://yuzu.local:3000/silent.m4a") else { return }
         let item = AVPlayerItem(url: url)
         let p = AVQueuePlayer(playerItem: item)
@@ -158,9 +174,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         if #available(iOS 10.0, *) {
             silentLooper = AVPlayerLooper(player: p, templateItem: item)
         }
-        p.volume = 0.0
+        // Do NOT set volume = 0 — the file is already silent. Volume 0 makes
+        // iOS treat the session as idle.
+        p.volume = 1.0
         p.play()
         silentPlayer = p
+        NSLog("[NativePlayer] Silent keep-alive player started")
     }
 
     private func updateNowPlayingPlaybackState() {
@@ -305,6 +324,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let paused = call.getBool("paused") ?? false
 
         DispatchQueue.main.async {
+            NSLog("[NativePlayer] setNowPlaying title=\(title) artist=\(artist) paused=\(paused)")
             // Make sure remote commands are installed even without an AVPlayer
             self.installRemoteCommands()
             // Keep the audio session active so the lock-screen widget shows up

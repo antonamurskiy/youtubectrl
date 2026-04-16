@@ -14,6 +14,44 @@ npm install        # Install dependencies
 pkill -x mpv       # Kill all mpv instances
 ```
 
+## iOS app deployment
+
+The iOS Capacitor shell is at `ios-app/`. Never tell the user to use Xcode —
+always build + install + launch from the command line yourself. The iPhone is
+connected via USB and paired.
+
+```bash
+# Device identifier (iPhone 17 Pro, paired for development)
+DEVICE=00008150-001241D11EF2401C
+BUNDLE=com.antonamurskiy.ytctl1289
+APP_PATH=/Users/antonamurskiy/Library/Developer/Xcode/DerivedData/App-fmgudysqpugrzfaedgrsaukwjilr/Build/Products/Debug-iphoneos/App.app
+
+# 1. Build frontend, sync to Capacitor
+cd client && npm run build
+cd ../ios-app && npx cap sync ios
+
+# 2. Clean + build iOS for device (-allowProvisioningUpdates refreshes free cert)
+cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug clean
+xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+  -destination "id=$DEVICE" -allowProvisioningUpdates build
+
+# 3. Install + launch on device
+xcrun devicectl device install app --device "$DEVICE" "$APP_PATH"
+xcrun devicectl device process launch --device "$DEVICE" "$BUNDLE"
+```
+
+Notes:
+- `xcrun devicectl list devices` — confirm device is connected
+- DerivedData path is stable per project; if it changes, find it with:
+  `find ~/Library/Developer/Xcode/DerivedData -name "App.app" -path "*iphoneos*" | head -1`
+- Changes to `server.js` or `client/` alone don't need an iOS rebuild — the
+  Capacitor config points the WebView at `yuzu.local:3000` (see
+  `ios-app/capacitor.config.json`). Only rebuild iOS for native code
+  (`NativePlayerPlugin.swift`, `AppDelegate.swift`, Info.plist) or new
+  Capacitor plugins.
+- Never ask the user to open Xcode, trust certs, or push buttons. Do it
+  yourself via CLI.
+
 ## Architecture
 
 **Server (`server.js`) + React frontend (`client/`) with Vite build step.**
