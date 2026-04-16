@@ -68,6 +68,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     // button press.
     private var volumeInterceptEnabled = false
     private var volumeBaseline: Float = 0.5
+    private var lastObservedVolume: Float = 0.5
     private var hiddenVolumeView: MPVolumeView?
     private var volumeSlider: UISlider?
     private var volumeObserver: NSKeyValueObservation?
@@ -502,6 +503,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             restoreVolume(to: 0.5)
             volumeBaseline = 0.5
         }
+        lastObservedVolume = volumeBaseline
         // Hidden MPVolumeView suppresses the system HUD when we change
         // volume via its slider.
         if hiddenVolumeView == nil, let wv = self.bridge?.webView {
@@ -517,11 +519,24 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
             guard let self = self else { return }
             if !self.volumeInterceptEnabled { return }
-            if self.restoringVolume { return }
             guard let newValue = change.newValue else { return }
-            let delta = newValue - self.volumeBaseline
+
+            // If we're in the middle of restoring, just track the new value
+            // and return — this is our own restore landing.
+            if self.restoringVolume {
+                self.lastObservedVolume = newValue
+                return
+            }
+
+            // Compare against the last value iOS reported to us, not the
+            // fixed baseline — after a restore, the "current" value might
+            // momentarily differ and we need to detect direction from the
+            // user's press relative to whatever's current.
+            let delta = newValue - self.lastObservedVolume
             if abs(delta) < 0.005 { return }
+
             let bump = delta > 0 ? 5 : -5
+            self.lastObservedVolume = newValue
             self.notifyListeners("volumeButton", data: ["delta": bump])
             self.restoreVolume(to: self.volumeBaseline)
         }
@@ -538,20 +553,13 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     private func restoreVolume(to value: Float) {
         restoringVolume = true
-        // Use the hidden slider to set volume — this is the documented way
-        // that doesn't trigger the system HUD.
+        lastObservedVolume = value
         if let slider = volumeSlider {
             slider.setValue(value, animated: false)
-            // The slider only triggers the mixer when .valueChanged fires,
-            // so send the action manually.
             slider.sendActions(for: .valueChanged)
         } else {
-            // Fallback — this will flash the HUD but ensures the baseline
-            // doesn't drift away
             MPVolumeView.setVolume(value)
         }
-        // Give the observer a tick to see our change, then clear the flag.
-        // Short window so rapid presses aren't swallowed.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
             self?.restoringVolume = false
         }
