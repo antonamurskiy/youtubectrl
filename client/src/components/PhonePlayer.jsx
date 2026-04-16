@@ -656,6 +656,30 @@ export default function PhonePlayer({ send }) {
     setPhoneOpen(false)
   }, [setPhoneOpen, send])
 
+  // On native iOS in phone-only mode, poll the AVPlayer's state and push
+  // it into the playback store so the NowPlayingBar (which reads mpv's
+  // WebSocket broadcast in sync mode) has live data to render.
+  useEffect(() => {
+    if (!isNativeIOS || !phoneOnlyUrl) return
+    let alive = true
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await NativePlayer.getState()
+        if (s && alive) {
+          usePlaybackStore.getState().update({
+            position: Number.isFinite(s.position) ? s.position : 0,
+            duration: Number.isFinite(s.duration) ? s.duration : 0,
+            paused: !!s.paused,
+          })
+        }
+      } catch {}
+      if (alive) setTimeout(tick, 500)
+    }
+    tick()
+    return () => { alive = false }
+  }, [phoneOnlyUrl])
+
   // On native iOS: sync the native AVPlayer layer position to match the
   // <video> element's rect on every frame, so the AVPlayer is what the
   // user sees inline. HTML video stays transparent/empty but preserves
