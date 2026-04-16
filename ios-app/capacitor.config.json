@@ -1,6 +1,6 @@
 {
   "appId": "com.antonamurskiy.ytctl1289",
-  "appName": "YouTubeCtrl",
+  "appName": "Vids",
   "webDir": "www",
   "server": {
     "url": "http://yuzu.local:3000",
