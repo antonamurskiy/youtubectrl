@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { flushSync } from 'react-dom'
-import { tick as hapticTick } from './haptics'
+import { tick as hapticTick, thump as hapticThump } from './haptics'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
@@ -209,7 +209,7 @@ function App() {
                 </button>
               ))}
             </div>
-            <div className="header-status" onClick={toggleSecretMenu}>
+            <div className="header-status" onClick={() => { hapticThump(); toggleSecretMenu() }}>
               <div className={`status-dot ${connected ? 'connected' : 'disconnected'}`} title="WebSocket" />
               <div className={`status-dot ${macStatus.ethernet ? 'connected' : 'disconnected'}`} title="Ethernet" />
               <div className={`status-dot ${macStatus.locked ? 'disconnected' : 'connected'}`} title="Unlocked" />
@@ -275,6 +275,7 @@ function App() {
             didLongPressRef.current = false
             longPressRef.current = setTimeout(() => {
               didLongPressRef.current = true
+              hapticThump()
               toggleSecretMenu()
             }, 500)
           }}
