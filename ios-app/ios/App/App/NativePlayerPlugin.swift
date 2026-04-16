@@ -521,24 +521,24 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             if !self.volumeInterceptEnabled { return }
             guard let newValue = change.newValue else { return }
 
-            // If we're in the middle of restoring, just track the new value
-            // and return — this is our own restore landing.
+            // Ignore our own programmatic changes
             if self.restoringVolume {
                 self.lastObservedVolume = newValue
                 return
             }
 
-            // Compare against the last value iOS reported to us, not the
-            // fixed baseline — after a restore, the "current" value might
-            // momentarily differ and we need to detect direction from the
-            // user's press relative to whatever's current.
             let delta = newValue - self.lastObservedVolume
+            self.lastObservedVolume = newValue
             if abs(delta) < 0.005 { return }
 
             let bump = delta > 0 ? 5 : -5
-            self.lastObservedVolume = newValue
             self.notifyListeners("volumeButton", data: ["delta": bump])
-            self.restoreVolume(to: self.volumeBaseline)
+
+            // Only recentre if we're approaching an edge. This avoids the
+            // restore→press race that was swallowing direction changes.
+            if newValue < 0.15 || newValue > 0.85 {
+                self.restoreVolume(to: 0.5)
+            }
         }
     }
 
