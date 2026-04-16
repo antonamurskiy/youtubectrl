@@ -115,6 +115,9 @@ export default function PhonePlayer({ send }) {
               audioUrl,
               position: data.seconds || 0,
               autoplay: true,
+              // Sync mode: mpv is the audio source, phone must be muted to
+              // avoid a doubled audio track.
+              muted: !phoneOnlyRef.current,
             }).catch(() => {})
           }
 
@@ -709,7 +712,13 @@ export default function PhonePlayer({ send }) {
         src={isNativeIOS ? undefined : (phoneOnlyUrl && streamUrl ? streamUrl : undefined)}
         playsInline
         autoPlay
-        muted={isNativeIOS /* AVPlayer is the audio source */}
+        muted={
+          // Sync mode (no phoneOnlyUrl): desktop mpv is the audio source,
+          // phone video stays muted.
+          // Phone-only on native: AVPlayer is the audio source, HTML muted.
+          // Phone-only web: unmuted (phone is the audio source).
+          isNativeIOS || !phoneOnlyUrl
+        }
         controls={!mini && !isNativeIOS}
         onPointerDown={(e) => {
           if (!mini) return

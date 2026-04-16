@@ -299,6 +299,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let audioUrlStr = call.getString("audioUrl")
         let position = call.getDouble("position") ?? 0
         let autoplay = call.getBool("autoplay") ?? true
+        let muted = call.getBool("muted") ?? false
 
         // Two-stream mode: separate DASH video + audio URLs combined into
         // an AVMutableComposition so we can play 1080p + 128kbps AAC without
@@ -318,6 +319,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                     if position > 0 {
                         await self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
                     }
+                    self.player?.isMuted = muted
                     self.installPipController()
                     self.installRemoteCommands()
                     if autoplay {
