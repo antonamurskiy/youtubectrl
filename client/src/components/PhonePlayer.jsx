@@ -547,11 +547,9 @@ export default function PhonePlayer({ send }) {
         const now3 = Date.now()
         const cooldown = lastSeekRef.current === 0 ? 0 : 1500
 
-        if (Math.abs(drift) > 0.1 && now3 - lastSeekRef.current > cooldown) {
-          // Large drift or cooldown elapsed: hard-seek to match.
-          // On native AVPlayer seeks are frame-accurate (zero tolerance in
-          // the Swift plugin), so no bias needed. For HTML video add 0.2s
-          // forward bias for seek latency.
+        // Hard-seek threshold — anything above this gets corrected with a
+        // seek rather than a rate nudge (nudges converge too slowly).
+        if (Math.abs(drift) > 0.08 && now3 - lastSeekRef.current > cooldown) {
           const target = mpvPos + (isNativeIOS ? 0 : 0.2)
           if (isNativeIOS) {
             NativePlayer.seek(target).catch(() => {})
@@ -561,20 +559,18 @@ export default function PhonePlayer({ send }) {
             video.currentTime = target
           }
           lastSeekRef.current = now3
-          // Reset mpv rate after a seek since we were likely nudging
           send({ type: 'mpv-speed', speed: 1.0 })
-        } else if (Math.abs(drift) > 0.03) {
-          // Small drift: nudge mpv's playback rate instead of seeking.
-          // Converges smoothly without visible jumps. 1.0 ± 2% is
-          // imperceptible audio-wise.
-          const rate = Math.max(0.98, Math.min(1.02, 1.0 - drift * 0.02))
-          // Throttle rate sends to avoid spamming server
+          lastRateSend = 0
+        } else if (Math.abs(drift) > 0.02) {
+          // Small residual drift: aggressive mpv rate nudge. 5% = inaudible
+          // pitch shift but converges ~0.05s/sec. 0.25s drift → ~5s to close.
+          const rate = Math.max(0.95, Math.min(1.05, 1.0 - drift * 0.2))
           if (now3 - lastRateSend > 500) {
             send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
             lastRateSend = now3
           }
-        } else if (Math.abs(drift) < 0.02 && lastRateSend > 0) {
-          // Perfectly aligned — restore rate to 1.0
+        } else if (lastRateSend > 0) {
+          // Aligned (<0.02s) — restore normal rate
           send({ type: 'mpv-speed', speed: 1.0 })
           lastRateSend = 0
         }
