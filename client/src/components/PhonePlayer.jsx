@@ -416,36 +416,34 @@ export default function PhonePlayer({ send }) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive && pb.player === 'mpv') {
-        // mpv live: simple calibrate-then-big-seek sync. Wide dead zone
-        // avoids rate chasing.
-        const phonePos = isNativeIOS ? nativePosNow() : video.currentTime
-        const rawDiff = pb.position - phonePos
-        if (calibOffsetRef.current === null) {
-          if (isNativeIOS) {
-            NativePlayer.seek(Math.max(0, nativePosNow() - 0.5)).catch(() => {})
-          } else {
-            video.currentTime -= 0.5
-          }
-          calibOffsetRef.current = pb.position - (isNativeIOS ? nativePosNow() : video.currentTime)
-          setDrift('calibrated (mpv live)')
-          return
-        }
-        const drift = rawDiff - calibOffsetRef.current
+        // mpv live: treat like VOD — compensate for mpv's audio output lag
+        // and seek to align. Phone is just playing the raw HLS alongside.
+        const MPV_AUDIO_LAG = 0.4
+        const clockOffset = useSyncStore.getState().clockOffset || 0
+        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
+        const mpvPos = pb.position + elapsed + MPV_AUDIO_LAG
+        const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
+        const rawDiff = mpvPos - phonePos + userOffsetRef.current
+
+        driftSamplesRef.current.push(rawDiff)
+        if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
+        const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
 
         setDrift(`drift: ${drift.toFixed(2)}s`)
-        send({ type: 'phone-state', drift: +drift.toFixed(2) })
+        send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvPos.toFixed(2), phone: +phonePos.toFixed(2) })
 
         const now = Date.now()
-        if (Math.abs(drift) > 1.5 && now - lastSeekRef.current > 2500) {
+        const threshold = now - lastSeekRef.current > 6000 ? 0.3 : 1.0
+        if (Math.abs(drift) > threshold && now - lastSeekRef.current > 2500) {
           if (isNativeIOS) {
-            NativePlayer.seek(nativePosNow() + drift).catch(() => {})
-            _nativePos = nativePosNow() + drift
+            NativePlayer.seek(mpvPos).catch(() => {})
+            _nativePos = mpvPos
             _nativePosAt = Date.now()
           } else {
-            video.currentTime += drift
+            video.currentTime = mpvPos
           }
-          if (Math.abs(drift) > 5) calibOffsetRef.current = null
           lastSeekRef.current = now
+          driftSamplesRef.current = []
           send({ type: 'mpv-speed', speed: 1.0 })
         }
       } else if (pb.isLive && pb.player === 'vlc') {
