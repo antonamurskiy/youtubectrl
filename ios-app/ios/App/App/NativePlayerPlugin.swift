@@ -344,6 +344,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         DispatchQueue.main.async {
             self.ensureLayer()
             let item = AVPlayerItem(url: url)
+            // Pull closer to live edge for HLS live streams (default is
+            // ~6s behind). 2s = aggressive but stable on a decent network.
+            if #available(iOS 13.0, *) {
+                item.configuredTimeOffsetFromLive = CMTime(seconds: 2, preferredTimescale: 1)
+                item.automaticallyPreservesTimeOffsetFromLive = true
+            }
             if self.player == nil {
                 self.player = AVPlayer(playerItem: item)
             } else {
