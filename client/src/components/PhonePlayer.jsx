@@ -541,14 +541,18 @@ export default function PhonePlayer({ send }) {
         const rawDiff = mpvPos - phonePos
 
         const drift = rawDiff + userOffsetRef.current
-        setDrift(`drift: ${drift.toFixed(1)}s`)
+        setDrift(`drift: ${drift.toFixed(2)}s`)
         send({ type: 'phone-state', drift: +drift.toFixed(2) })
 
-        // Hard-seek: immediate first correction, then 5s cooldown for HLS stability
         const now3 = Date.now()
-        const cooldown = lastSeekRef.current === 0 ? 0 : 5000
-        if (Math.abs(drift) > 0.2 && now3 - lastSeekRef.current > cooldown) {
-          const target = mpvPos + 0.5
+        const cooldown = lastSeekRef.current === 0 ? 0 : 1500
+
+        if (Math.abs(drift) > 0.1 && now3 - lastSeekRef.current > cooldown) {
+          // Large drift or cooldown elapsed: hard-seek to match.
+          // On native AVPlayer seeks are frame-accurate (zero tolerance in
+          // the Swift plugin), so no bias needed. For HTML video add 0.2s
+          // forward bias for seek latency.
+          const target = mpvPos + (isNativeIOS ? 0 : 0.2)
           if (isNativeIOS) {
             NativePlayer.seek(target).catch(() => {})
             _nativePos = target
@@ -557,6 +561,22 @@ export default function PhonePlayer({ send }) {
             video.currentTime = target
           }
           lastSeekRef.current = now3
+          // Reset mpv rate after a seek since we were likely nudging
+          send({ type: 'mpv-speed', speed: 1.0 })
+        } else if (Math.abs(drift) > 0.03) {
+          // Small drift: nudge mpv's playback rate instead of seeking.
+          // Converges smoothly without visible jumps. 1.0 ± 2% is
+          // imperceptible audio-wise.
+          const rate = Math.max(0.98, Math.min(1.02, 1.0 - drift * 0.02))
+          // Throttle rate sends to avoid spamming server
+          if (now3 - lastRateSend > 500) {
+            send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
+            lastRateSend = now3
+          }
+        } else if (Math.abs(drift) < 0.02 && lastRateSend > 0) {
+          // Perfectly aligned — restore rate to 1.0
+          send({ type: 'mpv-speed', speed: 1.0 })
+          lastRateSend = 0
         }
       }
     }, 1000)
