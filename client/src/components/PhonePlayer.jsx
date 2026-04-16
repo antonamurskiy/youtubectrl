@@ -325,6 +325,11 @@ export default function PhonePlayer({ send }) {
     if (!phoneOpen) return
 
     let lastRateSend = 0
+    // Sanity: make sure mpv/VLC rates are at 1.0 when we enter sync mode.
+    // Leaves from earlier sessions could have left them nudged.
+    send({ type: 'mpv-speed', speed: 1.0 })
+    send({ type: 'vlc-rate', rate: 1.0 })
+
     const setDrift = (text) => { const el = driftDisplayRef.current; if (el) el.textContent = text }
 
     nudgeRef.current = (delta) => {
@@ -437,6 +442,7 @@ export default function PhonePlayer({ send }) {
           }
           if (Math.abs(drift) > 5) calibOffsetRef.current = null
           lastSeekRef.current = now
+          send({ type: 'mpv-speed', speed: 1.0 })
         }
       } else if (pb.isLive && pb.player === 'vlc') {
         // Detect DVR seeks by large position jumps
@@ -517,11 +523,12 @@ export default function PhonePlayer({ send }) {
             driftSamplesRef.current = []
           }
           lastSeekRef.current = now
+          // Reset rate in case a previous session left it nudged
+          send({ type: 'vlc-rate', rate: 1.0 })
         }
       } else {
-        // VOD sync — simple big-seek-only. Residual sub-second drift is
-        // imperceptible; rate-control attempts oscillated around the
-        // iOS / mpv / WS control-loop latency floor.
+        // VOD sync — seek when drift accumulates past threshold. Rate
+        // control oscillated at the ~4s control-loop latency floor.
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed
@@ -536,7 +543,12 @@ export default function PhonePlayer({ send }) {
         send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvPos.toFixed(2), phone: +phonePos.toFixed(2) })
 
         const now3 = Date.now()
-        if (Math.abs(drift) > 1.0 && now3 - lastSeekRef.current > 2500) {
+        // Two-tier cooldown:
+        //  - drift > 1.0s: quick seek, short 2.5s cooldown (catches reload)
+        //  - drift > 0.3s: slower 6s cooldown (catches gradual accumulation
+        //    without chasing the oscillation we saw at tighter thresholds)
+        const threshold = now3 - lastSeekRef.current > 6000 ? 0.3 : 1.0
+        if (Math.abs(drift) > threshold && now3 - lastSeekRef.current > 2500) {
           const target = mpvPos + (isNativeIOS ? 0 : 0.2)
           if (isNativeIOS) {
             NativePlayer.seek(target).catch(() => {})
@@ -547,6 +559,8 @@ export default function PhonePlayer({ send }) {
           }
           lastSeekRef.current = now3
           driftSamplesRef.current = []
+          // Belt-and-suspenders: reset rate in case any path sent a nudge
+          send({ type: 'mpv-speed', speed: 1.0 })
         }
       }
     }, 1000)
