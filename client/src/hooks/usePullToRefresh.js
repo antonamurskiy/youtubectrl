@@ -66,9 +66,14 @@ export function usePullToRefresh({
       if (animate) {
         setTimeout(() => {
           settlingRef.current = false
-          if (body) body.style.transition = ''
+          if (body) {
+            body.style.transition = ''
+            body.style.willChange = '' // remove transform layer — restores fixed positioning
+          }
           if (ind) ind.style.transition = ''
         }, 240)
+      } else if (body) {
+        body.style.willChange = ''
       }
       setArmed(false)
       didHapticRef.current = false
@@ -87,6 +92,11 @@ export function usePullToRefresh({
       translateRef.current = 0
       firedRef.current = false
       didHapticRef.current = false
+      // Only promote to a compositor layer during the pull — keeping it
+      // permanently makes position:fixed descendants relative to this
+      // element, which breaks context menus when the page is scrolled.
+      const body = getBody()
+      if (body) body.style.willChange = 'transform'
     }
 
     const onMove = (e) => {

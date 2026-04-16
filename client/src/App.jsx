@@ -247,7 +247,6 @@ function App() {
         ref={ptrBodyRef}
         style={{
           ...(terminalOpen ? { display: 'none' } : undefined),
-          willChange: 'transform',
         }}
       >
         <header className="header">
