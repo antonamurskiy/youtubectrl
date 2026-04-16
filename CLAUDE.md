@@ -52,22 +52,148 @@ Notes:
 - Never ask the user to open Xcode, trust certs, or push buttons. Do it
   yourself via CLI.
 
-### Adding native Swift to the iOS app
+## iOS app (Vids) — Swift + Capacitor shell
 
-When adding a new Swift file to the App target:
-1. Create the .swift file under `ios-app/ios/App/App/`
-2. Edit `ios-app/ios/App/App.xcodeproj/project.pbxproj` manually to add the file
-   to 4 places: PBXBuildFile, PBXFileReference, PBXGroup `504EC3061FED79650016851F`
-   (App group children), and PBXSourcesBuildPhase `504EC3001FED79650016851F`
-   (Sources files list). Use unique hex IDs.
-3. Capacitor 7 SPM builds do NOT auto-discover plugins living in the App target
-   — they must be manually registered. Pattern:
-   `MainViewController.swift` subclasses `CAPBridgeViewController`, overrides
-   `capacitorDidLoad()` to call `bridge?.registerPluginInstance(MyPlugin())`,
-   and the storyboard `Base.lproj/Main.storyboard` points its initial VC at
-   this subclass (`customClass="MainViewController" customModule="App"`).
-4. The compiled main `App` binary is a stub; real Swift code is in
-   `App.debug.dylib` next to it. iOS loads the dylib automatically.
+The iOS app is a Capacitor 7 WebView wrapper over the same React app, plus
+a native Swift plugin (`NativePlayerPlugin`) that handles things the web
+layer can't (PiP, background audio, lock-screen Now Playing,
+hardware-volume-button interception, Live Activity). Display name is
+**Vids**, bundle id `com.antonamurskiy.ytctl1289`.
+
+### Layout
+
+```
+ios-app/
+  capacitor.config.json              # points WebView at yuzu.local:3000
+  package.json                       # @capacitor/* plugins
+  ios/App/
+    App.xcodeproj/                   # Xcode project
+    App/
+      AppDelegate.swift              # audio session setup, youtubectrl:// URL
+      MainViewController.swift       # CAPBridgeVC subclass that registers plugin
+      NativePlayerPlugin.swift       # main native bridge (~1000 LOC)
+      Info.plist
+      Assets.xcassets/               # AppIcon + Splash
+      Base.lproj/                    # LaunchScreen + Main storyboards
+    Shared/                          # files compiled into BOTH App + Widget targets
+      YouTubeCtrlActivityAttributes.swift
+      YouTubeCtrlIntents.swift       # AppIntents for widget buttons
+    YouTubeCtrlWidget/               # Widget Extension target (Live Activity)
+      YouTubeCtrlWidgetBundle.swift
+      YouTubeCtrlLiveActivity.swift
+      Info.plist
+```
+
+### Native capabilities
+
+- **Picture-in-Picture** via `AVPictureInPictureController` on an
+  `AVPlayerLayer`. Starts auto-on-background on iOS 14.2+.
+- **Inline video rendering**: the same AVPlayerLayer is positioned over the
+  WebView to match an HTML `<video>` placeholder (rect synced every frame
+  via `setLayerFrame(x,y,w,h,visible)`). Only one player exists — the HTML
+  video has no src on native; AVPlayer drives everything.
+- **1080p + high-quality audio**: phone-only mode pulls separate DASH
+  video (137) and audio (140) URLs from yt-dlp, builds an
+  `AVMutableComposition` client-side with both tracks. Progressive format
+  22 (720p single URL) is the fallback for seek reliability — DASH URLs
+  hit a YouTube byte-range cap past a certain offset.
+- **Lock-screen Now Playing** via `MPNowPlayingInfoCenter`. Artwork fetched
+  async. `MPRemoteCommandCenter` wires the lock-screen play/pause, skip
+  ±15, and scrub controls to the web app's control paths.
+- **Hardware volume buttons** drive Mac volume (3% steps). Implemented by
+  KVO-observing `AVAudioSession.outputVolume`, computing delta against the
+  last observed value, emitting a `volumeButton` event to JS, and silently
+  restoring when the phone value drifts to edges (15/85%). Only active
+  when `playing && !phoneOnlyUrl` — in phone-only mode, volume buttons
+  control the phone natively.
+- **AirPlay route picker** via a hidden `AVRoutePickerView` whose button we
+  programmatically trigger.
+- **Keep-awake** via `UIApplication.isIdleTimerDisabled` while playing.
+- **Live Activity (lock screen widget)** via the `YouTubeCtrlWidget`
+  extension — shows artwork + title + ±10% volume buttons + play/pause.
+  Taps are `AppIntents` that update the Activity's `ContentState`
+  optimistically (read-modify-write from `Activity.activities`) then POST
+  the server in a detached Task. Position isn't pushed (iOS rate-limits
+  updates to ~1/sec without APNs push).
+- **Deep link**: `youtubectrl://play?url=...` forwards to `/api/play` so a
+  Shortcut can share YouTube URLs into the app.
+- **Background audio**: Info.plist has `UIBackgroundModes=audio` and the
+  audio session is `.playback / .moviePlayback`.
+
+### Volume intercept — how it works
+
+1. `AVAudioSession.outputVolume` is KVO-observed.
+2. On change, compute `delta = newValue - lastObservedVolume`. Store new
+   as `lastObservedVolume` unconditionally.
+3. If `|delta| < 0.005`, ignore (iOS noise).
+4. Emit `volumeButton` event with `±3` (fixed step). JS side POSTs
+   `/api/volume-bump` which debounces osascript calls 30ms server-side.
+5. If the phone's volume hits <15% or >85%, silently snap it back to 50%
+   via the hidden `MPVolumeView`'s UISlider — prevents hitting edges
+   where direction can't be detected. `restoringVolume` flag stops the
+   observer from treating this self-change as a user press.
+6. **Do NOT** try to clamp/restore on every press — that creates a
+   restore-vs-press race that swallows direction changes. Only recenter
+   at the edges.
+
+### Live Activity — known constraints
+
+- iOS throttles activity updates to ~1/sec from a backgrounded app. Push
+  updates (APNs) would bypass this but require a paid Apple Developer
+  Program account.
+- Widget intents run in a **fresh process per tap** — no shared actor
+  state persists. Don't rely on singletons for coalescing. Instead,
+  read-modify-write the current `Activity.activities` content state
+  directly inside `perform()`, then fire the server call as a detached
+  `Task`.
+- `ContentState` updates with partial data on the native side: the plugin
+  merges incoming fields with `act.content.state` so JS can send only
+  what changed (e.g. `{volume: 60}`) without clobbering the rest.
+
+### Capacitor / Xcode project gotchas
+
+- **Plugin discovery in Capacitor 7 SPM mode**: plugins living inside a
+  Swift Package are auto-discovered, but plugins defined in the App
+  target are NOT. Register them from a `CAPBridgeViewController` subclass
+  (we have `MainViewController.swift`) overriding `capacitorDidLoad()` to
+  call `bridge?.registerPluginInstance(MyPlugin())`. Main.storyboard's
+  initial VC must be changed from `CAPBridgeViewController` /
+  `customModule="Capacitor"` to `MainViewController` /
+  `customModule="App"`.
+- **Dead-code stripping**: the linker was dropping `NativePlayerPlugin`
+  because nothing referenced it by name from Swift (Capacitor discovers
+  via Obj-C runtime). Add `_ = NativePlayerPlugin.self` in
+  `AppDelegate.didFinishLaunchingWithOptions` to anchor it.
+- **Debug builds**: on Xcode 26+, the main `App` binary is a stub loader;
+  the real Swift code is in `App.debug.dylib` next to it. iOS loads the
+  dylib automatically. Don't panic if `nm App | grep NativePlayer`
+  returns nothing — it's all in the dylib.
+- **Widget Extension target** was added programmatically via the
+  `xcodeproj` Ruby gem (`/tmp/add-widget-target.rb`). Adding extension
+  targets by hand-editing `project.pbxproj` is too error-prone.
+
+### Adding a new Swift file to the App target
+
+1. Create the `.swift` file under `ios-app/ios/App/App/` (or `Shared/` if
+   it should also be compiled into the widget).
+2. Use the `xcodeproj` gem if available (`gem install --user-install xcodeproj`),
+   or edit `ios-app/ios/App/App.xcodeproj/project.pbxproj` manually —
+   add entries to: PBXBuildFile, PBXFileReference, the `App` PBXGroup
+   (`504EC3061FED79650016851F`), and the Sources PBXSourcesBuildPhase
+   (`504EC3001FED79650016851F`). Use unique hex IDs like
+   `AABBCCDD00020000000000NN`.
+3. If it's a plugin, remember to register it in `MainViewController`'s
+   `capacitorDidLoad()` and add the `_ = MyPlugin.self` anchor in
+   `AppDelegate`.
+
+### Server lifecycle & macOS permissions
+
+The server uses `blueutil` (Bluetooth) and `osascript` (Accessibility /
+Automation) which require the parent process to have those grants in
+System Settings. When the user runs `npm start` from their terminal
+(iTerm / Warp / Terminal.app), those grants apply. Claude's own shell
+inherits the Claude desktop app's grants — grant **Claude.app**
+Bluetooth/Accessibility if Claude needs to start the server itself.
 
 ## Architecture
 

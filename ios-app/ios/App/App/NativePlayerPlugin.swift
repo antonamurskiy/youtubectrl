@@ -674,7 +674,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             self.lastObservedVolume = newValue
             if abs(delta) < 0.005 { return }
 
-            let bump = delta > 0 ? 5 : -5
+            let bump = delta > 0 ? 3 : -3
             self.notifyListeners("volumeButton", data: ["delta": bump])
 
             // Only recentre if we're approaching an edge. This avoids the
