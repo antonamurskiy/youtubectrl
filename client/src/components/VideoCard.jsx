@@ -3,6 +3,7 @@ import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 import { copyText } from '../clipboard'
+import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
 // Module-level dedup cache: videoId -> Promise<url|null>.
 // Multiple VideoCard instances for the same video share one fetch.
@@ -105,6 +106,7 @@ export default function VideoCard({ video, isPlaying, isActive }) {
 
   const handlePlay = useCallback(() => {
     if (longPressTriggered.current) return
+    hapticTick()
 
     fetch('/api/play', {
       method: 'POST',
@@ -131,6 +133,7 @@ export default function VideoCard({ video, isPlaying, isActive }) {
     touchStartPos.current = { x: touch.clientX, y: touch.clientY }
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true
+      hapticThump()
       setContextMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
     }, 500)
   }, [isMobile, videoId, video.isLive, video.live])

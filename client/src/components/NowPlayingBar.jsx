@@ -5,6 +5,7 @@ import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
 import { copyText } from '../clipboard'
+import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
 function formatTime(s) {
   if (!s || s < 0) return '0:00'
@@ -280,6 +281,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [])
 
   const togglePlayPause = useCallback(() => {
+    hapticTick()
     const ctrl = phoneCtrl()
     if (ctrl) { pb.paused ? ctrl.play() : ctrl.pause(); return }
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})

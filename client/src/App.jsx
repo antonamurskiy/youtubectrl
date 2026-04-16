@@ -203,7 +203,7 @@ function App() {
                 <button
                   key={t}
                   className={`tab${activeTab === t ? ' active' : ''}`}
-                  onClick={() => setTab(t)}
+                  onClick={() => { if (activeTab !== t) hapticTick(); setTab(t) }}
                 >
                   {t.charAt(0).toUpperCase() + t.slice(1)}
                 </button>

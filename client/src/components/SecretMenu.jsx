@@ -4,6 +4,7 @@ import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 import { FONTS, applyFont, currentFont, FONT_SIZES, applyFontSize, currentFontSize } from '../fonts'
 import { isNativeIOS, NativePlayer } from '../native/player'
+import { tick as hapticTick, thump as hapticThump, selection as hapticSelection, selectionStart as hapticSelectionStart, selectionEnd as hapticSelectionEnd } from '../haptics'
 
 const MIN_SIZE = 9
 const MAX_SIZE = 20
@@ -20,7 +21,7 @@ function FontSizeScrubber({ value, onChange }) {
     const x = Math.max(0, Math.min(clientX - rect.left, rect.width))
     const pct = x / rect.width
     const n = Math.round(MIN_SIZE + pct * (MAX_SIZE - MIN_SIZE))
-    if (n !== value) onChange(n)
+    if (n !== value) { onChange(n); hapticSelection() }
   }, [value, onChange])
 
   useEffect(() => {
@@ -30,6 +31,7 @@ function FontSizeScrubber({ value, onChange }) {
       if (!e.touches || e.touches.length === 0) return
       e.preventDefault()
       draggingRef.current = true
+      hapticSelectionStart()
       update(e.touches[0].clientX)
     }
     const onTouchMove = (e) => {
@@ -39,6 +41,7 @@ function FontSizeScrubber({ value, onChange }) {
     }
     const onTouchEnd = () => {
       setTimeout(() => { draggingRef.current = false }, 50)
+      hapticSelectionEnd()
     }
     const onMouseDown = (e) => {
       draggingRef.current = true
@@ -131,6 +134,7 @@ export default function SecretMenu() {
     })
   }, [])
 
+  const lastVolHapticRef = useRef(-1)
   const updateVolume = useCallback((clientY) => {
     const el = volAreaRef.current
     if (!el) return
@@ -142,6 +146,12 @@ export default function SecretMenu() {
     setVolume(vol)
     pendingVolRef.current = vol
     sendVolume()
+    // Haptic tick every 5% step
+    const step = Math.floor(vol / 5)
+    if (step !== lastVolHapticRef.current) {
+      lastVolHapticRef.current = step
+      hapticSelection()
+    }
   }, [sendVolume])
 
   useEffect(() => {
@@ -151,6 +161,7 @@ export default function SecretMenu() {
       if (!e.touches || e.touches.length === 0) return
       e.preventDefault()
       draggingRef.current = true
+      hapticSelectionStart()
       updateVolume(e.touches[0].clientY)
     }
     const onTouchMove = (e) => {
@@ -161,6 +172,7 @@ export default function SecretMenu() {
     const onTouchEnd = () => {
       // keep dragging flag briefly so the overlay click doesn't close the menu
       setTimeout(() => { draggingRef.current = false }, 50)
+      hapticSelectionEnd()
     }
     const onMouseDown = (e) => {
       draggingRef.current = true
@@ -232,13 +244,14 @@ export default function SecretMenu() {
             background: muted ? 'rgba(255,50,50,0.1)' : 'none',
           }}
           onClick={() => {
+            hapticThump()
             fetch('/api/mute', { method: 'POST' }).then(r => r.json()).then(d => { setMuted(d.muted); addToast(d.muted ? 'Muted' : 'Unmuted') }).catch(() => addToast('Mute failed'))
           }}
         >
           {muted ? 'Muted ●' : 'Mute'}
         </button>
 
-        <button className="secret-menu-item" onClick={() => setShowOutputs(!showOutputs)}>
+        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowOutputs(!showOutputs) }}>
           Audio: {currentOutput || '...'}
         </button>
         {showOutputs && audioOutputs.map(name => (
@@ -246,13 +259,14 @@ export default function SecretMenu() {
             key={name}
             className="secret-menu-item"
             style={{ paddingLeft: 24, color: name === currentOutput ? 'var(--accent)' : 'var(--text)' }}
-            onClick={() => switchOutput(name)}
+            onClick={() => { hapticTick(); switchOutput(name) }}
           >
             {name === currentOutput ? '● ' : '  '}{name}
           </button>
         ))}
 
         <button className="secret-menu-item" onClick={() => {
+          hapticTick()
           if (!showBt) {
             fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
           }
@@ -273,6 +287,7 @@ export default function SecretMenu() {
               className="secret-menu-item"
               style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
               onClick={() => {
+                hapticThump()
                 const action = d.connected ? 'disconnect' : 'connect'
                 fetch(`/api/bluetooth-${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: d.address }) })
                   .then(r => r.json()).then(res => {
@@ -288,7 +303,7 @@ export default function SecretMenu() {
         })}
 
         <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
-        <button className="secret-menu-item" onClick={() => setShowFonts(!showFonts)}>
+        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
           Font: {fontSel}
         </button>
         {showFonts && FONTS.map(([label, family]) => (
@@ -296,7 +311,7 @@ export default function SecretMenu() {
             key={label}
             className="secret-menu-item"
             style={{ paddingLeft: 24, fontFamily: family, color: label === fontSel ? 'var(--green)' : 'var(--text)' }}
-            onClick={() => { applyFont(label); setFontSel(label) }}
+            onClick={() => { hapticTick(); applyFont(label); setFontSel(label) }}
           >
             {label === fontSel ? '● ' : '  '}{label}
           </button>
@@ -304,6 +319,7 @@ export default function SecretMenu() {
 
         {useUIStore.getState().filteredVideos.length > 0 && (
           <button className="secret-menu-item" onClick={() => {
+            hapticTick()
             useUIStore.getState().setTab('filtered')
             toggleSecretMenu()
           }}>
@@ -312,18 +328,21 @@ export default function SecretMenu() {
         )}
 
         <button className="secret-menu-item" onClick={() => {
+          hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
           toggleSecretMenu()
         }}>
           Toggle resolution
         </button>
         <button className="secret-menu-item" onClick={() => {
+          hapticTick()
           fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
           toggleSecretMenu()
         }}>
           Refresh cookies
         </button>
         <button className="secret-menu-item" onClick={() => {
+          hapticThump()
           const wake = macStatus.screenOff
           const endpoint = wake ? '/api/wake-mac' : '/api/lock-mac'
           const okMsg = wake ? 'Waking' : 'Mac locked'
@@ -334,6 +353,7 @@ export default function SecretMenu() {
           {macStatus.screenOff ? 'Wake Mac' : 'Lock Mac'}
         </button>
         <button className="secret-menu-item" style={{ color: macStatus.keepAwake ? 'var(--green)' : undefined }} onClick={() => {
+          hapticThump()
           const next = !macStatus.keepAwake
           fetch('/api/keep-awake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: next }) })
             .then(() => addToast(next ? 'Keep awake on' : 'Keep awake off'))
@@ -342,11 +362,11 @@ export default function SecretMenu() {
           Keep awake {macStatus.keepAwake ? '✓' : ''}
         </button>
         {isNativeIOS && (
-          <button className="secret-menu-item" onClick={() => NativePlayer.showAirPlayPicker()}>
+          <button className="secret-menu-item" onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
             AirPlay...
           </button>
         )}
-        <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>
+        <button className="secret-menu-item" onClick={() => { hapticTick(); toggleSecretMenu() }} style={{ color: 'var(--accent2)' }}>
           Close
         </button>
       </div>
