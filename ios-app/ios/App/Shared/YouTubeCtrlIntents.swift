@@ -62,7 +62,16 @@ public struct YTCtrlPlayPauseIntent: AppIntent {
     public static var description = IntentDescription("Toggle playback on the desktop player.")
     public init() {}
     public func perform() async throws -> some IntentResult {
-        await post("/api/playpause")
+        if #available(iOS 16.2, *) {
+            for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+                var state = act.content.state
+                state.paused.toggle()
+                await act.update(.init(state: state, staleDate: nil))
+            }
+        }
+        Task.detached {
+            _ = await post("/api/playpause")
+        }
         return .result()
     }
 }
@@ -88,9 +97,20 @@ public struct YTCtrlVolumeIntent: AppIntent {
     public var delta: Int
     public init(delta: Int) { self.delta = delta }
     public func perform() async throws -> some IntentResult {
-        let response = await post("/api/volume-bump", body: ["delta": delta])
-        if let vol = response?["volume"] as? Int {
-            if #available(iOS 16.2, *) { await updateActivityVolume(vol) }
+        // Optimistically update the widget FIRST — based on the current
+        // ContentState volume + delta. This makes the slider respond instantly
+        // rather than waiting for the HTTP round trip.
+        if #available(iOS 16.2, *) {
+            for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+                var state = act.content.state
+                state.volume = max(0, min(100, state.volume + delta))
+                await act.update(.init(state: state, staleDate: nil))
+            }
+        }
+        // Fire the server request without awaiting its completion so the
+        // intent returns quickly — iOS gives us limited time per intent.
+        Task.detached {
+            _ = await post("/api/volume-bump", body: ["delta": delta])
         }
         return .result()
     }
