@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { flushSync } from 'react-dom'
 import { tick as hapticTick } from './haptics'
 import { useSync } from './hooks/useSync'
@@ -8,7 +9,6 @@ import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
 import VideoGrid from './components/VideoGrid'
 import NowPlayingBar from './components/NowPlayingBar'
-import PhonePlayer from './components/PhonePlayer'
 import SecretMenu from './components/SecretMenu'
 import CommentsPanel from './components/CommentsPanel'
 import SearchBar from './components/SearchBar'
@@ -16,6 +16,7 @@ import { useRouting } from './hooks/useRouting'
 import Toast from './components/Toast'
 import { lazy, Suspense } from 'react'
 const Terminal = lazy(() => import('./components/Terminal'))
+const PhonePlayer = lazy(() => import('./components/PhonePlayer'))
 import './App.css'
 
 function TmuxTabButton({ window: w }) {
@@ -94,12 +95,33 @@ function App() {
   const { send } = useSync()
   useMediaSession()
   useRouting()
-  const activeTab = useUIStore(s => s.activeTab)
-  const setTab = useUIStore(s => s.setTab)
-  const secretMenuOpen = useUIStore(s => s.secretMenuOpen)
-  const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
-  const playing = usePlaybackStore(s => s.playing)
-  const rawClaudeState = usePlaybackStore(s => s.claudeState)
+  const { activeTab, setTab, secretMenuOpen, toggleSecretMenu, refresh, refreshing } = useUIStore(
+    useShallow(s => ({
+      activeTab: s.activeTab,
+      setTab: s.setTab,
+      secretMenuOpen: s.secretMenuOpen,
+      toggleSecretMenu: s.toggleSecretMenu,
+      refresh: s.refresh,
+      refreshing: s.refreshing,
+    }))
+  )
+  const { playing, rawClaudeState, claudeOptions, claudeQuestion, tmuxWindows } = usePlaybackStore(
+    useShallow(s => ({
+      playing: s.playing,
+      rawClaudeState: s.claudeState,
+      claudeOptions: s.claudeOptions,
+      claudeQuestion: s.claudeQuestion,
+      tmuxWindows: s.tmuxWindows,
+    }))
+  )
+  const { connected, phoneOpen, terminalOpen, setTerminalOpen } = useSyncStore(
+    useShallow(s => ({
+      connected: s.connected,
+      phoneOpen: s.phoneOpen,
+      terminalOpen: s.terminalOpen,
+      setTerminalOpen: s.setTerminalOpen,
+    }))
+  )
   const [claudeState, setClaudeState] = useState('idle')
   const [claudePressed, setClaudePressed] = useState(null)
   useEffect(() => { if (rawClaudeState === 'waiting') setClaudePressed(null) }, [rawClaudeState])
@@ -113,17 +135,8 @@ function App() {
       setClaudeState(rawClaudeState || 'idle')
     }
   }, [rawClaudeState])
-  const claudeOptions = usePlaybackStore(s => s.claudeOptions)
-  const claudeQuestion = usePlaybackStore(s => s.claudeQuestion)
-  const tmuxWindows = usePlaybackStore(s => s.tmuxWindows)
-  const connected = useSyncStore(s => s.connected)
-  const phoneOpen = useSyncStore(s => s.phoneOpen)
-  const terminalOpen = useSyncStore(s => s.terminalOpen)
-  const setTerminalOpen = useSyncStore(s => s.setTerminalOpen)
   const [terminalEverOpened, setTerminalEverOpened] = useState(false)
   useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
-  const refresh = useUIStore(s => s.refresh)
-  const refreshing = useUIStore(s => s.refreshing)
   const longPressRef = useRef(null)
 
   // Desktop keyboard shortcuts: space play/pause, ←/→ skip 5s
@@ -171,7 +184,11 @@ function App() {
 
   return (
     <>
-      {phoneOpen && <PhonePlayer send={send} />}
+      {phoneOpen && (
+        <Suspense fallback={null}>
+          <PhonePlayer send={send} />
+        </Suspense>
+      )}
 
       <div style={terminalOpen ? { display: 'none' } : undefined}>
         <header className="header">

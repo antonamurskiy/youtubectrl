@@ -310,9 +310,9 @@ export default function VideoGrid() {
           </div>
         )}
 
-        {videos.slice(0, PAGE_SIZE).map((video, i) => (
+        {videos.slice(0, PAGE_SIZE).map((video) => (
           <VideoCard
-            key={video.url || video.videoId || i}
+            key={video.videoId || video.id || video.url}
             video={video}
             isPlaying={nowPlayingUrl && (
               nowPlayingUrl === video.url ||
@@ -336,9 +336,9 @@ export default function VideoGrid() {
 
       {videos.length > PAGE_SIZE && (
         <div className="video-grid">
-          {videos.slice(PAGE_SIZE).map((video, i) => (
+          {videos.slice(PAGE_SIZE).map((video) => (
             <VideoCard
-              key={video.url || video.videoId || `p${i}`}
+              key={video.videoId || video.id || video.url}
               video={video}
               isPlaying={nowPlayingUrl && (
                 nowPlayingUrl === video.url ||

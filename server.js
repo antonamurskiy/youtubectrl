@@ -31,14 +31,40 @@ try {
   }
 } catch (err) { console.error("Failed to load history:", err.message); }
 
+const HISTORY_LIMIT = 2000;
 let _saveHistoryTimer = null;
+let _saveHistoryPending = false;
+let _saveHistoryInFlight = false;
 function saveHistory() {
   // Debounce writes to avoid blocking event loop on rapid updates
   if (_saveHistoryTimer) return;
   _saveHistoryTimer = setTimeout(() => {
     _saveHistoryTimer = null;
-    fs.writeFile(HISTORY_FILE, JSON.stringify(history, null, 2), () => {});
+    flushHistory();
   }, 500);
+}
+
+function flushHistory() {
+  // LRU cap — prune oldest entries beyond the limit
+  if (history.length > HISTORY_LIMIT) {
+    const dropped = history.splice(HISTORY_LIMIT);
+    for (const h of dropped) historyMap.delete(h.url);
+  }
+  // Serialize writes to avoid overlapping rename races
+  if (_saveHistoryInFlight) { _saveHistoryPending = true; return; }
+  _saveHistoryInFlight = true;
+  const tmpFile = HISTORY_FILE + ".tmp";
+  fs.writeFile(tmpFile, JSON.stringify(history, null, 2), (err) => {
+    if (err) {
+      _saveHistoryInFlight = false;
+      if (_saveHistoryPending) { _saveHistoryPending = false; flushHistory(); }
+      return;
+    }
+    fs.rename(tmpFile, HISTORY_FILE, () => {
+      _saveHistoryInFlight = false;
+      if (_saveHistoryPending) { _saveHistoryPending = false; flushHistory(); }
+    });
+  });
 }
 
 function markWatchedOnYouTube(url) {
@@ -1659,30 +1685,69 @@ app.post("/api/stop", async (_req, res) => {
   res.json({ ok: true });
 });
 
-// IPC helper for mpv
+// Persistent IPC connection to mpv — reused across requests
+const MPV_SOCKET = "/tmp/mpv-socket";
+let _mpvClient = null;
+let _mpvBuf = "";
+let _mpvReqId = 0;
+const _mpvPending = new Map(); // request_id -> { resolve, timer }
+
+function _mpvCleanup(err) {
+  if (_mpvClient) { try { _mpvClient.destroy(); } catch {} }
+  _mpvClient = null;
+  _mpvBuf = "";
+  // Fail all pending
+  for (const [, p] of _mpvPending) {
+    clearTimeout(p.timer);
+    p.resolve(null);
+  }
+  _mpvPending.clear();
+}
+
+function _mpvGetClient() {
+  if (_mpvClient) return _mpvClient;
+  const client = net.createConnection(MPV_SOCKET);
+  _mpvClient = client;
+  client.on("data", (chunk) => {
+    _mpvBuf += chunk;
+    const lines = _mpvBuf.split("\n");
+    _mpvBuf = lines.pop() || "";
+    for (const line of lines) {
+      if (!line) continue;
+      try {
+        const parsed = JSON.parse(line);
+        const rid = parsed.request_id;
+        if (rid !== undefined && _mpvPending.has(rid)) {
+          const p = _mpvPending.get(rid);
+          _mpvPending.delete(rid);
+          clearTimeout(p.timer);
+          p.resolve(parsed);
+        }
+      } catch {}
+    }
+  });
+  client.on("error", _mpvCleanup);
+  client.on("close", _mpvCleanup);
+  return client;
+}
+
 function mpvCommand(cmd) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => { if (!settled) { settled = true; client.destroy(); resolve(null); } }, 2000);
-    const client = net.createConnection("/tmp/mpv-socket", () => {
-      client.write(JSON.stringify({ command: cmd }) + "\n");
-    });
-    let buf = "";
-    client.on("data", (chunk) => {
-      buf += chunk;
-      const lines = buf.split("\n");
-      for (const line of lines) {
-        if (!line) continue;
-        try {
-          const parsed = JSON.parse(line);
-          if ("request_id" in parsed) {
-            if (!settled) { settled = true; clearTimeout(timer); client.destroy(); resolve(parsed); }
-            return;
-          }
-        } catch {}
-      }
-    });
-    client.on("error", (err) => { if (!settled) { settled = true; clearTimeout(timer); client.destroy(); reject(err); } });
+  return new Promise((resolve) => {
+    let client;
+    try { client = _mpvGetClient(); } catch { return resolve(null); }
+    const rid = ++_mpvReqId;
+    const timer = setTimeout(() => {
+      if (_mpvPending.has(rid)) { _mpvPending.delete(rid); resolve(null); }
+    }, 2000);
+    _mpvPending.set(rid, { resolve, timer });
+    try {
+      client.write(JSON.stringify({ command: cmd, request_id: rid }) + "\n");
+    } catch {
+      clearTimeout(timer);
+      _mpvPending.delete(rid);
+      _mpvCleanup();
+      resolve(null);
+    }
   });
 }
 
@@ -1804,17 +1869,38 @@ app.post("/api/seek-relative", async (req, res) => {
   }
 });
 
-// Fetch HLS manifest helper
+// Fetch HLS manifest helper — short TTL cache to avoid redundant fetches on rapid seeks
+const _manifestCache = new Map(); // url -> { at, data, inflight }
+const MANIFEST_TTL_MS = 2500;
 function fetchManifest(url) {
+  const now = Date.now();
+  const entry = _manifestCache.get(url);
+  if (entry) {
+    if (entry.data && now - entry.at < MANIFEST_TTL_MS) return Promise.resolve(entry.data);
+    if (entry.inflight) return entry.inflight;
+  }
   const https = require('https');
   const http = require('http');
   const get = url.startsWith('https') ? https.get : http.get;
-  return new Promise((resolve, reject) => {
+  const p = new Promise((resolve, reject) => {
     const req = get(url, r => {
       let d = ''; r.on('data', c => d += c); r.on('end', () => resolve(d));
     }).on('error', reject);
     setTimeout(() => { req.destroy(); reject(new Error('fetchManifest timeout')); }, 5000);
+  }).then(data => {
+    _manifestCache.set(url, { at: Date.now(), data, inflight: null });
+    // Keep cache bounded
+    if (_manifestCache.size > 8) {
+      const oldest = [..._manifestCache.entries()].sort((a, b) => a[1].at - b[1].at)[0];
+      if (oldest) _manifestCache.delete(oldest[0]);
+    }
+    return data;
+  }).catch(err => {
+    _manifestCache.delete(url);
+    throw err;
   });
+  _manifestCache.set(url, { at: now, data: entry?.data || null, inflight: p });
+  return p;
 }
 
 // Parse HLS manifest once — returns { lines, totalDuration, liveEdgePdt }
@@ -3812,7 +3898,7 @@ async function refreshMacStatus() {
   _macStatusCache.ethernet = results[3].status === 'fulfilled' && results[3].value.stdout.includes("active");
 }
 refreshMacStatus();
-_macStatusInterval = setInterval(refreshMacStatus, 10000);
+_macStatusInterval = setInterval(refreshMacStatus, 30000);
 function startWsSync() {
   if (wsSyncInterval) return;
   wsSyncInterval = setInterval(async () => {
@@ -3883,24 +3969,29 @@ function startWsSync() {
           const paused = !!pause?.data;
           // Auto-hide/show on external pause (AirPods, media keys) — same logic as /api/playpause
           if (_lastPolledPaused !== null && paused !== _lastPolledPaused && windowMode !== "fullscreen") {
-            try {
-              if (paused) {
-                execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" });
-              } else if (!phoneActive) {
-                execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
-                execSync(`osascript -e 'tell application "System Events" to set frontmost of process "mpv" to true'`, { stdio: "ignore" });
-                if (windowMode === "maximize") {
-                  const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-                  if (wid) {
-                    execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-                    execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+            // Fire-and-forget to avoid blocking the 1Hz WS broadcast loop
+            (async () => {
+              try {
+                if (paused) {
+                  await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false']).catch(() => {});
+                } else if (!phoneActive) {
+                  await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true']).catch(() => {});
+                  await execFileP("osascript", ["-e", 'tell application "System Events" to set frontmost of process "mpv" to true']).catch(() => {});
+                  if (windowMode === "maximize") {
+                    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+                    const line = stdout.split("\n").find(l => /mpv/i.test(l));
+                    const wid = line ? line.split("|")[0].trim() : "";
+                    if (wid) {
+                      await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+                      await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+                    }
                   }
                 }
-              }
-            } catch {}
+              } catch {}
+            })();
           }
           _lastPolledPaused = paused;
-          // Prefer mpv's reported duration; fall back to cached history duration
+          // Prefer mpv's reported duration; fall back to cached history duration (unused comment)
           // (mpv returns null while loading — don't broadcast 0 or it resets phone UI)
           const histDur = historyMap.get(nowPlaying)?.duration || 0;
           const reportedDur = dur?.data || 0;

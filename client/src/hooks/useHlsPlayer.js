@@ -1,5 +1,11 @@
 import { useEffect, useRef, useCallback } from 'react'
-import Hls from 'hls.js'
+
+// Cache the hls.js module promise so we only download it once
+let hlsModulePromise = null
+function loadHls() {
+  if (!hlsModulePromise) hlsModulePromise = import('hls.js').then(m => m.default)
+  return hlsModulePromise
+}
 
 export function useHlsPlayer(videoRef, src) {
   const hlsRef = useRef(null)
@@ -17,7 +23,10 @@ export function useHlsPlayer(videoRef, src) {
       hlsRef.current = null
     }
 
-    if (Hls.isSupported()) {
+    let cancelled = false
+    loadHls().then((Hls) => {
+      if (cancelled) return
+      if (!Hls.isSupported()) return // Safari uses native HLS via <video src=...>
       const hls = new Hls({
         liveSyncDurationCount: 3,
         liveMaxLatencyDurationCount: 6,
@@ -30,9 +39,10 @@ export function useHlsPlayer(videoRef, src) {
         video.play().catch(() => {})
       })
       hlsRef.current = hls
-    }
+    })
 
     return () => {
+      cancelled = true
       if (hlsRef.current) {
         hlsRef.current.destroy()
         hlsRef.current = null

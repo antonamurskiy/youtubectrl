@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
@@ -59,6 +59,8 @@ export default function VideoCard({ video, isPlaying, isActive }) {
   const longPressTimer = useRef(null)
   const longPressTriggered = useRef(false)
   const cardRef = useRef(null)
+  const touchStartPos = useRef(null)
+  const previewTimer = useRef(null)
 
   const videoId = video.videoId || video.id || video.url?.match(/v=([\w-]+)/)?.[1]
   const thumbnail = video.thumbnail ||
@@ -98,7 +100,26 @@ export default function VideoCard({ video, isPlaying, isActive }) {
   const handleMouseLeave = useCallback(() => {
     if (!isMobile) setPreviewing(false)
   }, [isMobile])
-  const previewTimer = useRef(null)
+
+  const videoUrl = video.url || (video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : '')
+
+  const handlePlay = useCallback(() => {
+    if (longPressTriggered.current) return
+
+    fetch('/api/play', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: videoUrl,
+        title: video.title,
+        channel: video.channel,
+        thumbnail: video.thumbnail || '',
+        isLive: video.isLive || video.live || false,
+        watchPct: video.startPercent || 0,
+      }),
+    }).catch(() => addToast('Play failed'))
+  }, [videoUrl, video.title, video.channel, video.isLive, addToast])
+
   const handleCardTouchStart = useCallback((e) => {
     longPressTriggered.current = false
     if (isMobile && videoId && !video.isLive && !video.live) {
@@ -156,27 +177,6 @@ export default function VideoCard({ video, isPlaying, isActive }) {
     }
   }, [])
 
-  const videoUrl = video.url || (video.videoId ? `https://www.youtube.com/watch?v=${video.videoId}` : '')
-
-  const handlePlay = useCallback(() => {
-    if (longPressTriggered.current) return
-
-    fetch('/api/play', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: videoUrl,
-        title: video.title,
-        channel: video.channel,
-        thumbnail: video.thumbnail || '',
-        isLive: video.isLive || video.live || false,
-        watchPct: video.startPercent || 0,
-      }),
-    }).catch(() => addToast('Play failed'))
-  }, [videoUrl, video.title, video.channel, video.isLive, addToast])
-
-  const touchStartPos = useRef(null)
-
   const handleContextMenuEvent = useCallback((e) => {
     e.preventDefault()
     setContextMenu({ x: e.clientX, y: e.clientY })
@@ -217,6 +217,18 @@ export default function VideoCard({ video, isPlaying, isActive }) {
   const watchPct = video.watchProgress || video.startPercent ||
     (video.savedPosition > 0 && video.savedDuration > 0 ? (video.savedPosition / video.savedDuration) * 100 : 0)
 
+  const upcomingStr = useMemo(() => {
+    if (!video.uploadedAt) return 'SOON'
+    const m = video.uploadedAt.match(/(\d+)\/(\d+)\/(\d+),\s*(\d+):(\d+)\s*(AM|PM)/i)
+    if (!m) return 'SOON'
+    const d = new Date(2000 + parseInt(m[3]), parseInt(m[1]) - 1, parseInt(m[2]), m[6] === 'PM' && m[4] !== '12' ? parseInt(m[4]) + 12 : m[6] === 'AM' && m[4] === '12' ? 0 : parseInt(m[4]), parseInt(m[5]))
+    const mins = Math.round((d - Date.now()) / 60000)
+    if (mins < 1) return 'SOON'
+    if (mins < 60) return `in ${mins}m`
+    const h = Math.floor(mins / 60)
+    return h < 24 ? `in ${h}h` : `in ${Math.floor(h / 24)}d`
+  }, [video.uploadedAt])
+
   return (
     <>
       <div
@@ -250,19 +262,7 @@ export default function VideoCard({ video, isPlaying, isActive }) {
           )}
           {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
           {(video.upcoming || video.duration === 'SOON') && !video.isLive && !video.live && (
-            <span className="live-badge" style={{ background: 'var(--text-dim)' }}>
-              {(() => {
-                if (!video.uploadedAt) return 'SOON'
-                const m = video.uploadedAt.match(/(\d+)\/(\d+)\/(\d+),\s*(\d+):(\d+)\s*(AM|PM)/i)
-                if (!m) return 'SOON'
-                const d = new Date(2000 + parseInt(m[3]), parseInt(m[1]) - 1, parseInt(m[2]), m[6] === 'PM' && m[4] !== '12' ? parseInt(m[4]) + 12 : m[6] === 'AM' && m[4] === '12' ? 0 : parseInt(m[4]), parseInt(m[5]))
-                const mins = Math.round((d - Date.now()) / 60000)
-                if (mins < 1) return 'SOON'
-                if (mins < 60) return `in ${mins}m`
-                const h = Math.floor(mins / 60)
-                return h < 24 ? `in ${h}h` : `in ${Math.floor(h / 24)}d`
-              })()}
-            </span>
+            <span className="live-badge" style={{ background: 'var(--text-dim)' }}>{upcomingStr}</span>
           )}
           {durationStr && !video.isLive && !video.live && !video.upcoming && video.duration !== 'SOON' && video.duration !== 'LIVE' && (
             <span className="duration-badge">{durationStr}</span>

@@ -6,6 +6,7 @@ export function useSync() {
   const wsRef = useRef(null)
   const reconnectTimer = useRef(null)
   const recalibTimer = useRef(null)
+  const reconnectAttempts = useRef(0)
   const pingState = useRef({ samples: [], pending: null })
 
   const connect = useCallback(() => {
@@ -14,6 +15,7 @@ export function useSync() {
     wsRef.current = ws
 
     ws.onopen = () => {
+      reconnectAttempts.current = 0
       useSyncStore.getState().setConnected(true)
       // Start clock offset measurement
       pingState.current = { samples: [], pending: null }
@@ -44,7 +46,11 @@ export function useSync() {
     ws.onclose = () => {
       useSyncStore.getState().setConnected(false)
       wsRef.current = null
-      reconnectTimer.current = setTimeout(connect, 2000)
+      // Exponential backoff: 500ms, 1s, 2s, 4s, 8s, 16s, cap at 30s
+      const attempt = Math.min(reconnectAttempts.current, 6)
+      const delay = Math.min(500 * Math.pow(2, attempt), 30000)
+      reconnectAttempts.current++
+      reconnectTimer.current = setTimeout(connect, delay)
     }
 
     ws.onerror = () => ws.close()
@@ -74,7 +80,6 @@ function sendPing(ws, state) {
     const sorted = [...state.samples].sort((a, b) => a - b)
     const median = sorted[Math.floor(sorted.length / 2)]
     useSyncStore.getState().setClockOffset(median)
-    console.log(`Clock offset: ${median.toFixed(1)}ms (${state.samples.length} samples)`)
     return
   }
   if (ws.readyState !== WebSocket.OPEN) return
