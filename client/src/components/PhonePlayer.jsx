@@ -574,42 +574,13 @@ export default function PhonePlayer({ send }) {
           }
           steadyDriftAtRef.current = 0
         } else if (Math.abs(drift) > 0.03) {
-          // Residual drift within the rate-control dead zone. If it's
-          // been stable for 3s AND outside 30ms, kill it with a precise
-          // one-shot seek. steadyDriftAtRef tracks when we first entered
-          // this band; driftAtSteadyRef stores the drift value then.
-          if (!steadyDriftAtRef.current) {
-            steadyDriftAtRef.current = now3
-            driftAtSteadyRef.current = drift
-          } else if (
-            Math.abs(drift - driftAtSteadyRef.current) < 0.05 &&
-            now3 - steadyDriftAtRef.current > 3000 &&
-            now3 - lastSeekRef.current > 5000
-          ) {
-            const target = mpvPos + (isNativeIOS ? 0 : 0.2)
-            if (isNativeIOS) {
-              NativePlayer.seek(target).catch(() => {})
-              _nativePos = target
-              _nativePosAt = Date.now()
-            } else {
-              video.currentTime = target
-            }
-            lastSeekRef.current = now3
-            driftSamplesRef.current = []
-            steadyDriftAtRef.current = 0
-            send({ type: 'mpv-speed', speed: 1.0 })
-            lastRateSend = 0
-          } else {
-            // Drift changed significantly — not steady state, reset timer
-            if (Math.abs(drift - driftAtSteadyRef.current) > 0.05) {
-              steadyDriftAtRef.current = now3
-              driftAtSteadyRef.current = drift
-            }
-          }
-          // Also ensure rate is 1.0 here
-          if (lastRateSend > 0) {
-            send({ type: 'mpv-speed', speed: 1.0 })
-            lastRateSend = 0
+          // Residual drift in 30-150ms band. Seeks here tend to overshoot
+          // (AVPlayer composition isn't frame-perfect), so apply a very
+          // gentle persistent rate bias — 0.8% = closes 100ms in ~12s.
+          const rate = drift > 0 ? 1.008 : 0.992
+          if (now3 - lastRateSend > 2000) {
+            send({ type: 'mpv-speed', speed: rate })
+            lastRateSend = now3
           }
         } else {
           // Perfectly aligned (<30ms)
