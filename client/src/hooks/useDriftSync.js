@@ -1,18 +1,49 @@
 import { useEffect, useRef } from 'react'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
+import { isNativeIOS, NativePlayer } from '../native/player'
 
 let _lastRateSend = 0
 
+// Native AVPlayer position cache — polled separately so sync doesn't have
+// to await on every drift check.
+let _nativePos = 0
+let _nativePosAt = 0
+
+function nativePosNow() {
+  // Interpolate from last poll assuming rate=1
+  const elapsed = (Date.now() - _nativePosAt) / 1000
+  return _nativePos + elapsed
+}
+
 export function useDriftSync(videoRef, getPlayingDate, send) {
-  const correcting = useRef(false)
+  useEffect(() => {
+    if (!isNativeIOS) return
+    // Poll AVPlayer position every 250ms so nativePosNow has fresh base
+    let alive = true
+    const tick = async () => {
+      if (!alive) return
+      try {
+        const s = await NativePlayer.getState()
+        if (s && typeof s.position === 'number') {
+          _nativePos = s.position
+          _nativePosAt = Date.now()
+        }
+      } catch {}
+      if (alive) setTimeout(tick, 250)
+    }
+    tick()
+    return () => { alive = false }
+  }, [])
 
   useEffect(() => {
-    // Subscribe to playback store updates (driven by WS at 100ms)
     const unsub = usePlaybackStore.subscribe((pb) => {
       if (!pb.playing || pb.paused) return
       const video = videoRef.current
-      if (!video || video.readyState < 2 || video.currentTime < 1) return
+      const phonePos = isNativeIOS ? nativePosNow() : video?.currentTime
+      if (!phonePos || phonePos < 1) return
+      // Non-native: also need HTML video ready
+      if (!isNativeIOS && (!video || video.readyState < 2)) return
 
       const sync = useSyncStore.getState()
       if (!sync.phoneOpen) return
@@ -21,9 +52,9 @@ export function useDriftSync(videoRef, getPlayingDate, send) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive) {
-        syncLive(pb, video, getPlayingDate, send, sync, behindLive)
+        syncLive(pb, video, phonePos, getPlayingDate, send, sync, behindLive)
       } else {
-        syncVod(pb, video, send, sync)
+        syncVod(pb, video, phonePos, send, sync)
       }
     })
 
@@ -31,33 +62,23 @@ export function useDriftSync(videoRef, getPlayingDate, send) {
   }, [videoRef, getPlayingDate, send])
 }
 
-function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
+function syncLive(pb, video, phonePos, getPlayingDate, send, sync, behindLive) {
   // Get absolute time from hls.js (Chrome) or native (Safari)
   const phoneAbsMs = getPlayingDate()
   if (!phoneAbsMs || !pb.absoluteMs) return
 
   const store = useSyncStore.getState()
   const drift = (pb.absoluteMs - phoneAbsMs) / 1000 + store.userOffset
-
-  // Filter garbage from VLC PTS glitches
   if (Math.abs(drift) > 100) return
-
   store.setDrift(drift)
-
-  // Send debug to server
   send({ type: 'phone-state', drift: +drift.toFixed(2), behindLive: +behindLive.toFixed(0) })
 
-  // Skip corrections when behind live (phone already seeked, VLC PTS unreliable)
   if (behindLive > 5) return
-
-  // Throttle corrections to 1x/sec
   const now = Date.now()
   if (now - _lastRateSend < 1000) return
   _lastRateSend = now
 
   if (Math.abs(drift) > 0.1) {
-    // VLC rate control (phone playbackRate ignored on live HLS by Safari)
-    // Max convergence ~0.1s/sec at rate 1.1 — limited by live segment delivery
     const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1))
     send({ type: 'vlc-rate', rate: +rate.toFixed(4) })
   } else {
@@ -65,21 +86,37 @@ function syncLive(pb, video, getPlayingDate, send, sync, behindLive) {
   }
 }
 
-function syncVod(pb, video, send, sync) {
-  const drift = pb.position - video.currentTime
+function syncVod(pb, video, phonePos, send, sync) {
+  const drift = pb.position - phonePos
   useSyncStore.getState().setDrift(drift)
-  send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +pb.position.toFixed(1), phone: +video.currentTime.toFixed(1) })
+  send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +pb.position.toFixed(1), phone: +phonePos.toFixed(1) })
 
   // Pause/resume
-  if (pb.paused && !video.paused) video.pause()
-  else if (!pb.paused && video.paused) video.play().catch(() => {})
+  if (isNativeIOS) {
+    // Native AVPlayer already respects its paused state. Use NativePlayer
+    // instead of HTML video's paused.
+    // Note: we don't fight for pause sync here because the NowPlayingBar
+    // play/pause already drives both mpv + AVPlayer through phoneVideoCtrl.
+  } else if (video) {
+    if (pb.paused && !video.paused) video.pause()
+    else if (!pb.paused && video.paused) video.play().catch(() => {})
+  }
 
   if (Math.abs(drift) > 5) {
-    // Large drift: hard seek
-    video.currentTime = pb.position
+    // Large drift: hard seek phone to mpv position
+    if (isNativeIOS) {
+      NativePlayer.seek(pb.position).catch(() => {})
+      // Also update our cache immediately so next tick computes from the
+      // target, not the stale pre-seek value.
+      _nativePos = pb.position
+      _nativePosAt = Date.now()
+    } else if (video) {
+      video.currentTime = pb.position
+    }
     useSyncStore.getState().setSettling(Date.now() + 3000)
   } else if (Math.abs(drift) > 0.5) {
-    // Proportional mpv speed control
+    // Proportional mpv speed control — nudge mpv closer to phone rather
+    // than forcing phone to catch up (AVPlayer is the reliable clock).
     const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.05))
     send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
   } else {

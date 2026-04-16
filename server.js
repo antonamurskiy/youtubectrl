@@ -2714,13 +2714,26 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       });
     }
 
-    // VOD — progressive MP4 (360p/720p)
+    // VOD — try DASH 1080p first (native AVPlayer composes video+audio),
+    // fall back to progressive 22 (720p + AAC in one URL) for web and
+    // for reliability with seeks.
     const { stdout } = await execFileP(
-      "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "22/18/best[height<=720]", "--get-url", nowPlaying],
+      "yt-dlp",
+      ["--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/best[ext=mp4]", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
-    const streamUrl = stdout.trim().split("\n")[0];
-    res.json({ streamUrl, seconds, videoId });
+    const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
+    if (urls.length >= 2) {
+      res.json({
+        streamUrl: urls[0],
+        videoUrl: urls[0],
+        audioUrl: urls[1],
+        seconds,
+        videoId,
+      });
+    } else {
+      res.json({ streamUrl: urls[0], seconds, videoId });
+    }
   } catch (err) {
     console.error("Watch on phone error:", err.message);
     try {
