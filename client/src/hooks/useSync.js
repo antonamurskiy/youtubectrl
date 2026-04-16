@@ -1,6 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
+import { isNativeIOS } from '../native/player'
 
 export function useSync() {
   const wsRef = useRef(null)
@@ -34,7 +35,16 @@ export function useSync() {
       try {
         const data = JSON.parse(e.data)
         if (data.type === 'playback') {
-          usePlaybackStore.getState().update(data)
+          // In phone-only native mode, the AVPlayer is authoritative for
+          // position/duration/paused. Don't let mpv's WS broadcast overwrite
+          // them (mpv is muted+hidden there but still reports stale state).
+          const phoneOnly = !!useSyncStore.getState().phoneOnlyUrl
+          if (isNativeIOS && phoneOnly) {
+            const { position, duration, paused, ...rest } = data
+            usePlaybackStore.getState().update(rest)
+          } else {
+            usePlaybackStore.getState().update(data)
+          }
         } else if (data.type === 'claude') {
           usePlaybackStore.getState().update(data)
         } else if (data.type === 'pong') {
