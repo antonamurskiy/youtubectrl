@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import ActivityKit
 
 /// Server base URL. Hardcoded for now — the Capacitor config also points here.
 /// If we ever host the server elsewhere, centralise this.
@@ -9,7 +10,8 @@ private let SERVER_URL = "http://yuzu.local:3000"
 /// (Widgets have stricter networking; mDNS may not always resolve there.)
 private let SERVER_IP = "http://192.168.0.14:3000"
 
-private func post(_ path: String, body: [String: Any]? = nil) async {
+@discardableResult
+private func post(_ path: String, body: [String: Any]? = nil) async -> [String: Any]? {
     for base in [SERVER_URL, SERVER_IP] {
         guard let url = URL(string: "\(base)\(path)") else { continue }
         var req = URLRequest(url: url)
@@ -20,11 +22,37 @@ private func post(_ path: String, body: [String: Any]? = nil) async {
             req.httpBody = try? JSONSerialization.data(withJSONObject: body)
         }
         do {
-            _ = try await URLSession.shared.data(for: req)
-            return
+            let (data, _) = try await URLSession.shared.data(for: req)
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                return json
+            }
+            return [:]
         } catch {
             continue
         }
+    }
+    return nil
+}
+
+// Updates the currently-running Live Activity's volume field directly
+// from within an intent. Needed because the activity runs in a different
+// process from the main app — we can't round-trip through the JS layer
+// when the main app is suspended or backgrounded.
+@available(iOS 16.2, *)
+private func updateActivityVolume(_ volume: Int) async {
+    for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+        var state = act.content.state
+        state.volume = volume
+        await act.update(.init(state: state, staleDate: nil))
+    }
+}
+
+@available(iOS 16.2, *)
+private func updateActivityPaused(_ paused: Bool) async {
+    for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+        var state = act.content.state
+        state.paused = paused
+        await act.update(.init(state: state, staleDate: nil))
     }
 }
 
@@ -60,7 +88,10 @@ public struct YTCtrlVolumeIntent: AppIntent {
     public var delta: Int
     public init(delta: Int) { self.delta = delta }
     public func perform() async throws -> some IntentResult {
-        await post("/api/volume-bump", body: ["delta": delta])
+        let response = await post("/api/volume-bump", body: ["delta": delta])
+        if let vol = response?["volume"] as? Int {
+            if #available(iOS 16.2, *) { await updateActivityVolume(vol) }
+        }
         return .result()
     }
 }
