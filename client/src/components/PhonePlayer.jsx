@@ -146,12 +146,14 @@ export default function PhonePlayer({ send }) {
             })
 
             // On background: start bgAudio (or silent in comp mode), mute video.
+            // On native iOS the AVPlayer already plays in the background without any of
+            // this web-only trickery, so the handler is a no-op there.
             const handleVisibility = () => {
+              if (isNativeIOS) return
               const v = videoRef.current
               if (!v) return
               if (document.visibilityState === 'hidden') {
                 if (compModeRef.current) {
-                  // In comp mode — just keep silent audio for media session, don't play bgAudio
                   const silentAudio = useSyncStore.getState().silentAudioRef
                   if (silentAudio) silentAudio.play().catch(() => {})
                   return
@@ -167,11 +169,10 @@ export default function PhonePlayer({ send }) {
                 if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing'
                 usePlaybackStore.getState().update({ paused: false })
               } else {
-                if (compModeRef.current) return // Stay paused in comp mode
+                if (compModeRef.current) return
                 bgMode = false
                 const resumeAt = bgAudio.currentTime
                 bgAudio.pause()
-                // Only sync position if bgAudio actually played (advanced beyond where we set it)
                 if (resumeAt > 1 && Math.abs(resumeAt - v.currentTime) > 2) v.currentTime = resumeAt
                 v.muted = false
                 v.play().catch(() => {})
@@ -588,12 +589,13 @@ export default function PhonePlayer({ send }) {
       <video
         ref={(el) => {
           videoRef.current = el
-          if (el && phoneOnlyUrl) el.autoPictureInPicture = true
+          // Native AVPlayer handles PiP; don't let the HTML video also try.
+          if (el && phoneOnlyUrl && !isNativeIOS) el.autoPictureInPicture = true
         }}
         src={phoneOnlyUrl && streamUrl ? streamUrl : undefined}
         playsInline
         autoPlay
-        muted
+        muted={isNativeIOS /* AVPlayer is the audio source */}
         controls={!mini}
         onPointerDown={(e) => {
           if (!mini) return
