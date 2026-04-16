@@ -23,6 +23,8 @@ export default function PhonePlayer({ send }) {
   const readyAtRef = useRef(0) // timestamp when video became ready
   const calibOffsetRef = useRef(null) // one-time PDT calibration offset (ms)
   const driftSamplesRef = useRef([]) // moving average for smooth drift display
+  const steadyDriftAtRef = useRef(0) // timestamp when drift entered the steady band
+  const driftAtSteadyRef = useRef(0) // drift value when steady started
   const lastSeekRef = useRef(0) // timestamp of last live seek (cooldown)
   const driftDisplayRef = useRef(null)
   const offsetDisplayRef = useRef(null)
@@ -538,8 +540,6 @@ export default function PhonePlayer({ send }) {
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
         const rawDiff = mpvPos - phonePos + userOffsetRef.current
 
-        // Smooth across 5 samples to filter WS tick jitter — mpv's
-        // time-pos arrives with ~50-150ms variance from network.
         driftSamplesRef.current.push(rawDiff)
         if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
         const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
@@ -550,10 +550,8 @@ export default function PhonePlayer({ send }) {
         const now3 = Date.now()
         const cooldown = lastSeekRef.current === 0 ? 0 : 2500
 
-        // Only hard-seek if drift is SERIOUSLY off — sub-second drift
-        // is handled by rate nudging to avoid the overshoot loop that
-        // happens with aggressive seeks.
         if (Math.abs(drift) > 1.0 && now3 - lastSeekRef.current > cooldown) {
+          // Large drift: hard seek
           const target = mpvPos + (isNativeIOS ? 0 : 0.2)
           if (isNativeIOS) {
             NativePlayer.seek(target).catch(() => {})
@@ -563,22 +561,63 @@ export default function PhonePlayer({ send }) {
             video.currentTime = target
           }
           lastSeekRef.current = now3
-          driftSamplesRef.current = [] // reset smoother after seek
+          driftSamplesRef.current = []
+          steadyDriftAtRef.current = 0
           send({ type: 'mpv-speed', speed: 1.0 })
           lastRateSend = 0
         } else if (Math.abs(drift) > 0.15) {
-          // Sub-second drift above dead zone: gentle mpv rate nudge.
-          // Low gain (0.1) to avoid oscillation — a 0.2s drift yields 2%
-          // rate change → ~10s to close, but stable. Deadband keeps
-          // tiny residual drifts at rate 1.0.
+          // Mid-range drift: proportional mpv rate nudge
           const rate = Math.max(0.97, Math.min(1.03, 1.0 - drift * 0.1))
           if (now3 - lastRateSend > 1000) {
             send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
             lastRateSend = now3
           }
-        } else if (lastRateSend > 0) {
-          send({ type: 'mpv-speed', speed: 1.0 })
-          lastRateSend = 0
+          steadyDriftAtRef.current = 0
+        } else if (Math.abs(drift) > 0.03) {
+          // Residual drift within the rate-control dead zone. If it's
+          // been stable for 3s AND outside 30ms, kill it with a precise
+          // one-shot seek. steadyDriftAtRef tracks when we first entered
+          // this band; driftAtSteadyRef stores the drift value then.
+          if (!steadyDriftAtRef.current) {
+            steadyDriftAtRef.current = now3
+            driftAtSteadyRef.current = drift
+          } else if (
+            Math.abs(drift - driftAtSteadyRef.current) < 0.05 &&
+            now3 - steadyDriftAtRef.current > 3000 &&
+            now3 - lastSeekRef.current > 5000
+          ) {
+            const target = mpvPos + (isNativeIOS ? 0 : 0.2)
+            if (isNativeIOS) {
+              NativePlayer.seek(target).catch(() => {})
+              _nativePos = target
+              _nativePosAt = Date.now()
+            } else {
+              video.currentTime = target
+            }
+            lastSeekRef.current = now3
+            driftSamplesRef.current = []
+            steadyDriftAtRef.current = 0
+            send({ type: 'mpv-speed', speed: 1.0 })
+            lastRateSend = 0
+          } else {
+            // Drift changed significantly — not steady state, reset timer
+            if (Math.abs(drift - driftAtSteadyRef.current) > 0.05) {
+              steadyDriftAtRef.current = now3
+              driftAtSteadyRef.current = drift
+            }
+          }
+          // Also ensure rate is 1.0 here
+          if (lastRateSend > 0) {
+            send({ type: 'mpv-speed', speed: 1.0 })
+            lastRateSend = 0
+          }
+        } else {
+          // Perfectly aligned (<30ms)
+          steadyDriftAtRef.current = 0
+          if (lastRateSend > 0) {
+            send({ type: 'mpv-speed', speed: 1.0 })
+            lastRateSend = 0
+          }
         }
       }
     }, 1000)
