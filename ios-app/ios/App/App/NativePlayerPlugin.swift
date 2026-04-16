@@ -2,16 +2,21 @@ import Foundation
 import Capacitor
 import AVKit
 import AVFoundation
+import MediaPlayer
 import UIKit
 
 /**
- * Native video player + Picture-in-Picture support for YouTubeCtrl.
+ * Native video player + PiP + system integration for YouTubeCtrl.
  *
- * Web JS calls methods on `NativePlayer` (registered below). The plugin owns
- * an AVPlayer and a hidden AVPlayerLayer that drives an AVPictureInPictureController.
+ * Responsibilities:
+ *   - AVPlayer playback (hand-off from the web UI for true Picture-in-Picture)
+ *   - MPNowPlayingInfoCenter metadata (lock screen / Control Center artwork)
+ *   - MPRemoteCommandCenter (AirPods taps, lock-screen buttons, media keys)
+ *   - AirPlay route picker (MPVolumeView's AirPlay button, presented over webview)
+ *   - UIApplication.isIdleTimerDisabled while playing (screen never sleeps)
  *
- * On iOS 15+ the phone's system lock-screen controls + PiP just work as long as
- * the audio session is set to .playback (done in AppDelegate).
+ * Web JS calls methods on `NativePlayer` (registered below). Events are sent
+ * back via `notifyListeners`.
  */
 @objc(NativePlayerPlugin)
 public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPictureControllerDelegate {
@@ -26,7 +31,11 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "setRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startPip", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopPip", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setNowPlaying", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "clearNowPlaying", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "showAirPlayPicker", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -34,11 +43,16 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var playerContainer: UIView?
     private var pipController: AVPictureInPictureController?
     private var timeObserver: Any?
+    private var currentArtworkUrl: String?
+    private var currentArtwork: MPMediaItemArtwork?
+    private var remoteCommandsInstalled = false
+    private var hiddenRoutePicker: AVRoutePickerView?
 
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
-        // A 1x1 transparent view that hosts the player layer so iOS has something
-        // to attach PiP to. Placed behind the WKWebView so it's invisible.
+        // A 1x1 transparent view that hosts the player layer so iOS has
+        // something to attach PiP to. Placed behind the WKWebView so it's
+        // invisible.
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         container.isUserInteractionEnabled = false
         container.backgroundColor = .clear
@@ -64,6 +78,83 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         self.pipController = ctrl
     }
 
+    private func installRemoteCommands() {
+        if remoteCommandsInstalled { return }
+        remoteCommandsInstalled = true
+
+        let cmd = MPRemoteCommandCenter.shared()
+
+        cmd.playCommand.isEnabled = true
+        cmd.playCommand.addTarget { [weak self] _ in
+            self?.player?.play()
+            self?.notifyListeners("remotePlay", data: [:])
+            self?.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        cmd.pauseCommand.isEnabled = true
+        cmd.pauseCommand.addTarget { [weak self] _ in
+            self?.player?.pause()
+            self?.notifyListeners("remotePause", data: [:])
+            self?.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        cmd.togglePlayPauseCommand.isEnabled = true
+        cmd.togglePlayPauseCommand.addTarget { [weak self] _ in
+            guard let p = self?.player else { return .commandFailed }
+            if p.rate == 0 { p.play() } else { p.pause() }
+            self?.notifyListeners("remoteTogglePlayPause", data: [:])
+            self?.updateNowPlayingPlaybackState()
+            return .success
+        }
+
+        cmd.skipForwardCommand.preferredIntervals = [15]
+        cmd.skipForwardCommand.isEnabled = true
+        cmd.skipForwardCommand.addTarget { [weak self] _ in
+            guard let p = self?.player else { return .commandFailed }
+            let now = p.currentTime().seconds
+            p.seek(to: CMTime(seconds: now + 15, preferredTimescale: 600))
+            self?.notifyListeners("remoteSkip", data: ["delta": 15])
+            return .success
+        }
+
+        cmd.skipBackwardCommand.preferredIntervals = [15]
+        cmd.skipBackwardCommand.isEnabled = true
+        cmd.skipBackwardCommand.addTarget { [weak self] _ in
+            guard let p = self?.player else { return .commandFailed }
+            let now = p.currentTime().seconds
+            p.seek(to: CMTime(seconds: max(0, now - 15), preferredTimescale: 600))
+            self?.notifyListeners("remoteSkip", data: ["delta": -15])
+            return .success
+        }
+
+        cmd.changePlaybackPositionCommand.isEnabled = true
+        cmd.changePlaybackPositionCommand.addTarget { [weak self] event in
+            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
+                  let p = self?.player else { return .commandFailed }
+            p.seek(to: CMTime(seconds: positionEvent.positionTime, preferredTimescale: 600))
+            self?.notifyListeners("remoteSeek", data: ["position": positionEvent.positionTime])
+            return .success
+        }
+    }
+
+    private func updateNowPlayingPlaybackState() {
+        guard let p = player else { return }
+        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+        info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = p.currentTime().seconds
+        info[MPNowPlayingInfoPropertyPlaybackRate] = p.rate
+        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+    }
+
+    private func setIdleTimer(disabled: Bool) {
+        DispatchQueue.main.async {
+            UIApplication.shared.isIdleTimerDisabled = disabled
+        }
+    }
+
+    // MARK: - Bridged methods
+
     @objc func load(_ call: CAPPluginCall) {
         guard let urlStr = call.getString("url"),
               let url = URL(string: urlStr) else {
@@ -85,7 +176,11 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
             }
             self.installPipController()
-            if autoplay { self.player?.play() }
+            self.installRemoteCommands()
+            if autoplay {
+                self.player?.play()
+                self.setIdleTimer(disabled: true)
+            }
             self.notifyListeners("loaded", data: ["url": urlStr])
             call.resolve()
         }
@@ -94,6 +189,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     @objc func play(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.player?.play()
+            self.setIdleTimer(disabled: true)
+            self.updateNowPlayingPlaybackState()
             call.resolve()
         }
     }
@@ -101,6 +198,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     @objc func pause(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             self.player?.pause()
+            self.setIdleTimer(disabled: false)
+            self.updateNowPlayingPlaybackState()
             call.resolve()
         }
     }
@@ -110,6 +209,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             self.pipController?.stopPictureInPicture()
             self.player?.pause()
             self.player?.replaceCurrentItem(with: nil)
+            self.setIdleTimer(disabled: false)
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             call.resolve()
         }
     }
@@ -121,6 +222,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
         DispatchQueue.main.async {
             self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+            self.updateNowPlayingPlaybackState()
             call.resolve()
         }
     }
@@ -167,6 +269,85 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 "paused": rate == 0
             ])
         }
+    }
+
+    @objc func setNowPlaying(_ call: CAPPluginCall) {
+        let title = call.getString("title") ?? ""
+        let artist = call.getString("artist") ?? ""
+        let artworkUrl = call.getString("artworkUrl")
+        let duration = call.getDouble("duration") ?? 0
+        let position = call.getDouble("position") ?? 0
+        let isLive = call.getBool("isLive") ?? false
+
+        DispatchQueue.main.async {
+            var info: [String: Any] = [
+                MPMediaItemPropertyTitle: title,
+                MPMediaItemPropertyArtist: artist,
+                MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
+                MPNowPlayingInfoPropertyPlaybackRate: self.player?.rate ?? 1.0,
+                MPNowPlayingInfoPropertyIsLiveStream: isLive
+            ]
+            if duration > 0 && !isLive {
+                info[MPMediaItemPropertyPlaybackDuration] = duration
+            }
+            if let existing = self.currentArtwork,
+               artworkUrl == self.currentArtworkUrl {
+                info[MPMediaItemPropertyArtwork] = existing
+            }
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            call.resolve()
+
+            // Fetch and set artwork out of band — don't block on network
+            if let urlStr = artworkUrl,
+               urlStr != self.currentArtworkUrl,
+               let url = URL(string: urlStr) {
+                self.currentArtworkUrl = urlStr
+                URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+                    guard let self = self, let data = data, let image = UIImage(data: data) else { return }
+                    let artwork = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
+                    DispatchQueue.main.async {
+                        // Check the URL hasn't changed while we were fetching
+                        guard self.currentArtworkUrl == urlStr else { return }
+                        self.currentArtwork = artwork
+                        var info = MPNowPlayingInfoCenter.default().nowPlayingInfo ?? [:]
+                        info[MPMediaItemPropertyArtwork] = artwork
+                        MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+                    }
+                }.resume()
+            }
+        }
+    }
+
+    @objc func clearNowPlaying(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            self.currentArtwork = nil
+            self.currentArtworkUrl = nil
+            call.resolve()
+        }
+    }
+
+    @objc func showAirPlayPicker(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            guard let wv = self.bridge?.webView else { call.reject("no webview"); return }
+            if self.hiddenRoutePicker == nil {
+                let picker = AVRoutePickerView(frame: CGRect(x: -100, y: -100, width: 50, height: 50))
+                picker.isHidden = true
+                wv.superview?.addSubview(picker)
+                self.hiddenRoutePicker = picker
+            }
+            // Programmatically tap the route picker button to open the native sheet.
+            if let button = self.hiddenRoutePicker?.subviews.first(where: { $0 is UIButton }) as? UIButton {
+                button.sendActions(for: .touchUpInside)
+            }
+            call.resolve()
+        }
+    }
+
+    @objc func setKeepAwake(_ call: CAPPluginCall) {
+        let enabled = call.getBool("enabled") ?? false
+        self.setIdleTimer(disabled: enabled)
+        call.resolve()
     }
 
     // MARK: - PiP delegate

@@ -1,5 +1,5 @@
 {
-  "appId": "com.antonamurskiy.youtubectrl",
+  "appId": "com.antonamurskiy.ytctl1289",
   "appName": "YouTubeCtrl",
   "webDir": "www",
   "server": {
@@ -16,6 +16,20 @@
     "contentInset": "never",
     "limitsNavigationsToAppBoundDomains": false,
     "webContentsDebuggingEnabled": true,
-    "allowsLinkPreview": false
+    "allowsLinkPreview": false,
+    "scrollEnabled": true,
+    "backgroundColor": "#212121ff"
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": false,
+      "backgroundColor": "#212121",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#212121",
+      "overlaysWebView": false
+    }
   }
 }

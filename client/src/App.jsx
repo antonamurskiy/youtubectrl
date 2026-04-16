@@ -4,6 +4,8 @@ import { flushSync } from 'react-dom'
 import { tick as hapticTick } from './haptics'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
+import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
+import { useClaudeNotification } from './hooks/useClaudeNotification'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -95,6 +97,8 @@ function App() {
   const { send } = useSync()
   useMediaSession()
   useRouting()
+  useNativeNowPlaying({ send })
+  useClaudeNotification()
   const { activeTab, setTab, secretMenuOpen, toggleSecretMenu, refresh, refreshing } = useUIStore(
     useShallow(s => ({
       activeTab: s.activeTab,

@@ -46,9 +46,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
+        // Handle youtubectrl://play?url=<YouTube URL> from share sheet / Shortcuts.
+        // Forwards the URL to the server's /api/play endpoint so desktop mpv picks it up.
+        if url.scheme == "youtubectrl" {
+            let components = URLComponents(url: url, resolvingAgainstBaseURL: false)
+            if url.host == "play",
+               let ytUrl = components?.queryItems?.first(where: { $0.name == "url" })?.value {
+                forwardPlay(ytUrl: ytUrl)
+                return true
+            }
+        }
         // Called when the app was launched with a url. Feel free to add additional processing here,
         // but if you want the App API to support tracking app url opens, make sure to keep this call
         return ApplicationDelegateProxy.shared.application(app, open: url, options: options)
+    }
+
+    private func forwardPlay(ytUrl: String) {
+        guard let serverUrl = URL(string: "http://yuzu.local:3000/api/play") else { return }
+        var req = URLRequest(url: serverUrl)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body: [String: Any] = ["url": ytUrl]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        URLSession.shared.dataTask(with: req).resume()
     }
 
     func application(_ application: UIApplication, continue userActivity: NSUserActivity, restorationHandler: @escaping ([UIUserActivityRestoring]?) -> Void) -> Bool {

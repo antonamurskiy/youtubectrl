@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
+import { isNativeIOS } from '../native/player'
 
 export function useMediaSession() {
   const silentAudioRef = useRef(null)
@@ -9,6 +10,9 @@ export function useMediaSession() {
   const durRef = useRef(0)
 
   useEffect(() => {
+    // On native iOS, the NativePlayer plugin uses MPNowPlayingInfoCenter +
+    // MPRemoteCommandCenter — no silent audio hack needed.
+    if (isNativeIOS) return
     if (!('mediaSession' in navigator) || !('ontouchstart' in window)) return
 
     const audio = new Audio('/silent.m4a')

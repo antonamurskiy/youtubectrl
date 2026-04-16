@@ -3,6 +3,7 @@ import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 import { FONTS, applyFont, currentFont, FONT_SIZES, applyFontSize, currentFontSize } from '../fonts'
+import { isNativeIOS, NativePlayer } from '../native/player'
 
 const MIN_SIZE = 9
 const MAX_SIZE = 20
@@ -340,6 +341,11 @@ export default function SecretMenu() {
         }}>
           Keep awake {macStatus.keepAwake ? '✓' : ''}
         </button>
+        {isNativeIOS && (
+          <button className="secret-menu-item" onClick={() => NativePlayer.showAirPlayPicker()}>
+            AirPlay...
+          </button>
+        )}
         <button className="secret-menu-item" onClick={toggleSecretMenu} style={{ color: 'var(--accent2)' }}>
           Close
         </button>

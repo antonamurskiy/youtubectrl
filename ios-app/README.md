@@ -26,7 +26,7 @@ lock-screen controls, and background audio.
    - Select the `App` target.
    - **Signing & Capabilities** → set **Team** to your Personal Team (tap "Add
      Account…" and sign in with your Apple ID if needed).
-   - Change the **Bundle Identifier** if `com.antonamurskiy.youtubectrl` is
+   - Change the **Bundle Identifier** if `com.antonamurskiy.ytctl1289` is
      taken — something like `com.<yourname>.youtubectrl` works.
    - Plug in your iPhone, select it as the run destination, hit ⌘R.
    - First launch: go to Settings → General → VPN & Device Management → trust
