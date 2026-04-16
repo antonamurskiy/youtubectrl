@@ -2823,9 +2823,12 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Get DASH (1080p) or fallback to progressive/HLS for live
+    // Prefer progressive (single URL = video + audio) so AVPlayer gets both.
+    // 22 = 720p with 128kbps AAC. Fall back to 18 = 360p 96kbps, then DASH
+    // (which yt-dlp will merge into a single stream on the server side) or
+    // any other single-stream combo.
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/18/best",
+      "--cookies", COOKIES_FILE, "-f", "22/18/best[ext=mp4]/best",
       "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
     if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
