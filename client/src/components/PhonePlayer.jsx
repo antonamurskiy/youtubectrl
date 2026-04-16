@@ -102,11 +102,15 @@ export default function PhonePlayer({ send }) {
         if (data.streamUrl) {
           setIsLive(!!data.isLive)
           // Phone-only: always use direct stream URL. Sync mode: use proxy for HLS on iOS
+          // (Safari can't consume YouTube HLS directly). Native AVPlayer CAN,
+          // so use the direct streamUrl on native.
           const useHls = data.isLive && Hls.isSupported()
           const url = phoneOnlyRef.current
             ? data.streamUrl
             : (data.isLive
-                ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
+                ? (isNativeIOS
+                    ? data.streamUrl
+                    : (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`))
                 : data.streamUrl)
           setStreamUrl(url)
           loadedUrlRef.current = phoneOnlyUrl
