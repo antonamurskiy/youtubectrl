@@ -3,6 +3,7 @@ import Hls from 'hls.js'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
+import { isNativeIOS, NativePlayer } from '../native/player'
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
@@ -96,6 +97,13 @@ export default function PhonePlayer({ send }) {
                 : data.streamUrl)
           setStreamUrl(url)
           loadedUrlRef.current = phoneOnlyUrl
+          // Native iOS: hand off to AVPlayer for PiP + lock-screen controls + bg audio.
+          // We still render the <video> below for the visible preview, but muted; AVPlayer
+          // is the source of truth for audio and supports real system PiP.
+          if (isNativeIOS && NativePlayer.available) {
+            const absUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+            NativePlayer.load({ url: absUrl, position: data.seconds || 0, autoplay: true }).catch(() => {})
+          }
 
           const vlcBufDelay = data.vlcBufferDelay || 19
 
@@ -173,14 +181,26 @@ export default function PhonePlayer({ send }) {
             document.addEventListener('visibilitychange', handleVisibility)
 
             useSyncStore.getState().setPhoneVideoCtrl({
-              play: () => { if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() } },
-              pause: () => { bgAudio.pause(); videoRef.current?.pause() },
-              seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
+              play: () => {
+                if (isNativeIOS) NativePlayer.play().catch(() => {})
+                if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() }
+              },
+              pause: () => {
+                if (isNativeIOS) NativePlayer.pause().catch(() => {})
+                bgAudio.pause(); videoRef.current?.pause()
+              },
+              seek: (t) => {
+                if (isNativeIOS) NativePlayer.seek(t).catch(() => {})
+                if (videoRef.current) videoRef.current.currentTime = t
+                bgAudio.currentTime = t
+              },
               skip: (delta) => {
                 const v = videoRef.current
                 if (!v) return
-                v.currentTime = Math.max(0, (v.currentTime || 0) + delta)
-                bgAudio.currentTime = v.currentTime
+                const newT = Math.max(0, (v.currentTime || 0) + delta)
+                if (isNativeIOS) NativePlayer.seek(newT).catch(() => {})
+                v.currentTime = newT
+                bgAudio.currentTime = newT
               },
             })
 
@@ -539,6 +559,7 @@ export default function PhonePlayer({ send }) {
   const handleClose = useCallback(() => {
     setCompMode(false)
     if (videoRef.current) videoRef.current.pause()
+    if (isNativeIOS) NativePlayer.stop().catch(() => {})
     fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
     send({ type: 'mpv-speed', speed: 1.0 })
     setPhoneOpen(false)
@@ -624,7 +645,7 @@ export default function PhonePlayer({ send }) {
           }
         }}
         onPlay={() => {
-          if (phoneOnlyUrl && videoRef.current) {
+          if (phoneOnlyUrl && videoRef.current && !isNativeIOS) {
             videoRef.current.muted = false
             // Unlock bgAudio from user gesture chain so it can play on background
             if (bgAudioRef.current && bgAudioRef.current.paused) {

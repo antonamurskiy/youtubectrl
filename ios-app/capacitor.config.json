@@ -1,0 +1,21 @@
+{
+  "appId": "com.antonamurskiy.youtubectrl",
+  "appName": "YouTubeCtrl",
+  "webDir": "www",
+  "server": {
+    "url": "http://yuzu.local:3000",
+    "cleartext": true,
+    "allowNavigation": [
+      "yuzu.local",
+      "*.googlevideo.com",
+      "*.youtube.com",
+      "i.ytimg.com"
+    ]
+  },
+  "ios": {
+    "contentInset": "never",
+    "limitsNavigationsToAppBoundDomains": false,
+    "webContentsDebuggingEnabled": true,
+    "allowsLinkPreview": false
+  }
+}
