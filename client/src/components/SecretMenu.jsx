@@ -128,6 +128,9 @@ export default function SecretMenu() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ volume: vol }),
+    }).then(() => {
+      // Broadcast so the Live Activity widget stays in sync
+      window.dispatchEvent(new CustomEvent('mac-volume', { detail: { volume: vol } }))
     }).catch(() => {}).finally(() => {
       inFlightRef.current = false
       if (pendingVolRef.current != null) sendVolume()

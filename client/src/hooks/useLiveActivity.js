@@ -24,36 +24,28 @@ export function useLiveActivity() {
   const paused = usePlaybackStore(s => s.paused)
   const playing = usePlaybackStore(s => s.playing)
 
-  // Poll Mac volume so the slider reflects actual state
+  // Volume: seed the widget's volume once from the server at start, then
+  // only react to local 'mac-volume' events (fired by hardware volume
+  // buttons + secret menu slider). Polling was racing with the widget's
+  // own AppIntent writes and pulling it out of sync.
   useEffect(() => {
     if (!isNativeIOS) return
-    let alive = true
     const pushVolume = (v) => {
       if (v === volumeRef.current) return
       volumeRef.current = v
       if (!startedRef.current) return
-      // Only send the volume field — don't clobber paused/position/etc
       NativePlayer.updateLiveActivity({ volume: v }).catch(() => {})
       lastPushedRef.current.volume = v
     }
-    const fetchVol = async () => {
-      if (!alive) return
-      try {
-        const r = await fetch('/api/volume-status').then(r => r.json())
-        if (typeof r.volume === 'number') pushVolume(r.volume)
-      } catch {}
-    }
-    fetchVol()
-    const iv = setInterval(fetchVol, 8000)
+    // Initial fetch only
+    fetch('/api/volume-status').then(r => r.json()).then(r => {
+      if (typeof r.volume === 'number') pushVolume(r.volume)
+    }).catch(() => {})
     const onVol = (e) => {
       if (typeof e.detail?.volume === 'number') pushVolume(e.detail.volume)
     }
     window.addEventListener('mac-volume', onVol)
-    return () => {
-      alive = false
-      clearInterval(iv)
-      window.removeEventListener('mac-volume', onVol)
-    }
+    return () => window.removeEventListener('mac-volume', onVol)
   }, [])
 
   // Start / update / end based on playback metadata changes.
