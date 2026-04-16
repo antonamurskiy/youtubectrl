@@ -294,13 +294,50 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     // MARK: - Bridged methods
 
     @objc func load(_ call: CAPPluginCall) {
-        guard let urlStr = call.getString("url"),
-              let url = URL(string: urlStr) else {
-            call.reject("url required")
-            return
-        }
+        let urlStr = call.getString("url")
+        let videoUrlStr = call.getString("videoUrl")
+        let audioUrlStr = call.getString("audioUrl")
         let position = call.getDouble("position") ?? 0
         let autoplay = call.getBool("autoplay") ?? true
+
+        // Two-stream mode: separate DASH video + audio URLs combined into
+        // an AVMutableComposition so we can play 1080p + 128kbps AAC without
+        // any ffmpeg remuxing.
+        if let v = videoUrlStr, let a = audioUrlStr,
+           let videoURL = URL(string: v), let audioURL = URL(string: a) {
+            Task { @MainActor in
+                do {
+                    let item = try await self.buildCompositionItem(videoURL: videoURL, audioURL: audioURL)
+                    self.ensureLayer()
+                    if self.player == nil {
+                        self.player = AVPlayer(playerItem: item)
+                    } else {
+                        self.player?.replaceCurrentItem(with: item)
+                    }
+                    self.playerLayer?.player = self.player
+                    if position > 0 {
+                        await self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
+                    }
+                    self.installPipController()
+                    self.installRemoteCommands()
+                    if autoplay {
+                        self.player?.play()
+                        self.setIdleTimer(disabled: true)
+                    }
+                    self.notifyListeners("loaded", data: ["url": v])
+                    call.resolve()
+                } catch {
+                    call.reject("composition failed: \(error.localizedDescription)")
+                }
+            }
+            return
+        }
+
+        // Single-URL mode (progressive MP4 or HLS)
+        guard let urlStr = urlStr, let url = URL(string: urlStr) else {
+            call.reject("url or videoUrl+audioUrl required")
+            return
+        }
         DispatchQueue.main.async {
             self.ensureLayer()
             let item = AVPlayerItem(url: url)
@@ -322,6 +359,37 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             self.notifyListeners("loaded", data: ["url": urlStr])
             call.resolve()
         }
+    }
+
+    /// Build an AVPlayerItem that plays a separate video track and audio track
+    /// as one logical stream.
+    @MainActor
+    private func buildCompositionItem(videoURL: URL, audioURL: URL) async throws -> AVPlayerItem {
+        let videoAsset = AVURLAsset(url: videoURL)
+        let audioAsset = AVURLAsset(url: audioURL)
+
+        let composition = AVMutableComposition()
+
+        async let videoDuration: CMTime = videoAsset.load(.duration)
+        async let audioDuration: CMTime = audioAsset.load(.duration)
+        let (vd, ad) = try await (videoDuration, audioDuration)
+        NSLog("[NativePlayer] composition video dur=\(vd.seconds) audio dur=\(ad.seconds)")
+        let duration = CMTimeMinimum(vd, ad)
+
+        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
+        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
+        NSLog("[NativePlayer] loaded videoTracks=\(videoTracks.count) audioTracks=\(audioTracks.count)")
+
+        if let videoTrack = videoTracks.first {
+            let comp = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
+            try comp?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: videoTrack, at: .zero)
+        }
+        if let audioTrack = audioTracks.first {
+            let comp = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            try comp?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: audioTrack, at: .zero)
+        }
+
+        return AVPlayerItem(asset: composition)
     }
 
     @objc func play(_ call: CAPPluginCall) {

@@ -15,9 +15,9 @@ const plugin = cap?.Plugins?.NativePlayer
 
 export const NativePlayer = {
   available: !!plugin,
-  async load({ url, position = 0, autoplay = true }) {
+  async load({ url, videoUrl, audioUrl, position = 0, autoplay = true }) {
     if (!plugin) return
-    return plugin.load({ url, position, autoplay })
+    return plugin.load({ url, videoUrl, audioUrl, position, autoplay })
   },
   async play() { if (plugin) return plugin.play() },
   async pause() { if (plugin) return plugin.pause() },

@@ -2823,12 +2823,11 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Prefer progressive (single URL = video + audio) so AVPlayer gets both.
-    // 22 = 720p with 128kbps AAC. Fall back to 18 = 360p 96kbps, then DASH
-    // (which yt-dlp will merge into a single stream on the server side) or
-    // any other single-stream combo.
+    // Best quality: DASH 1080p video (137) + 128kbps AAC (140). AVPlayer
+    // composes them client-side via AVMutableComposition — no ffmpeg.
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "22/18/best[ext=mp4]/best",
+      "--cookies", COOKIES_FILE,
+      "-f", "137+140/136+140/135+140/best[ext=mp4]/22/18",
       "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
     if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
@@ -2875,15 +2874,16 @@ app.post("/api/phone-only", async (req, res) => {
     startProgressTracking(url);
 
     if (urls.length >= 2 && !isLive) {
-      // DASH streams — full VOD HLS packaging for 1080p (slow but full seeking)
-      _phoneVodUrls = { video: urls[0], audio: urls[1] };
-      const ok = await preparePhoneHls();
-      if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
-      if (ok) {
-        res.json({ streamUrl: `/phone-hls/phone-hls.m3u8?t=${Date.now()}`, seconds, videoId, isLive: false, duration });
-      } else {
-        res.json({ streamUrl: urls[0], seconds, videoId, isLive: false, duration });
-      }
+      // DASH streams — return both URLs. Native AVPlayer composes them
+      // client-side (AVMutableComposition) for 1080p + 128kbps AAC without
+      // any server-side remuxing. Web fallback: use first URL (video-only;
+      // non-native should not hit this since we only ask for DASH on native).
+      res.json({
+        streamUrl: urls[0],
+        videoUrl: urls[0],
+        audioUrl: urls[1],
+        seconds, videoId, isLive: false, duration,
+      });
     } else if (isLive && urls[0]) {
       // Live — YouTube needs the proxy (PDT parsing, cookie-authed segments on googlevideo.com).
       // Other hosts (e.g. Rumble) serve standard HLS with CORS enabled — return the direct URL

@@ -104,7 +104,18 @@ export default function PhonePlayer({ send }) {
           // is the source of truth for audio and supports real system PiP.
           if (isNativeIOS && NativePlayer.available) {
             const absUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-            NativePlayer.load({ url: absUrl, position: data.seconds || 0, autoplay: true }).catch(() => {})
+            // If the server returned separate DASH video + audio URLs, pass
+            // them through. AVPlayer combines them natively for 1080p + AAC
+            // with no remuxing.
+            const videoUrl = data.videoUrl || undefined
+            const audioUrl = data.audioUrl || undefined
+            NativePlayer.load({
+              url: absUrl,
+              videoUrl,
+              audioUrl,
+              position: data.seconds || 0,
+              autoplay: true,
+            }).catch(() => {})
           }
 
           const vlcBufDelay = data.vlcBufferDelay || 19
