@@ -529,9 +529,16 @@ export default function PhonePlayer({ send }) {
       } else {
         // VOD sync — hard seek on big drift, plus a "steady state" seek
         // once drift has stabilised in the sub-second band.
+        //
+        // mpv's time-pos reports DEMUX position, which leads what the
+        // speaker is actually playing by ~600ms on macOS (codec buffer +
+        // CoreAudio device buffer). The AVPlayer's currentTime is the
+        // display frame. Subtract a constant to make both mean the same
+        // thing: "what the user currently perceives".
+        const MPV_AUDIO_LAG = 0.8
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
-        const mpvPos = pb.position + elapsed
+        const mpvPos = pb.position + elapsed - MPV_AUDIO_LAG
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
         const rawDiff = mpvPos - phonePos + userOffsetRef.current
 
