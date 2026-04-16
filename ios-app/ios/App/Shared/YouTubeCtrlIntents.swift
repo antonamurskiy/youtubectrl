@@ -2,6 +2,74 @@ import AppIntents
 import Foundation
 import ActivityKit
 
+// Cross-invocation state for widget intents. Intents run as short-lived
+// processes, but static state persists within the widget extension's
+// process while it's alive, which is enough for rapid-tap coalescing.
+private actor IntentCoalescer {
+    static let shared = IntentCoalescer()
+    private var pendingVolumeDelta = 0
+    private var pendingBumpTask: Task<Void, Never>?
+    private var lastUpdateAt: Date = .distantPast
+
+    func queueVolumeBump(_ delta: Int) async {
+        pendingVolumeDelta += delta
+        pendingBumpTask?.cancel()
+        let toSend = pendingVolumeDelta
+        pendingBumpTask = Task {
+            // Wait 250ms for more taps to pile up
+            try? await Task.sleep(nanoseconds: 250_000_000)
+            if Task.isCancelled { return }
+            await IntentCoalescer.shared.flushBump(toSend)
+        }
+    }
+
+    func flushBump(_ delta: Int) async {
+        guard pendingVolumeDelta == delta else { return }
+        pendingVolumeDelta = 0
+        pendingBumpTask = nil
+        _ = await post("/api/volume-bump", body: ["delta": delta])
+    }
+
+    func canUpdateActivity() -> Bool {
+        let now = Date()
+        if now.timeIntervalSince(lastUpdateAt) < 0.35 { return false }
+        lastUpdateAt = now
+        return true
+    }
+
+    func scheduleDelayedUpdate() {
+        Task {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            await IntentCoalescer.shared.drainPending()
+        }
+    }
+
+    private var pendingVolumeTarget: Int?
+    private var pendingPausedTarget: Bool?
+
+    func latch(volume: Int? = nil, paused: Bool? = nil) {
+        if let v = volume { pendingVolumeTarget = v }
+        if let p = paused { pendingPausedTarget = p }
+    }
+
+    func drainPending() async {
+        let v = pendingVolumeTarget
+        let p = pendingPausedTarget
+        pendingVolumeTarget = nil
+        pendingPausedTarget = nil
+        guard v != nil || p != nil else { return }
+        lastUpdateAt = Date()
+        if #available(iOS 16.2, *) {
+            for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+                var state = act.content.state
+                if let v = v { state.volume = v }
+                if let p = p { state.paused = p }
+                await act.update(.init(state: state, staleDate: nil))
+            }
+        }
+    }
+}
+
 /// Server base URL. Hardcoded for now — the Capacitor config also points here.
 /// If we ever host the server elsewhere, centralise this.
 private let SERVER_URL = "http://yuzu.local:3000"
@@ -63,15 +131,25 @@ public struct YTCtrlPlayPauseIntent: AppIntent {
     public init() {}
     public func perform() async throws -> some IntentResult {
         if #available(iOS 16.2, *) {
+            // Compute target paused state from current activity
+            var targetPaused = false
             for act in Activity<YouTubeCtrlActivityAttributes>.activities {
-                var state = act.content.state
-                state.paused.toggle()
-                await act.update(.init(state: state, staleDate: nil))
+                targetPaused = !act.content.state.paused
+                break
+            }
+            let canUpdate = await IntentCoalescer.shared.canUpdateActivity()
+            if canUpdate {
+                for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+                    var state = act.content.state
+                    state.paused = targetPaused
+                    await act.update(.init(state: state, staleDate: nil))
+                }
+            } else {
+                await IntentCoalescer.shared.latch(paused: targetPaused)
+                await IntentCoalescer.shared.scheduleDelayedUpdate()
             }
         }
-        Task.detached {
-            _ = await post("/api/playpause")
-        }
+        Task.detached { _ = await post("/api/playpause") }
         return .result()
     }
 }
@@ -97,21 +175,28 @@ public struct YTCtrlVolumeIntent: AppIntent {
     public var delta: Int
     public init(delta: Int) { self.delta = delta }
     public func perform() async throws -> some IntentResult {
-        // Optimistically update the widget FIRST — based on the current
-        // ContentState volume + delta. This makes the slider respond instantly
-        // rather than waiting for the HTTP round trip.
         if #available(iOS 16.2, *) {
+            // Read current volume from activity + apply delta locally
+            var targetVolume = 50
             for act in Activity<YouTubeCtrlActivityAttributes>.activities {
-                var state = act.content.state
-                state.volume = max(0, min(100, state.volume + delta))
-                await act.update(.init(state: state, staleDate: nil))
+                targetVolume = max(0, min(100, act.content.state.volume + delta))
+                break
+            }
+            let canUpdate = await IntentCoalescer.shared.canUpdateActivity()
+            if canUpdate {
+                for act in Activity<YouTubeCtrlActivityAttributes>.activities {
+                    var state = act.content.state
+                    state.volume = targetVolume
+                    await act.update(.init(state: state, staleDate: nil))
+                }
+            } else {
+                // Latch the target; a drain task will flush it after cooldown
+                await IntentCoalescer.shared.latch(volume: targetVolume)
+                await IntentCoalescer.shared.scheduleDelayedUpdate()
             }
         }
-        // Fire the server request without awaiting its completion so the
-        // intent returns quickly — iOS gives us limited time per intent.
-        Task.detached {
-            _ = await post("/api/volume-bump", body: ["delta": delta])
-        }
+        // Debounced server call
+        await IntentCoalescer.shared.queueVolumeBump(delta)
         return .result()
     }
 }
