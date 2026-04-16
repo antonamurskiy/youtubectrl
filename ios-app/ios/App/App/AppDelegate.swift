@@ -8,6 +8,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
+        // Force-reference the NativePlayerPlugin class so the linker keeps it.
+        // Capacitor discovers plugins via Objective-C runtime metadata; without
+        // a direct reference, the linker dead-strips the class from the binary.
+        _ = NativePlayerPlugin.self
+
         // Configure audio session for background playback + Picture-in-Picture.
         // Without this, iOS would pause video when backgrounded and disable PiP.
         do {

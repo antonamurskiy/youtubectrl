@@ -22,6 +22,12 @@ import UIKit
 public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPictureControllerDelegate {
     public let identifier = "NativePlayerPlugin"
     public let jsName = "NativePlayer"
+
+    public override func load() {
+        super.load()
+        NSLog("[NativePlayer] plugin loaded v3")
+        debugLog("plugin loaded v3")
+    }
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "load", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
@@ -145,6 +151,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
     }
 
+    private func debugLog(_ msg: String) {
+        NSLog("[NativePlayer] \(msg)")
+    }
+
     /// Starts a silent looping audio track so the audio session stays active
     /// and iOS shows the Now Playing widget even when local AVPlayer isn't
     /// playing anything (e.g. audio is actually coming from desktop mpv).
@@ -159,12 +169,14 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 .playback, mode: .moviePlayback, options: [.allowAirPlay]
             )
             try AVAudioSession.sharedInstance().setActive(true)
+            debugLog("audio session active")
         } catch {
-            NSLog("[NativePlayer] Audio session activate failed: \(error)")
+            debugLog("audio session activate failed: \(error)")
         }
 
         if silentPlayer != nil {
             silentPlayer?.play()
+            debugLog("silent player resumed")
             return
         }
         guard let url = URL(string: "http://yuzu.local:3000/silent.m4a") else { return }
@@ -174,12 +186,17 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         if #available(iOS 10.0, *) {
             silentLooper = AVPlayerLooper(player: p, templateItem: item)
         }
-        // Do NOT set volume = 0 — the file is already silent. Volume 0 makes
-        // iOS treat the session as idle.
         p.volume = 1.0
         p.play()
         silentPlayer = p
-        NSLog("[NativePlayer] Silent keep-alive player started")
+        debugLog("silent player started, rate=\(p.rate) volume=\(p.volume)")
+
+        // Check back in 1s to see if it's actually playing
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self = self, let p = self.silentPlayer else { return }
+            let err = p.currentItem?.error?.localizedDescription ?? "nil"
+            self.debugLog("silent player 1s check: rate=\(p.rate) status=\(p.currentItem?.status.rawValue ?? -1) err=\(err)")
+        }
     }
 
     private func updateNowPlayingPlaybackState() {
@@ -324,12 +341,47 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let paused = call.getBool("paused") ?? false
 
         DispatchQueue.main.async {
-            NSLog("[NativePlayer] setNowPlaying title=\(title) artist=\(artist) paused=\(paused)")
-            // Make sure remote commands are installed even without an AVPlayer
+            var diag: [String: Any] = ["entered": true, "title": title, "paused": paused]
+            self.debugLog("setNowPlaying title=\(title) paused=\(paused)")
+
+            // Audio session setup with captured error
+            do {
+                try AVAudioSession.sharedInstance().setCategory(
+                    .playback, mode: .moviePlayback, options: [.allowAirPlay]
+                )
+                try AVAudioSession.sharedInstance().setActive(true)
+                diag["audioSessionOk"] = true
+                diag["audioSessionCategory"] = AVAudioSession.sharedInstance().category.rawValue
+            } catch {
+                diag["audioSessionOk"] = false
+                diag["audioSessionError"] = "\(error)"
+            }
+
+            // Silent keep-alive
+            if self.silentPlayer == nil {
+                if let url = URL(string: "http://yuzu.local:3000/silent.m4a") {
+                    let item = AVPlayerItem(url: url)
+                    let p = AVQueuePlayer(playerItem: item)
+                    p.actionAtItemEnd = .none
+                    if #available(iOS 10.0, *) {
+                        self.silentLooper = AVPlayerLooper(player: p, templateItem: item)
+                    }
+                    p.volume = 1.0
+                    p.play()
+                    self.silentPlayer = p
+                    diag["silentPlayerStarted"] = true
+                } else {
+                    diag["silentPlayerStarted"] = false
+                }
+            } else {
+                self.silentPlayer?.play()
+                diag["silentPlayerResumed"] = true
+            }
+            diag["silentPlayerRate"] = self.silentPlayer?.rate ?? -1
+
+            // Remote commands
             self.installRemoteCommands()
-            // Keep the audio session active so the lock-screen widget shows up
-            // even when local AVPlayer isn't actively playing (desktop mpv).
-            self.startSilentAudioIfNeeded()
+            diag["remoteCommandsInstalled"] = self.remoteCommandsInstalled
 
             // Reflect play/pause state on the widget
             let rate: Float = paused ? 0.0 : (self.player?.rate ?? 1.0)
@@ -349,7 +401,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 info[MPMediaItemPropertyArtwork] = existing
             }
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
-            call.resolve()
+            diag["infoSet"] = true
+            call.resolve(diag)
 
             // Fetch and set artwork out of band — don't block on network
             if let urlStr = artworkUrl,

@@ -52,6 +52,23 @@ Notes:
 - Never ask the user to open Xcode, trust certs, or push buttons. Do it
   yourself via CLI.
 
+### Adding native Swift to the iOS app
+
+When adding a new Swift file to the App target:
+1. Create the .swift file under `ios-app/ios/App/App/`
+2. Edit `ios-app/ios/App/App.xcodeproj/project.pbxproj` manually to add the file
+   to 4 places: PBXBuildFile, PBXFileReference, PBXGroup `504EC3061FED79650016851F`
+   (App group children), and PBXSourcesBuildPhase `504EC3001FED79650016851F`
+   (Sources files list). Use unique hex IDs.
+3. Capacitor 7 SPM builds do NOT auto-discover plugins living in the App target
+   — they must be manually registered. Pattern:
+   `MainViewController.swift` subclasses `CAPBridgeViewController`, overrides
+   `capacitorDidLoad()` to call `bridge?.registerPluginInstance(MyPlugin())`,
+   and the storyboard `Base.lproj/Main.storyboard` points its initial VC at
+   this subclass (`customClass="MainViewController" customModule="App"`).
+4. The compiled main `App` binary is a stub; real Swift code is in
+   `App.debug.dylib` next to it. iOS loads the dylib automatically.
+
 ## Architecture
 
 **Server (`server.js`) + React frontend (`client/`) with Vite build step.**
