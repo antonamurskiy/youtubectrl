@@ -260,14 +260,21 @@ export default function PhonePlayer({ send }) {
             }
             document.addEventListener('visibilitychange', handleVisibility)
 
+            // Track our own paused state for phone-only mode since mpv's
+            // pb.paused doesn't apply here.
+            let ctrlPaused = false
             useSyncStore.getState().setPhoneVideoCtrl({
               play: () => {
+                ctrlPaused = false
                 if (isNativeIOS) NativePlayer.play().catch(() => {})
                 if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() }
+                usePlaybackStore.getState().update({ paused: false })
               },
               pause: () => {
+                ctrlPaused = true
                 if (isNativeIOS) NativePlayer.pause().catch(() => {})
                 bgAudio.pause(); videoRef.current?.pause()
+                usePlaybackStore.getState().update({ paused: true })
               },
               seek: (t) => {
                 if (isNativeIOS) NativePlayer.seek(t).catch(() => {})
@@ -282,6 +289,7 @@ export default function PhonePlayer({ send }) {
                 v.currentTime = newT
                 bgAudio.currentTime = newT
               },
+              isPaused: () => ctrlPaused,
             })
 
             const origCleanup = () => {

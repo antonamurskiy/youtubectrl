@@ -293,7 +293,13 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const togglePlayPause = useCallback(() => {
     hapticTick()
     const ctrl = phoneCtrl()
-    if (ctrl) { pb.paused ? ctrl.play() : ctrl.pause(); return }
+    if (ctrl) {
+      // Prefer ctrl's own paused state (authoritative for phone-only modes);
+      // fall back to mpv's pb.paused.
+      const isPaused = ctrl.isPaused ? ctrl.isPaused() : pb.paused
+      isPaused ? ctrl.play() : ctrl.pause()
+      return
+    }
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})
   }, [pb.paused])
 
