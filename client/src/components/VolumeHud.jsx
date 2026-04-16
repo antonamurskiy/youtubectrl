@@ -13,7 +13,7 @@ export default function VolumeHud() {
       setVolume(v)
       setVisible(true)
       if (hideTimer.current) clearTimeout(hideTimer.current)
-      hideTimer.current = setTimeout(() => setVisible(false), 900)
+      hideTimer.current = setTimeout(() => setVisible(false), 2500)
     }
     const onVol = (e) => show(e.detail?.volume ?? 0)
     window.addEventListener('mac-volume', onVol)
