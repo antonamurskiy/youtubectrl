@@ -535,10 +535,14 @@ export default function PhonePlayer({ send }) {
         // CoreAudio device buffer). The AVPlayer's currentTime is the
         // display frame. Subtract a constant to make both mean the same
         // thing: "what the user currently perceives".
+        // mpv's time-pos reports demux position which runs ahead of actual
+        // audible playback; phone being visibly behind audio means we need
+        // phone to TARGET a later position. Add the compensation rather
+        // than subtract.
         const MPV_AUDIO_LAG = 0.8
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
-        const mpvPos = pb.position + elapsed - MPV_AUDIO_LAG
+        const mpvPos = pb.position + elapsed + MPV_AUDIO_LAG
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
         const rawDiff = mpvPos - phonePos + userOffsetRef.current
 
