@@ -502,32 +502,27 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             restoreVolume(to: 0.5)
             volumeBaseline = 0.5
         }
-        // Hidden MPVolumeView. Keeping it in the hierarchy suppresses the
-        // system HUD from appearing when we programmatically change volume
-        // via its slider.
+        // Hidden MPVolumeView suppresses the system HUD when we change
+        // volume via its slider.
         if hiddenVolumeView == nil, let wv = self.bridge?.webView {
             let v = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
             v.alpha = 0.01
             v.isUserInteractionEnabled = false
             wv.superview?.addSubview(v)
             hiddenVolumeView = v
-            // Extract the actual UISlider MPVolumeView hosts — setting its
-            // .value avoids triggering the HUD.
             for sub in v.subviews {
                 if let s = sub as? UISlider { volumeSlider = s; break }
             }
         }
-        // Observe the audio session's reported output volume changes
         volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
-            guard let self = self, self.volumeInterceptEnabled else { return }
+            guard let self = self else { return }
+            if !self.volumeInterceptEnabled { return }
             if self.restoringVolume { return }
             guard let newValue = change.newValue else { return }
             let delta = newValue - self.volumeBaseline
             if abs(delta) < 0.005 { return }
-            // Convert to a +N / -N % bump
             let bump = delta > 0 ? 5 : -5
             self.notifyListeners("volumeButton", data: ["delta": bump])
-            // Restore the phone's volume to baseline silently
             self.restoreVolume(to: self.volumeBaseline)
         }
     }

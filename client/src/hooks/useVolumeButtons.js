@@ -23,7 +23,6 @@ export function useVolumeButtons() {
     const interceptOn = !!playing && !phoneOnlyUrl
     NativePlayer.setVolumeIntercept(interceptOn).catch(() => {})
     return () => {
-      // Leave intercept off when the hook tears down
       NativePlayer.setVolumeIntercept(false).catch(() => {})
     }
   }, [phoneOnlyUrl, playing])
