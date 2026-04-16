@@ -320,6 +320,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                         await self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
                     }
                     self.player?.isMuted = muted
+                    self.player?.volume = muted ? 0.0 : 1.0
                     self.installPipController()
                     self.installRemoteCommands()
                     if autoplay {
@@ -352,6 +353,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             if position > 0 {
                 self.player?.seek(to: CMTime(seconds: position, preferredTimescale: 600))
             }
+            self.player?.isMuted = muted
+            self.player?.volume = muted ? 0.0 : 1.0
             self.installPipController()
             self.installRemoteCommands()
             if autoplay {
