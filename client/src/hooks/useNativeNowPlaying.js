@@ -16,6 +16,7 @@ export function useNativeNowPlaying({ send }) {
   const position = usePlaybackStore(s => s.position)
   const isLive = usePlaybackStore(s => s.isLive)
   const playing = usePlaybackStore(s => s.playing)
+  const paused = usePlaybackStore(s => s.paused)
   const phoneOpen = useSyncStore(s => s.phoneOpen)
 
   // Push metadata (artwork only refetches when thumbnail URL changes)
@@ -32,8 +33,9 @@ export function useNativeNowPlaying({ send }) {
       duration: duration || 0,
       position: position || 0,
       isLive: !!isLive,
+      paused: !!paused,
     }).catch(() => {})
-  }, [title, channel, thumbnail, duration, isLive, playing])
+  }, [title, channel, thumbnail, duration, isLive, playing, paused])
 
   // Wire native remote commands to the app's existing control endpoints.
   // When phone mode is active, local PhonePlayer handles it; when not, we

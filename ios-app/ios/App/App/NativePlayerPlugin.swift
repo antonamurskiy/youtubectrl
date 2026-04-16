@@ -48,6 +48,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var remoteCommandsInstalled = false
     private var hiddenRoutePicker: AVRoutePickerView?
 
+    // Silent keep-alive player — runs in the background so the audio session
+    // stays active and iOS shows Now Playing even when the actual audio is
+    // coming from the desktop (mpv). Plays a silent looping track.
+    private var silentPlayer: AVPlayer?
+    private var silentLooper: Any?
+
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
         // A 1x1 transparent view that hosts the player layer so iOS has
@@ -102,8 +108,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         cmd.togglePlayPauseCommand.isEnabled = true
         cmd.togglePlayPauseCommand.addTarget { [weak self] _ in
-            guard let p = self?.player else { return .commandFailed }
-            if p.rate == 0 { p.play() } else { p.pause() }
+            if let p = self?.player { if p.rate == 0 { p.play() } else { p.pause() } }
             self?.notifyListeners("remoteTogglePlayPause", data: [:])
             self?.updateNowPlayingPlaybackState()
             return .success
@@ -112,9 +117,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         cmd.skipForwardCommand.preferredIntervals = [15]
         cmd.skipForwardCommand.isEnabled = true
         cmd.skipForwardCommand.addTarget { [weak self] _ in
-            guard let p = self?.player else { return .commandFailed }
-            let now = p.currentTime().seconds
-            p.seek(to: CMTime(seconds: now + 15, preferredTimescale: 600))
+            if let p = self?.player {
+                let now = p.currentTime().seconds
+                p.seek(to: CMTime(seconds: now + 15, preferredTimescale: 600))
+            }
             self?.notifyListeners("remoteSkip", data: ["delta": 15])
             return .success
         }
@@ -122,21 +128,39 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         cmd.skipBackwardCommand.preferredIntervals = [15]
         cmd.skipBackwardCommand.isEnabled = true
         cmd.skipBackwardCommand.addTarget { [weak self] _ in
-            guard let p = self?.player else { return .commandFailed }
-            let now = p.currentTime().seconds
-            p.seek(to: CMTime(seconds: max(0, now - 15), preferredTimescale: 600))
+            if let p = self?.player {
+                let now = p.currentTime().seconds
+                p.seek(to: CMTime(seconds: max(0, now - 15), preferredTimescale: 600))
+            }
             self?.notifyListeners("remoteSkip", data: ["delta": -15])
             return .success
         }
 
         cmd.changePlaybackPositionCommand.isEnabled = true
         cmd.changePlaybackPositionCommand.addTarget { [weak self] event in
-            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent,
-                  let p = self?.player else { return .commandFailed }
-            p.seek(to: CMTime(seconds: positionEvent.positionTime, preferredTimescale: 600))
+            guard let positionEvent = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
+            self?.player?.seek(to: CMTime(seconds: positionEvent.positionTime, preferredTimescale: 600))
             self?.notifyListeners("remoteSeek", data: ["position": positionEvent.positionTime])
             return .success
         }
+    }
+
+    /// Starts a silent looping audio track so the audio session stays active
+    /// and iOS shows the Now Playing widget even when local AVPlayer isn't
+    /// playing anything (e.g. audio is actually coming from desktop mpv).
+    private func startSilentAudioIfNeeded() {
+        if silentPlayer != nil { return }
+        // Bundled silent.m4a (served by the web app under /silent.m4a)
+        guard let url = URL(string: "http://yuzu.local:3000/silent.m4a") else { return }
+        let item = AVPlayerItem(url: url)
+        let p = AVQueuePlayer(playerItem: item)
+        p.actionAtItemEnd = .none
+        if #available(iOS 10.0, *) {
+            silentLooper = AVPlayerLooper(player: p, templateItem: item)
+        }
+        p.volume = 0.0
+        p.play()
+        silentPlayer = p
     }
 
     private func updateNowPlayingPlaybackState() {
@@ -278,13 +302,23 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let duration = call.getDouble("duration") ?? 0
         let position = call.getDouble("position") ?? 0
         let isLive = call.getBool("isLive") ?? false
+        let paused = call.getBool("paused") ?? false
 
         DispatchQueue.main.async {
+            // Make sure remote commands are installed even without an AVPlayer
+            self.installRemoteCommands()
+            // Keep the audio session active so the lock-screen widget shows up
+            // even when local AVPlayer isn't actively playing (desktop mpv).
+            self.startSilentAudioIfNeeded()
+
+            // Reflect play/pause state on the widget
+            let rate: Float = paused ? 0.0 : (self.player?.rate ?? 1.0)
+
             var info: [String: Any] = [
                 MPMediaItemPropertyTitle: title,
                 MPMediaItemPropertyArtist: artist,
                 MPNowPlayingInfoPropertyElapsedPlaybackTime: position,
-                MPNowPlayingInfoPropertyPlaybackRate: self.player?.rate ?? 1.0,
+                MPNowPlayingInfoPropertyPlaybackRate: rate,
                 MPNowPlayingInfoPropertyIsLiveStream: isLive
             ]
             if duration > 0 && !isLive {
@@ -323,6 +357,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
             self.currentArtwork = nil
             self.currentArtworkUrl = nil
+            // Stop silent keep-alive track so iOS releases the audio session
+            self.silentPlayer?.pause()
+            self.silentPlayer = nil
+            self.silentLooper = nil
             call.resolve()
         }
     }
