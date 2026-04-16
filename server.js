@@ -2823,11 +2823,12 @@ app.post("/api/phone-only", async (req, res) => {
     const m = url.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    // Best quality: DASH 1080p video (137) + 128kbps AAC (140). AVPlayer
-    // composes them client-side via AVMutableComposition — no ffmpeg.
+    // Progressive MP4 (format 22 = 720p + 128kbps AAC): single URL with
+    // working ranged seeks. DASH 1080p looks nicer but YouTube caps the
+    // byte-range window on DASH URLs so seeks past ~a few minutes fail.
     const { stdout } = await execFileP("yt-dlp", [
       "--cookies", COOKIES_FILE,
-      "-f", "137+140/136+140/135+140/best[ext=mp4]/22/18",
+      "-f", "22/best[ext=mp4][height<=720]/best",
       "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
     if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
