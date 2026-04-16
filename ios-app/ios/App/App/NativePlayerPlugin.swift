@@ -30,15 +30,16 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         debugLog("plugin loaded v3")
         // Auto-stop PiP when the app returns to foreground — otherwise the
         // user sees the floating PiP window on top of the in-app player.
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(onWillEnterForeground),
-            name: UIApplication.willEnterForegroundNotification,
-            object: nil
-        )
+        // Listen on multiple lifecycle events since PiP auto-start from
+        // inline doesn't always correspond with willEnterForeground.
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(onForeground),
+                       name: UIApplication.willEnterForegroundNotification, object: nil)
+        nc.addObserver(self, selector: #selector(onForeground),
+                       name: UIApplication.didBecomeActiveNotification, object: nil)
     }
 
-    @objc private func onWillEnterForeground() {
+    @objc private func onForeground() {
         DispatchQueue.main.async {
             if let ctrl = self.pipController, ctrl.isPictureInPictureActive {
                 ctrl.stopPictureInPicture()
