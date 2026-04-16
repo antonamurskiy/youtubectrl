@@ -570,6 +570,41 @@ export default function PhonePlayer({ send }) {
     setPhoneOpen(false)
   }, [setPhoneOpen, send])
 
+  // On native iOS: sync the native AVPlayer layer position to match the
+  // <video> element's rect on every frame, so the AVPlayer is what the
+  // user sees inline. HTML video stays transparent/empty but preserves
+  // layout + touch handlers (drag, tap-to-expand).
+  useEffect(() => {
+    if (!isNativeIOS) return
+    let alive = true
+    let lastKey = ''
+    const tick = () => {
+      if (!alive) return
+      const el = videoRef.current
+      if (el && phoneOpen && streamUrl) {
+        const r = el.getBoundingClientRect()
+        const visible = r.width > 2 && r.height > 2 && r.bottom > 0 && r.top < window.innerHeight
+        const key = `${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.width)},${Math.round(r.height)},${visible}`
+        if (key !== lastKey) {
+          lastKey = key
+          NativePlayer.setLayerFrame({
+            x: Math.round(r.left),
+            y: Math.round(r.top),
+            w: Math.round(r.width),
+            h: Math.round(r.height),
+            visible,
+          }).catch(() => {})
+        }
+      } else if (lastKey !== 'hidden') {
+        lastKey = 'hidden'
+        NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
+      }
+      requestAnimationFrame(tick)
+    }
+    const id = requestAnimationFrame(tick)
+    return () => { alive = false; cancelAnimationFrame(id) }
+  }, [phoneOpen, streamUrl])
+
   if (!phoneOpen && !streamUrl) return null
 
   return (
@@ -592,11 +627,11 @@ export default function PhonePlayer({ send }) {
           // Native AVPlayer handles PiP; don't let the HTML video also try.
           if (el && phoneOnlyUrl && !isNativeIOS) el.autoPictureInPicture = true
         }}
-        src={phoneOnlyUrl && streamUrl ? streamUrl : undefined}
+        src={isNativeIOS ? undefined : (phoneOnlyUrl && streamUrl ? streamUrl : undefined)}
         playsInline
         autoPlay
         muted={isNativeIOS /* AVPlayer is the audio source */}
-        controls={!mini}
+        controls={!mini && !isNativeIOS}
         onPointerDown={(e) => {
           if (!mini) return
           e.preventDefault()

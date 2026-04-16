@@ -35,6 +35,9 @@ export const NativePlayer = {
   async startLiveActivity(info) { if (plugin) return plugin.startLiveActivity(info) },
   async updateLiveActivity(info) { if (plugin) return plugin.updateLiveActivity(info) },
   async endLiveActivity() { if (plugin) return plugin.endLiveActivity() },
+  async setLayerFrame({ x, y, w, h, visible = true }) {
+    if (plugin) return plugin.setLayerFrame({ x, y, w, h, visible })
+  },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }
     return plugin.addListener(event, handler)

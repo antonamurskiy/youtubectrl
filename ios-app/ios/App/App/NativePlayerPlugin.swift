@@ -63,7 +63,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "setVolumeIntercept", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startLiveActivity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateLiveActivity", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "endLiveActivity", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "endLiveActivity", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setLayerFrame", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -100,13 +101,15 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
-        // A 1x1 transparent view that hosts the player layer so iOS has
-        // something to attach PiP to. Placed behind the WKWebView so it's
-        // invisible.
+        // Transparent container added ABOVE the WKWebView so the AVPlayer's
+        // video is visible to the user. isUserInteractionEnabled = false so
+        // taps still pass through to the WebView (phone-player UI controls).
+        // Starts at 1x1 offscreen; web layer calls setLayerFrame() with the
+        // rect of its placeholder div to reposition.
         let container = UIView(frame: CGRect(x: 0, y: 0, width: 1, height: 1))
         container.isUserInteractionEnabled = false
-        container.backgroundColor = .clear
-        wv.superview?.insertSubview(container, belowSubview: wv)
+        container.backgroundColor = .black
+        wv.superview?.insertSubview(container, aboveSubview: wv)
         self.playerContainer = container
 
         let layer = AVPlayerLayer()
@@ -114,6 +117,32 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         layer.videoGravity = .resizeAspect
         container.layer.addSublayer(layer)
         self.playerLayer = layer
+    }
+
+    @objc func setLayerFrame(_ call: CAPPluginCall) {
+        let x = call.getDouble("x") ?? 0
+        let y = call.getDouble("y") ?? 0
+        let w = call.getDouble("w") ?? 1
+        let h = call.getDouble("h") ?? 1
+        let visible = call.getBool("visible") ?? true
+        DispatchQueue.main.async {
+            self.ensureLayer()
+            guard let container = self.playerContainer, let layer = self.playerLayer else {
+                call.resolve(["ok": false]); return
+            }
+            if visible {
+                // Logical points (WKWebView uses the same coordinate space)
+                container.frame = CGRect(x: x, y: y, width: max(1, w), height: max(1, h))
+            } else {
+                // Park offscreen but don't destroy — PiP needs the layer alive
+                container.frame = CGRect(x: -9999, y: -9999, width: 1, height: 1)
+            }
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.frame = container.bounds
+            CATransaction.commit()
+            call.resolve(["ok": true])
+        }
     }
 
     private func installPipController() {
