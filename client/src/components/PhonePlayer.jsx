@@ -416,34 +416,43 @@ export default function PhonePlayer({ send }) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive && pb.player === 'mpv') {
-        // mpv live: treat like VOD — compensate for mpv's audio output lag
-        // and seek to align. Phone is just playing the raw HLS alongside.
+        // mpv live: mpv's time-pos is PTS (huge absolute value), phone's
+        // AVPlayer currentTime is 0-based from HLS load. Need calibration
+        // offset — track the initial difference, then measure drift
+        // relative to it. Also compensate for mpv audio output lag.
         const MPV_AUDIO_LAG = 0.4
-        const clockOffset = useSyncStore.getState().clockOffset || 0
-        const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
-        const mpvPos = pb.position + elapsed + MPV_AUDIO_LAG
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
-        const rawDiff = mpvPos - phonePos + userOffsetRef.current
+        const rawDiff = pb.position - phonePos // huge on first call (PTS vs 0-based)
+        if (calibOffsetRef.current === null) {
+          calibOffsetRef.current = rawDiff
+          setDrift('calibrated (mpv live)')
+          return
+        }
+        // drift = how far phonePos has drifted from the calibrated offset.
+        // Negative means phone is behind; positive means phone is ahead.
+        const drift = (rawDiff - calibOffsetRef.current) + MPV_AUDIO_LAG + userOffsetRef.current
 
-        driftSamplesRef.current.push(rawDiff)
+        driftSamplesRef.current.push(drift)
         if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
-        const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+        const smoothed = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
 
-        setDrift(`drift: ${drift.toFixed(2)}s`)
-        send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvPos.toFixed(2), phone: +phonePos.toFixed(2) })
+        setDrift(`drift: ${smoothed.toFixed(2)}s`)
+        send({ type: 'phone-state', drift: +smoothed.toFixed(2) })
 
         const now = Date.now()
         const threshold = now - lastSeekRef.current > 6000 ? 0.3 : 1.0
-        if (Math.abs(drift) > threshold && now - lastSeekRef.current > 2500) {
+        if (Math.abs(smoothed) > threshold && now - lastSeekRef.current > 2500) {
+          const targetPhone = phonePos + smoothed
           if (isNativeIOS) {
-            NativePlayer.seek(mpvPos).catch(() => {})
-            _nativePos = mpvPos
+            NativePlayer.seek(targetPhone).catch(() => {})
+            _nativePos = targetPhone
             _nativePosAt = Date.now()
           } else {
-            video.currentTime = mpvPos
+            video.currentTime = targetPhone
           }
           lastSeekRef.current = now
           driftSamplesRef.current = []
+          if (Math.abs(smoothed) > 5) calibOffsetRef.current = null
           send({ type: 'mpv-speed', speed: 1.0 })
         }
       } else if (pb.isLive && pb.player === 'vlc') {
