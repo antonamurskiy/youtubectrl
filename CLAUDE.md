@@ -14,17 +14,6 @@ npm install        # Install dependencies
 pkill -x mpv       # Kill all mpv instances
 ```
 
-**Server lifecycle & macOS permissions**: the server uses `blueutil` and
-`osascript` which require the parent process to have Bluetooth +
-Accessibility + Automation permissions granted in System Settings. When
-the user runs `npm start` from their terminal (iTerm / Warp / Terminal),
-those grants apply. If Claude restarts the server from a non-granted
-shell (background `node server.js &`, `nohup`, launchd, etc.) the
-server will lose access to Bluetooth and possibly mpv window control.
-**Prefer asking the user to restart the server themselves** rather than
-restarting it via Bash tool when Bluetooth/AppleScript features are in
-scope.
-
 ## iOS app deployment
 
 The iOS Capacitor shell is at `ios-app/`. Never tell the user to use Xcode —
