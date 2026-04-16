@@ -195,9 +195,13 @@ function App() {
       refresh()
     }
   }, [activeTab, setTab, refresh])
+  const ptrBodyRef = useRef(null)
+  const ptrIndicatorRef = useRef(null)
   const ptr = usePullToRefresh({
     onRefresh: doRefresh,
     enabled: !terminalOpen && !phoneOpen,
+    bodyEl: useCallback(() => ptrBodyRef.current, []),
+    indicatorEl: useCallback(() => ptrIndicatorRef.current, []),
   })
 
   return (
@@ -208,36 +212,39 @@ function App() {
         </Suspense>
       )}
 
-      {ptr.active && (
-        <div
-          className="ptr-indicator"
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            height: `${ptr.translateY}px`,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            pointerEvents: 'none',
-            zIndex: 100,
-            paddingTop: 'env(safe-area-inset-top, 0)',
-            color: ptr.armed ? 'var(--green)' : 'var(--text-dim)',
-            fontSize: 'var(--font-sm)',
-            fontFamily: 'var(--font)',
-            letterSpacing: '2px',
-            transition: ptr.translateY > 0 ? 'none' : 'height 0.2s',
-          }}
-        >
-          {ptr.armed ? '◉ RELEASE' : '◯ PULL'}
-        </div>
-      )}
-      <div style={{
-        ...(terminalOpen ? { display: 'none' } : undefined),
-        transform: ptr.active ? `translateY(${ptr.translateY}px)` : undefined,
-        transition: ptr.active ? 'none' : 'transform 0.25s cubic-bezier(.2,.8,.2,1)',
-      }}>
+      <div
+        ref={ptrIndicatorRef}
+        className="ptr-indicator"
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: 0,
+          opacity: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          pointerEvents: 'none',
+          zIndex: 100,
+          paddingTop: 'env(safe-area-inset-top, 0)',
+          color: ptr.armed ? 'var(--green)' : 'var(--text-dim)',
+          fontSize: 'var(--font-sm)',
+          fontFamily: 'var(--font)',
+          letterSpacing: '2px',
+          overflow: 'hidden',
+          willChange: 'height, opacity',
+        }}
+      >
+        {ptr.armed ? '◉ RELEASE' : '◯ PULL'}
+      </div>
+      <div
+        ref={ptrBodyRef}
+        style={{
+          ...(terminalOpen ? { display: 'none' } : undefined),
+          willChange: 'transform',
+        }}
+      >
         <header className="header">
           <div className="header-inner">
             <SearchBar />
