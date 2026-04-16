@@ -566,11 +566,13 @@ export default function PhonePlayer({ send }) {
           driftSamplesRef.current = [] // reset smoother after seek
           send({ type: 'mpv-speed', speed: 1.0 })
           lastRateSend = 0
-        } else if (Math.abs(drift) > 0.05) {
-          // Sub-second drift: nudge mpv rate. Dead zone 50ms prevents the
-          // oscillation loop. Proportional response scales to drift.
-          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.5))
-          if (now3 - lastRateSend > 500) {
+        } else if (Math.abs(drift) > 0.15) {
+          // Sub-second drift above dead zone: gentle mpv rate nudge.
+          // Low gain (0.1) to avoid oscillation — a 0.2s drift yields 2%
+          // rate change → ~10s to close, but stable. Deadband keeps
+          // tiny residual drifts at rate 1.0.
+          const rate = Math.max(0.97, Math.min(1.03, 1.0 - drift * 0.1))
+          if (now3 - lastRateSend > 1000) {
             send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
             lastRateSend = now3
           }
