@@ -114,7 +114,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         let layer = AVPlayerLayer()
         layer.frame = container.bounds
-        layer.videoGravity = .resizeAspect
+        // resizeAspect shows black bars. resizeAspectFill fills but can crop
+        // tall (vertical) videos. Use .resize (stretch) for the inline view
+        // since our HTML <video> placeholder has aspect-ratio: 16/9 anyway.
+        layer.videoGravity = .resizeAspectFill
         container.layer.addSublayer(layer)
         self.playerLayer = layer
     }
