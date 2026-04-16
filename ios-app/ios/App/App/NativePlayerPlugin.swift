@@ -41,7 +41,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "setNowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearNowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "showAirPlayPicker", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "setKeepAwake", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setVolumeIntercept", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -59,6 +60,18 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     // coming from the desktop (mpv). Plays a silent looping track.
     private var silentPlayer: AVPlayer?
     private var silentLooper: Any?
+
+    // Volume button interception — when enabled, phone hardware volume
+    // buttons are converted into deltas that the web layer forwards to the
+    // Mac via /api/volume-bump. We keep a hidden MPVolumeView anchored
+    // offscreen so we can silently restore the phone's volume after each
+    // button press.
+    private var volumeInterceptEnabled = false
+    private var volumeBaseline: Float = 0.5
+    private var hiddenVolumeView: MPVolumeView?
+    private var volumeSlider: UISlider?
+    private var volumeObserver: NSKeyValueObservation?
+    private var restoringVolume = false
 
     private func ensureLayer() {
         guard playerLayer == nil, let wv = self.bridge?.webView else { return }
@@ -461,6 +474,93 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         call.resolve()
     }
 
+    /// Enable or disable hardware-volume-button interception.
+    /// When enabled: phone volume buttons are silently reverted and a
+    /// "volumeDelta" event is emitted to the JS side instead.
+    @objc func setVolumeIntercept(_ call: CAPPluginCall) {
+        let enabled = call.getBool("enabled") ?? false
+        DispatchQueue.main.async {
+            if enabled {
+                self.enableVolumeIntercept()
+            } else {
+                self.disableVolumeIntercept()
+            }
+            call.resolve()
+        }
+    }
+
+    private func enableVolumeIntercept() {
+        if volumeInterceptEnabled { return }
+        volumeInterceptEnabled = true
+        do {
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {}
+        volumeBaseline = AVAudioSession.sharedInstance().outputVolume
+        // Drift the baseline slightly away from 0 and 1 so we can always
+        // detect increments/decrements. Land on 0.5.
+        if volumeBaseline < 0.05 || volumeBaseline > 0.95 {
+            restoreVolume(to: 0.5)
+            volumeBaseline = 0.5
+        }
+        // Hidden MPVolumeView. Keeping it in the hierarchy suppresses the
+        // system HUD from appearing when we programmatically change volume
+        // via its slider.
+        if hiddenVolumeView == nil, let wv = self.bridge?.webView {
+            let v = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
+            v.alpha = 0.01
+            v.isUserInteractionEnabled = false
+            wv.superview?.addSubview(v)
+            hiddenVolumeView = v
+            // Extract the actual UISlider MPVolumeView hosts — setting its
+            // .value avoids triggering the HUD.
+            for sub in v.subviews {
+                if let s = sub as? UISlider { volumeSlider = s; break }
+            }
+        }
+        // Observe the audio session's reported output volume changes
+        volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
+            guard let self = self, self.volumeInterceptEnabled else { return }
+            if self.restoringVolume { return }
+            guard let newValue = change.newValue else { return }
+            let delta = newValue - self.volumeBaseline
+            if abs(delta) < 0.005 { return }
+            // Convert to a +N / -N % bump
+            let bump = delta > 0 ? 5 : -5
+            self.notifyListeners("volumeButton", data: ["delta": bump])
+            // Restore the phone's volume to baseline silently
+            self.restoreVolume(to: self.volumeBaseline)
+        }
+    }
+
+    private func disableVolumeIntercept() {
+        volumeInterceptEnabled = false
+        volumeObserver?.invalidate()
+        volumeObserver = nil
+        hiddenVolumeView?.removeFromSuperview()
+        hiddenVolumeView = nil
+        volumeSlider = nil
+    }
+
+    private func restoreVolume(to value: Float) {
+        restoringVolume = true
+        // Use the hidden slider to set volume — this is the documented way
+        // that doesn't trigger the system HUD.
+        if let slider = volumeSlider {
+            slider.setValue(value, animated: false)
+            // The slider only triggers the mixer when .valueChanged fires,
+            // so send the action manually.
+            slider.sendActions(for: .valueChanged)
+        } else {
+            // Fallback — this will flash the HUD but ensures the baseline
+            // doesn't drift away
+            MPVolumeView.setVolume(value)
+        }
+        // Give the observer a tick to see our change, then clear the flag
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            self?.restoringVolume = false
+        }
+    }
+
     // MARK: - PiP delegate
 
     public func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
@@ -468,5 +568,18 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     }
     public func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
         notifyListeners("pipStopped", data: [:])
+    }
+}
+
+// Extension fallback for setting volume without an MPVolumeView slider.
+// (Preferred path is setting slider.value; this is the backup.)
+extension MPVolumeView {
+    static func setVolume(_ volume: Float) {
+        let v = MPVolumeView()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+            if let slider = v.subviews.compactMap({ $0 as? UISlider }).first {
+                slider.value = volume
+            }
+        }
     }
 }

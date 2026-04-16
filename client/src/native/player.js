@@ -31,6 +31,7 @@ export const NativePlayer = {
   async clearNowPlaying() { if (plugin) return plugin.clearNowPlaying() },
   async showAirPlayPicker() { if (plugin) return plugin.showAirPlayPicker() },
   async setKeepAwake(enabled) { if (plugin) return plugin.setKeepAwake({ enabled }) },
+  async setVolumeIntercept(enabled) { if (plugin) return plugin.setVolumeIntercept({ enabled }) },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }
     return plugin.addListener(event, handler)

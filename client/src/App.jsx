@@ -7,6 +7,7 @@ import { useMediaSession } from './hooks/useMediaSession'
 import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
+import { useVolumeButtons } from './hooks/useVolumeButtons'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -100,6 +101,7 @@ function App() {
   useRouting()
   useNativeNowPlaying({ send })
   useClaudeNotification()
+  useVolumeButtons()
   const { activeTab, setTab, secretMenuOpen, toggleSecretMenu, refresh, refreshing } = useUIStore(
     useShallow(s => ({
       activeTab: s.activeTab,

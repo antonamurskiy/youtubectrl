@@ -2484,6 +2484,20 @@ app.post("/api/volume", async (req, res) => {
   }
 });
 
+// Relative bump — used by phone hardware volume buttons
+app.post("/api/volume-bump", async (req, res) => {
+  const delta = parseInt(req.body.delta);
+  if (isNaN(delta)) return res.status(400).json({ error: "Invalid delta" });
+  try {
+    const cur = parseInt((await execP(`osascript -e 'output volume of (get volume settings)'`)).stdout.trim()) || 0;
+    const next = Math.max(0, Math.min(100, cur + delta));
+    await execP(`osascript -e 'set volume output volume ${next}'`);
+    res.json({ ok: true, volume: next });
+  } catch {
+    res.status(500).json({ error: "Volume failed" });
+  }
+});
+
 // Refresh cookies from Firefox (requires Mac to be unlocked)
 app.post("/api/refresh-cookies", async (_req, res) => {
   const ok = await exportCookies();
