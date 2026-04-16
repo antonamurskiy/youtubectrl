@@ -580,26 +580,22 @@ export default function PhonePlayer({ send }) {
     hapticThump()
   }, [])
 
-  const saveProgress = useCallback(async () => {
+  // Sync phone playhead position to the hidden mpv so its own progress
+  // tracking picks up the right number after we close.
+  const syncToMpv = useCallback(async () => {
     const url = phoneOnlyUrl
     if (!url) return
     let position = 0
-    let duration = 0
     if (isNativeIOS) {
-      try {
-        const s = await NativePlayer.getState()
-        position = s?.position || 0
-        duration = s?.duration || 0
-      } catch {}
+      try { const s = await NativePlayer.getState(); position = s?.position || 0 } catch {}
     } else if (videoRef.current) {
       position = videoRef.current.currentTime || 0
-      duration = videoRef.current.duration || 0
     }
-    if (position > 0 && duration > 0) {
-      fetch('/api/save-progress', {
+    if (position > 0) {
+      fetch('/api/seek', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, position, duration }),
+        body: JSON.stringify({ position }),
       }).catch(() => {})
     }
   }, [phoneOnlyUrl])
@@ -607,8 +603,9 @@ export default function PhonePlayer({ send }) {
   const handleClose = useCallback(() => {
     hapticThump()
     setCompMode(false)
-    // Save progress BEFORE tearing down the player
-    saveProgress().finally(() => {
+    // Seek hidden mpv to wherever AVPlayer is, so its progress tracking
+    // saves the right number.
+    syncToMpv().finally(() => {
       if (videoRef.current) videoRef.current.pause()
       if (isNativeIOS) NativePlayer.stop().catch(() => {})
       fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
@@ -617,15 +614,16 @@ export default function PhonePlayer({ send }) {
       setStreamUrl(null)
       loadedUrlRef.current = null
     })
-  }, [setPhoneOpen, send, saveProgress])
+  }, [setPhoneOpen, send, syncToMpv])
 
-  // Periodic progress save — every 10s while phone-only is active. Also
-  // ensures progress survives app backgrounding / crashes.
+  // Periodic sync every 10s so mpv's position tracker (which saves to
+  // history) matches the phone player. Cheap: hits /api/seek which just
+  // calls mpv's IPC.
   useEffect(() => {
     if (!phoneOnlyUrl) return
-    const iv = setInterval(() => { saveProgress() }, 10000)
+    const iv = setInterval(() => { syncToMpv() }, 10000)
     return () => clearInterval(iv)
-  }, [phoneOnlyUrl, saveProgress])
+  }, [phoneOnlyUrl, syncToMpv])
 
   // On native iOS in phone-only mode, poll the AVPlayer's state and push
   // it into the playback store so the NowPlayingBar (which reads mpv's
