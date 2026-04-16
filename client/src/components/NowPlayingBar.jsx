@@ -5,7 +5,7 @@ import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
 import { copyText } from '../clipboard'
-import { tick as hapticTick, thump as hapticThump } from '../haptics'
+import { tick as hapticTick, thump as hapticThump, selection as hapticSelection, selectionStart as hapticSelectionStart, selectionEnd as hapticSelectionEnd } from '../haptics'
 
 function formatTime(s) {
   if (!s || s < 0) return '0:00'
@@ -180,6 +180,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [storyboard, duration])
 
   // Override the handleUp to use ref
+  const lastSeekHapticStepRef = useRef(-1)
   const handlePointerDownFixed = useCallback((e) => {
     e.preventDefault()
     const bar = barRef.current
@@ -190,6 +191,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     setSeekPos(pos)
     seekPosRef.current = pos
     setCurrentPosVisible(true)
+    hapticSelectionStart()
+    lastSeekHapticStepRef.current = Math.floor(pos / 5)
 
     if (bar && rect) {
       const x = Math.max(100, Math.min(e.clientX - rect.left, rect.width - 100))
@@ -203,6 +206,12 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       const p = snapToChapter(rawP)
       setSeekPos(p)
       seekPosRef.current = p
+      // Haptic tick every 5s of seek movement
+      const step = Math.floor(p / 5)
+      if (step !== lastSeekHapticStepRef.current) {
+        lastSeekHapticStepRef.current = step
+        hapticSelection()
+      }
       if (bar && rectNow) {
         setSeekPreview({ x: Math.max(100, Math.min(cx - rectNow.left, rectNow.width - 100)), time: p })
       }
@@ -213,6 +222,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       setIsSeeking(false)
       setSeekPreview(null)
       seekCleanupRef.current = null
+      hapticSelectionEnd()
 
       const ctrl = phoneCtrl()
       if (ctrl) { ctrl.seek(finalPos) }
@@ -293,6 +303,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     touchStartPos.current = { x: touch.clientX, y: touch.clientY }
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true
+      hapticThump()
       setTitleMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
     }, 500)
   }, [])
@@ -347,6 +358,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [phoneOpen, setPhoneOpen])
 
   const skipBack = useCallback(() => {
+    hapticTick()
     const ctrl = phoneCtrl()
     // Phone-only: skip relative to the phone video's actual currentTime, not mpv's drifted pb.position
     if (ctrl?.skip) { ctrl.skip(-10); addToast('-10s'); return }
@@ -360,6 +372,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   }, [pb.position, addToast])
 
   const skipForward = useCallback(() => {
+    hapticTick()
     const ctrl = phoneCtrl()
     if (ctrl?.skip) { ctrl.skip(10); addToast('+10s'); return }
     const base = skipPosRef.current ?? pb.position
@@ -444,7 +457,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         <button
           className="np-skip-btn"
           style={{ color: pb.visible === false ? '#d05050' : (pb.visible ? 'var(--green)' : 'var(--text-dim)') }}
-          onClick={() => fetch('/api/toggle-visibility', { method: 'POST' }).catch(() => {})}
+          onClick={() => { hapticThump(); fetch('/api/toggle-visibility', { method: 'POST' }).catch(() => {}) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             {!pb.visible
@@ -462,7 +475,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         <button
           className="np-skip-btn"
           style={{ color: frontApp === 'cmux' ? 'var(--green)' : 'var(--text-dim)', opacity: 0.8 }}
-          onClick={() => fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {})}
+          onClick={() => { hapticThump(); fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {}) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
@@ -476,46 +489,46 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       <div className="np-btn-row">
         <button
           className={`np-btn${pb.monitor === 'laptop' ? ' active' : ''}`}
-          onClick={() => moveMonitor('laptop')}
+          onClick={() => { hapticTick(); moveMonitor('laptop') }}
         >
           {Icons.laptop}
         </button>
         <button
           className={`np-btn${pb.monitor === 'lg' ? ' active' : ''}`}
-          onClick={() => moveMonitor('lg')}
+          onClick={() => { hapticTick(); moveMonitor('lg') }}
         >
           {Icons.monitor}
         </button>
         <button
           className={`np-btn${pb.windowMode === 'maximize' ? ' active' : ''}`}
-          onClick={toggleMaximize}
+          onClick={() => { hapticThump(); toggleMaximize() }}
         >
           {Icons.maximize}
         </button>
         <button
           className={`np-btn${pb.windowMode === 'fullscreen' ? ' active' : ''}`}
-          onClick={toggleFullscreen}
+          onClick={() => { hapticThump(); toggleFullscreen() }}
         >
           {Icons.fullscreen}
         </button>
         <button
           className={`np-btn${phoneOpen ? ' active' : ''}`}
           style={pb.phoneSyncOk === false ? { opacity: 0.3 } : undefined}
-          onClick={watchOnPhone}
+          onClick={() => { hapticThump(); watchOnPhone() }}
           title={pb.phoneSyncOk === false ? 'No MP4 — phone sync unavailable' : 'Watch on phone'}
         >
           {Icons.phone}
         </button>
         <button
           className={`np-btn${commentsOpen ? ' active' : ''}`}
-          onClick={toggleComments}
+          onClick={() => { hapticTick(); toggleComments() }}
           title={pb.isLive ? 'Live chat' : 'Comments'}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
           </svg>
         </button>
-        <button className="np-btn" onClick={stopPlayback}>
+        <button className="np-btn" onClick={() => { hapticThump(); stopPlayback() }}>
           {Icons.stop}
         </button>
         <button
@@ -524,10 +537,12 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             e.preventDefault()
             e.currentTarget.setPointerCapture(e.pointerId)
             e.currentTarget.classList.add('active')
+            hapticThump()
             fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 2 }) }).catch(() => {})
           }}
           onPointerUp={(e) => {
             e.currentTarget.classList.remove('active')
+            hapticTick()
             fetch('/api/mpv-speed', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ speed: 1 }) }).catch(() => {})
           }}
           onPointerCancel={(e) => {

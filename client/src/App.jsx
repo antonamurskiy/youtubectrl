@@ -242,6 +242,7 @@ function App() {
                 key={n}
                 className={claudePressed === n ? 'pressed' : ''}
                 onClick={() => {
+                  hapticThump()
                   setClaudePressed(n)
                   const fn = useSyncStore.getState().terminalSendKey
                   if (fn) fn(String(n))
@@ -255,7 +256,7 @@ function App() {
         <button
           className="fab-cmux"
           style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)', background: terminalOpen ? 'rgba(177,98,134,0.2)' : undefined } : claudeState === 'thinking' ? { color: 'var(--yellow)', borderColor: 'var(--yellow)', background: terminalOpen ? 'rgba(229,181,103,0.2)' : undefined } : terminalOpen ? { background: 'rgba(168,153,132,0.2)' } : undefined}
-          onClick={(e) => { e.stopPropagation(); setTerminalOpen(!useSyncStore.getState().terminalOpen) }}
+          onClick={(e) => { e.stopPropagation(); hapticTick(); setTerminalOpen(!useSyncStore.getState().terminalOpen) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
             <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
@@ -265,6 +266,7 @@ function App() {
           className="fab-refresh"
           onClick={() => {
             if (didLongPressRef.current) { didLongPressRef.current = false; return }
+            hapticTick()
             if (activeTab === 'channel' || activeTab === 'search' || activeTab === 'filtered') {
               setTab('rec')
             } else {

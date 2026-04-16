@@ -4,6 +4,7 @@ import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
 import { isNativeIOS, NativePlayer } from '../native/player'
+import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
@@ -535,6 +536,7 @@ export default function PhonePlayer({ send }) {
     compModeRef.current = true
     setCompMode(true)
     setMini(true)
+    hapticThump()
   }, [])
 
   const handlePhone = useCallback(() => {
@@ -554,9 +556,11 @@ export default function PhonePlayer({ send }) {
     compModeRef.current = false
     setCompMode(false)
     setMini(false)
+    hapticThump()
   }, [])
 
   const handleClose = useCallback(() => {
+    hapticThump()
     setCompMode(false)
     if (videoRef.current) videoRef.current.pause()
     if (isNativeIOS) NativePlayer.stop().catch(() => {})
@@ -612,7 +616,7 @@ export default function PhonePlayer({ send }) {
           const d = dragRef.current
           if (!d || d.pointerId !== e.pointerId) return
           const dist = Math.abs(e.clientX - d.startX) + Math.abs(e.clientY - d.startY)
-          if (dist > 4) d.moved = true
+          if (dist > 4 && !d.moved) { d.moved = true; hapticTick() }
           if (!d.moved) return
           const x = Math.max(4, Math.min(window.innerWidth - d.w - 4, e.clientX - d.dx))
           const y = Math.max(4, Math.min(window.innerHeight - d.h - 4, e.clientY - d.dy))
@@ -635,6 +639,7 @@ export default function PhonePlayer({ send }) {
             }
             window.addEventListener('click', suppress, true)
             setTimeout(() => window.removeEventListener('click', suppress, true), 400)
+            hapticThump()
             setMini(false)
           }
         }}
@@ -661,6 +666,7 @@ export default function PhonePlayer({ send }) {
           onPointerDown={(e) => {
             e.preventDefault()
             e.stopPropagation()
+            hapticTick()
             resizeRef.current = {
               pointerId: e.pointerId,
               startX: e.clientX,
@@ -703,13 +709,13 @@ export default function PhonePlayer({ send }) {
       <div style={{ display: mini ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button onClick={() => nudgeRef.current?.(-5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
-          <button onClick={() => nudgeRef.current?.(-1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
+          <button onClick={() => { hapticTick(); nudgeRef.current?.(-5) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
+          <button onClick={() => { hapticTick(); nudgeRef.current?.(-1) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
           <span ref={offsetDisplayRef} style={{ color: 'var(--yellow)', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
-          <button onClick={() => nudgeRef.current?.(1)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
-          <button onClick={() => nudgeRef.current?.(5)} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
+          <button onClick={() => { hapticTick(); nudgeRef.current?.(1) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
+          <button onClick={() => { hapticTick(); nudgeRef.current?.(5) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
         </div>
-        <button onClick={() => setMini(true)} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>MIN</button>
+        <button onClick={() => { hapticThump(); setMini(true) }} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>MIN</button>
         {phoneOnlyUrl && <button onClick={compMode ? handlePhone : handleComp} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: compMode ? 'var(--green)' : 'var(--text)', border: '1px solid var(--text-dim)' }}>{compMode ? 'PHONE' : 'COMP'}</button>}
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>
       </div>
