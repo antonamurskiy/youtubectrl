@@ -535,21 +535,25 @@ export default function PhonePlayer({ send }) {
         const clockOffset = useSyncStore.getState().clockOffset || 0
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed
-        // On native, the HTML <video> has no src (AVPlayer is the player).
-        // Read AVPlayer position from our 250ms poll cache instead of HTML.
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
-        const rawDiff = mpvPos - phonePos
+        const rawDiff = mpvPos - phonePos + userOffsetRef.current
 
-        const drift = rawDiff + userOffsetRef.current
+        // Smooth across 5 samples to filter WS tick jitter — mpv's
+        // time-pos arrives with ~50-150ms variance from network.
+        driftSamplesRef.current.push(rawDiff)
+        if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
+        const drift = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+
         setDrift(`drift: ${drift.toFixed(2)}s`)
-        send({ type: 'phone-state', drift: +drift.toFixed(2) })
+        send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvPos.toFixed(2), phone: +phonePos.toFixed(2) })
 
         const now3 = Date.now()
-        const cooldown = lastSeekRef.current === 0 ? 0 : 1500
+        const cooldown = lastSeekRef.current === 0 ? 0 : 2500
 
-        // Hard-seek threshold — anything above this gets corrected with a
-        // seek rather than a rate nudge (nudges converge too slowly).
-        if (Math.abs(drift) > 0.08 && now3 - lastSeekRef.current > cooldown) {
+        // Only hard-seek if drift is SERIOUSLY off — sub-second drift
+        // is handled by rate nudging to avoid the overshoot loop that
+        // happens with aggressive seeks.
+        if (Math.abs(drift) > 1.0 && now3 - lastSeekRef.current > cooldown) {
           const target = mpvPos + (isNativeIOS ? 0 : 0.2)
           if (isNativeIOS) {
             NativePlayer.seek(target).catch(() => {})
@@ -559,18 +563,18 @@ export default function PhonePlayer({ send }) {
             video.currentTime = target
           }
           lastSeekRef.current = now3
+          driftSamplesRef.current = [] // reset smoother after seek
           send({ type: 'mpv-speed', speed: 1.0 })
           lastRateSend = 0
-        } else if (Math.abs(drift) > 0.02) {
-          // Small residual drift: aggressive mpv rate nudge. 5% = inaudible
-          // pitch shift but converges ~0.05s/sec. 0.25s drift → ~5s to close.
-          const rate = Math.max(0.95, Math.min(1.05, 1.0 - drift * 0.2))
+        } else if (Math.abs(drift) > 0.05) {
+          // Sub-second drift: nudge mpv rate. Dead zone 50ms prevents the
+          // oscillation loop. Proportional response scales to drift.
+          const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.5))
           if (now3 - lastRateSend > 500) {
             send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
             lastRateSend = now3
           }
         } else if (lastRateSend > 0) {
-          // Aligned (<0.02s) — restore normal rate
           send({ type: 'mpv-speed', speed: 1.0 })
           lastRateSend = 0
         }
