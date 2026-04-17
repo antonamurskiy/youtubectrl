@@ -4253,6 +4253,7 @@ function startWsSync() {
             mpvCommand(["get_property", "pause"]),
             mpvCommand(["get_property", "file-format"]).catch(() => null),
             mpvCommand(["get_property", "path"]).catch(() => null),
+            mpvCommand(["get_property", "speed"]).catch(() => null),
           ];
           if (needInfo) {
             calls.push(
@@ -4262,9 +4263,9 @@ function startWsSync() {
             );
           }
           const results = await Promise.all(calls);
-          const [pos, dur, pause, fmt, mpvPath] = results;
+          const [pos, dur, pause, fmt, mpvPath, speedR] = results;
           if (needInfo) {
-            const [, , , , , height, vcodec, hwdec] = results;
+            const [, , , , , , height, vcodec, hwdec] = results;
             if (height?.data != null) _mpvVideoInfoCache.height = height.data;
             if (vcodec?.data != null) _mpvVideoInfoCache.videoCodec = vcodec.data;
             if (hwdec?.data != null) _mpvVideoInfoCache.hwdec = hwdec.data;
@@ -4385,6 +4386,7 @@ function startWsSync() {
             height: _mpvVideoInfoCache.height,
             videoCodec: _mpvVideoInfoCache.videoCodec,
             hwdec: _mpvVideoInfoCache.hwdec,
+            speed: speedR?.data ?? 1,
           };
         } catch {
           state = { type: "playback", playing: false };

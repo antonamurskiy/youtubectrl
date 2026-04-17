@@ -9,6 +9,7 @@ export const usePlaybackStore = create((set) => ({
   isLive: false,
   dvrActive: false, // true when mpv is on the VOD proxy — full-duration scrubbing available
   player: null, // 'mpv' | null
+  speed: 1,
   absoluteMs: null,
   title: '',
   channel: '',

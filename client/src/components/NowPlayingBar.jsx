@@ -86,7 +86,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, dvrActive: s.dvrActive, paused: s.paused, playing: s.playing,
     monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
-    height: s.height, videoCodec: s.videoCodec, hwdec: s.hwdec,
+    height: s.height, videoCodec: s.videoCodec, hwdec: s.hwdec, speed: s.speed,
   })))
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
@@ -575,6 +575,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         </button>
         <button
           className="np-btn"
+          style={pb.speed !== 1 ? { color: 'var(--red)' } : undefined}
           onPointerDown={(e) => {
             e.preventDefault()
             e.currentTarget.setPointerCapture(e.pointerId)
@@ -593,7 +594,16 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
           }}
           onContextMenu={(e) => e.preventDefault()}
         >
-          2×
+          {
+            /* Show current mpv rate (live-updated from WS). At 1.0 → `1×`.
+             * During hold → `2×`. If some other process nudged speed off
+             * and forgot to reset (looking at you, drift sync), the
+             * non-1 value will show up here as a visible indicator. */
+            (() => {
+              const s = pb.speed || 1
+              return `${Number.isInteger(s) ? s : s.toFixed(2)}×`
+            })()
+          }
         </button>
       </div>
 
