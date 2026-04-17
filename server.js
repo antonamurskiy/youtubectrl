@@ -4285,41 +4285,37 @@ function startWsSync() {
           if (!onSubProxy && subProxyAnchor) subProxyAnchor = null;
           const dvrActive = onSubProxy;
 
-          // ── Unified playback anchor ────────────────────────────────
-          // For phone-sync stability (and a smooth scrubber), we need
-          // mpv's "user PDT" (wall-clock of the frame mpv shows) to
-          // advance smoothly at 1x. Computing it per-tick from
-          // `reportedDur - timePos` is noisy: mpv's cache grows in 5s
-          // chunks but timePos advances smoothly, so the derived
-          // behindLive bounces ~5s up then decays. Phone sync chases
-          // every bounce and never stabilizes.
+          // ── Stable user PDT ──────────────────────────────────────
+          // Two anchor systems, one per proxy mode:
           //
-          // Fix: at a moment when we can trust the math (steady state,
-          // cache populated), capture ONE anchor:
-          //     userPdtAtAnchor = liveEdge_then - (reportedDur - timePos) * 1000
-          //     mpvPosAtAnchor  = timePos
-          // From then on:
-          //     user_pdt_now = userPdtAtAnchor + (mpv_pos_now - mpvPosAtAnchor) * 1000
-          // Playback at 1x → smooth. Pause → user_pdt stays put (correct).
-          if (isHls && (onLiveProxy || onSubProxy) && lastManifestEdgeEpochMs && lastManifestFetchedAt
+          //   Live proxy → `playbackAnchor`. Captured at steady state
+          //     from cache offset. Use for smooth PDT advance at 1x
+          //     during live playback.
+          //
+          //   Sub proxy → `subProxyAnchor` (set at /api/seek time with
+          //     the user's INTENDED behindLive). Do NOT use cache-offset
+          //     math here — it'd put the user at live edge even though
+          //     they just scrubbed 2h back.
+          //
+          // MPV_DISPLAY_LAG_MS corrects for ffmpeg's internal buffer
+          // offset (mpv's cache-end is ~N seconds behind real live edge
+          // as a safety margin). N varies per stream. syncOffsetMs
+          // tunes further via the UI.
+          const MPV_DISPLAY_LAG_MS = 1500;
+          if (isHls && onLiveProxy && lastManifestEdgeEpochMs && lastManifestFetchedAt
               && reportedDur > 5 && timePos > 1
               && (!playbackAnchor || playbackAnchor.path !== mpvPath?.data)) {
             const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
             const behindNow = Math.max(0, reportedDur - timePos);
-            // Phone reads ~2s ahead of mpv physically. Phone sync logic
-            // compares phone.currentDate to our reported mpv_pdt and
-            // seeks phone BACKWARD if phone is ahead. So to make them
-            // match physically, report mpv_pdt as EARLIER than the
-            // cache-based calc (shift LEFT) so phone's backward-seek
-            // lands on an older frame = where mpv actually is.
-            const MPV_DISPLAY_LAG_MS = 1500;
             playbackAnchor = {
               path: mpvPath.data,
               mpvPosAtAnchor: timePos,
               userPdtAtAnchor: liveEdgeNow - behindNow * 1000 - MPV_DISPLAY_LAG_MS,
             };
           }
-          if (!onLiveProxy && !onSubProxy && playbackAnchor) playbackAnchor = null;
+          // Invalidate playbackAnchor when mpv is no longer on the live
+          // proxy (swapped to sub-proxy or something else).
+          if (playbackAnchor && !onLiveProxy) playbackAnchor = null;
 
           // ── Scrubber position ────────────────────────────────────
           let scrubPos = timePos;
@@ -4328,17 +4324,19 @@ function startWsSync() {
           if (isHls && lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
             const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
-            if (playbackAnchor) {
+            if (onLiveProxy && playbackAnchor) {
               userPdt = playbackAnchor.userPdtAtAnchor + (timePos - playbackAnchor.mpvPosAtAnchor) * 1000;
             } else if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null && liveEdgeNow) {
-              // Fallback during initial sub-proxy transition before
-              // playbackAnchor is set.
+              // User scrubbed back; use the INTENDED behindLive from
+              // the seek, adjusted for wall-elapsed vs play-elapsed
+              // (pause widens it, 1x playback keeps it constant).
               const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
               const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
               const behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
-              userPdt = liveEdgeNow - behindLive * 1000;
+              userPdt = liveEdgeNow - behindLive * 1000 - MPV_DISPLAY_LAG_MS;
             } else if (liveEdgeNow) {
-              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000;
+              // Transient fallback before any anchor is established.
+              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - MPV_DISPLAY_LAG_MS;
             }
             if (userPdt != null && liveEdgeNow) {
               const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
