@@ -39,8 +39,8 @@ function SyncOffsetSlider() {
       <input
         className="sync-offset-slider"
         type="range"
-        min="-3000"
-        max="3000"
+        min="-8000"
+        max="8000"
         step="100"
         value={ms}
         onChange={onChange}
