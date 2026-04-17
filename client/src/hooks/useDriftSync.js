@@ -113,12 +113,10 @@ function syncVod(pb, video, phonePos, send, sync) {
       video.currentTime = mpvNow
     }
     useSyncStore.getState().setSettling(Date.now() + 3000)
-  } else if (Math.abs(drift) > 0.5) {
-    // Proportional mpv speed control — nudge mpv closer to phone rather
-    // than forcing phone to catch up (AVPlayer is the reliable clock).
-    const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.05))
-    send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
-  } else {
-    send({ type: 'mpv-speed', speed: 1.0 })
   }
+  // Previously nudged mpv's `speed` (0.95-1.05 range) for drifts 0.5-5s.
+  // Removed — if the sync exits via an unexpected path (component
+  // unmount, network flap), mpv's speed gets stuck at non-1.0, causing
+  // audible A/V desync on subsequent playback. Hard-seek handles big
+  // drifts; sub-second drifts aren't worth the risk.
 }

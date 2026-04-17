@@ -1690,12 +1690,17 @@ app.post("/api/play", async (req, res) => {
         } catch {}
         // Stop progress tracking BEFORE switching videos
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-        // Load new video + reset state in parallel
+        // Load new video + reset state in parallel. Resetting speed to
+        // 1.0 is critical — phone-sync's syncVod can leave speed at
+        // 0.95-1.05 when drift oscillates, and if sync exits via an
+        // unexpected path the mpv process keeps that speed across
+        // subsequent playback → audible A/V desync.
         await Promise.all([
           mpvCommand(["loadfile", playUrl, "replace"]),
           mpvCommand(["set_property", "pause", false]).catch(() => {}),
           mpvCommand(["set_property", "mute", false]).catch(() => {}),
           mpvCommand(["set_property", "vid", "auto"]).catch(() => {}),
+          mpvCommand(["set_property", "speed", 1.0]).catch(() => {}),
         ]);
         // Unhide in background (don't await)
         execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true'], () => {});
@@ -2074,6 +2079,8 @@ app.post("/api/seek", async (req, res) => {
       const fromSeq = await resolveBehindToFromSeq(Math.ceil(behindLive) + 10);
       const subUrl = `http://localhost:3000/api/hls-sub.m3u8?from_seq=${fromSeq}`;
       await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
+      // Reset speed in case syncVod left it off-1.0 before this scrub.
+      await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
       if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
       // Poll for mpv's time-pos in the new file; stop as soon as we see
       // it has a value (mpv just started playing). Anchor wallMs and
@@ -2394,6 +2401,7 @@ app.post("/api/go-live", async (_req, res) => {
     }
     const wasPaused = await mpvCommand(["get_property", "pause"]);
     await mpvCommand(["loadfile", "http://localhost:3000/api/hls-live.m3u8", "replace"]);
+    await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
     if (!wasPaused?.data) await mpvCommand(["set_property", "pause", false]);
     res.json({ ok: true });
   } catch (err) {
