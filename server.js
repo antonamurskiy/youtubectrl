@@ -4420,6 +4420,7 @@ function startWsSync() {
             videoCodec: _mpvVideoInfoCache.videoCodec,
             hwdec: _mpvVideoInfoCache.hwdec,
             speed: speedR?.data ?? 1,
+            syncOffsetMs,
           };
         } catch {
           state = { type: "playback", playing: false };

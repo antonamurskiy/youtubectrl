@@ -40,6 +40,9 @@ export default function PhonePlayer({ send }) {
   // amount (HLS segment granularity + buffering). We learn the offset
   // post-seek and fold it into subsequent seeks so drift converges to 0.
   const seekBiasRef = useRef(0)
+  // Last-seen syncOffsetMs from server — used to detect slider changes
+  // and reset calibration state so bias doesn't conflict with new target.
+  const lastSyncOffsetRef = useRef(null)
   // One-shot per seek: true right after a seek, cleared once we've
   // folded the post-seek drift into seekBiasRef. Prevents the bias from
   // growing unboundedly when drift is stable between seeks.
@@ -371,6 +374,22 @@ export default function PhonePlayer({ send }) {
       const pb = usePlaybackStore.getState()
       // Always show debug status
       setDrift(`t${tick} v:${!!video} ct:${video?.currentTime?.toFixed(0)||'?'} p:${pb.playing} l:${pb.isLive} h:${!!hlsRef.current}`)
+
+      // Sync offset changed via the slider → the reported mpv_pdt just
+      // jumped by (newOffset - oldOffset) ms, which would otherwise
+      // trigger phone's "big drift detected" panic seek with the
+      // current seekBiasRef (calibrated for the old offset). Reset
+      // calibration state so the system re-converges on the new target
+      // without bias interference.
+      if (lastSyncOffsetRef.current !== pb.syncOffsetMs) {
+        if (lastSyncOffsetRef.current !== null) {
+          driftSamplesRef.current = []
+          seekBiasRef.current = 0
+          calibPendingRef.current = false
+          lastSeekRef.current = 0
+        }
+        lastSyncOffsetRef.current = pb.syncOffsetMs
+      }
 
       // Detect video switch on desktop — reload phone stream with full state reset
       if (pb.url && syncUrlRef.current && syncUrlRef.current !== pb.url) {

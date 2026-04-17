@@ -11,6 +11,7 @@ export const usePlaybackStore = create((set) => ({
   player: null, // 'mpv' | null
   speed: 1,
   absoluteMs: null,
+  syncOffsetMs: 0,
   title: '',
   channel: '',
   thumbnail: '',
