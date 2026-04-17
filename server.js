@@ -4349,10 +4349,15 @@ function startWsSync() {
               // User scrubbed back; use the INTENDED behindLive from
               // the seek, adjusted for wall-elapsed vs play-elapsed
               // (pause widens it, 1x playback keeps it constant).
+              // NOTE: MPV_DISPLAY_LAG_MS doesn't apply here — that
+              // correction was for live-proxy's cache-end vs real
+              // live-edge offset, which doesn't exist on sub-proxy
+              // where mpv plays directly from a specific segment.
+              // Phone compensates separately via the syncOffsetMs UI.
               const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
               const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
               const behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
-              userPdt = liveEdgeNow - behindLive * 1000 - MPV_DISPLAY_LAG_MS;
+              userPdt = liveEdgeNow - behindLive * 1000;
             } else if (liveEdgeNow) {
               // Transient fallback before any anchor is established.
               userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - MPV_DISPLAY_LAG_MS;
