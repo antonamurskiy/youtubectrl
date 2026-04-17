@@ -4306,17 +4306,17 @@ function startWsSync() {
               && (!playbackAnchor || playbackAnchor.path !== mpvPath?.data)) {
             const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
             const behindNow = Math.max(0, reportedDur - timePos);
-            // Empirically mpv's cache-end ≈ live_edge - ~2s (ffmpeg pulls
-            // from a few segments behind the real edge as its live-start
-            // buffer). Without this correction, phone consistently reads
-            // ~2s ahead of our reported mpv_pdt. Add 2s to userPdtAtAnchor
-            // so the frame we claim mpv is showing matches what phone
-            // sees on its synced AVPlayer.
-            const MPV_CACHE_LAG_MS = 2000;
+            // Phone reads ~2s ahead of mpv physically. Phone sync logic
+            // compares phone.currentDate to our reported mpv_pdt and
+            // seeks phone BACKWARD if phone is ahead. So to make them
+            // match physically, report mpv_pdt as EARLIER than the
+            // cache-based calc (shift LEFT) so phone's backward-seek
+            // lands on an older frame = where mpv actually is.
+            const MPV_DISPLAY_LAG_MS = 2000;
             playbackAnchor = {
               path: mpvPath.data,
               mpvPosAtAnchor: timePos,
-              userPdtAtAnchor: liveEdgeNow - behindNow * 1000 + MPV_CACHE_LAG_MS,
+              userPdtAtAnchor: liveEdgeNow - behindNow * 1000 - MPV_DISPLAY_LAG_MS,
             };
           }
           if (!onLiveProxy && !onSubProxy && playbackAnchor) playbackAnchor = null;
