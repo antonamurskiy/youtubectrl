@@ -526,10 +526,26 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    already playing a live stream when the server restarts, we
    re-resolve and re-track. Without this, server restart leaves
    `mpvPdtEpochMs=0` until the user triggers `/api/play` again.
-6. **Broadcast**: in the `/ws/sync` playback tick for mpv-live,
-   `absoluteMs = mpvPdtEpochMs + mpv.time-pos * 1000 + syncOffsetMs`
-   — this is the *demux* PDT (mpv's internal decode position).
-   Also sends `phoneSyncOk: true` when absoluteMs is available.
+6. **Broadcast (CURRENT, post-DVR rewrite)**: in the `/ws/sync`
+   playback tick for mpv on the live/sub proxy:
+   ```
+   liveEdgeNow   = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt)
+   behindLiveSec = (live proxy)  mpvDur - timePos
+                 | (sub proxy)   anchor.behindLive + (wallElapsed - playElapsed)
+   absoluteMs    = liveEdgeNow - behindLiveSec * 1000 + syncOffsetMs
+   ```
+   This gives the wall-clock PDT of the frame mpv is currently showing
+   (what the phone's `AVPlayerItem.currentDate()` also reports).
+   `phoneSyncOk: true` when we have valid manifest-edge stats.
+
+   **Do NOT use `mpvPdtEpochMs + timePos * 1000` here.** That formula
+   worked when mpv was on the VOD+ENDLIST proxy (timePos was absolute
+   PTS), but with the current live/sub proxies, timePos is local to
+   mpv's cache, not the stream epoch. Empirically wrong by many hours
+   for long-running streams (PTS wrap interaction).
+
+   `mpvPdtEpochMs` is still captured by `startMpvPdtTracking` for
+   potential debugging use but nothing actively reads it for sync.
 
 #### Data flow (native plugin, `NativePlayerPlugin.swift`)
 

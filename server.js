@@ -4271,43 +4271,47 @@ function startWsSync() {
             })();
           }
           _lastPolledPaused = paused;
-          // Prefer mpv's reported duration; fall back to cached history duration (unused comment)
-          // (mpv returns null while loading — don't broadcast 0 or it resets phone UI)
           const histDur = historyMap.get(nowPlaying)?.duration || 0;
           const reportedDur = dur?.data || 0;
-          // For mpv live HLS: compute absoluteMs so the phone can PDT-sync.
-          // mpv's time-pos for HLS is in the segment PTS domain (same as
-          // VLC's get_time), so the same stream-epoch → wall-clock formula
-          // applies: absoluteMs = epoch + timePos*1000.
           const timePos = pos?.data || 0;
-          let mpvAbsoluteMs = null;
-          if (isHls && mpvPdtEpochMs && timePos > 0) {
-            mpvAbsoluteMs = mpvPdtEpochMs + timePos * 1000 + syncOffsetMs;
-          }
           const onLiveProxy = !!(mpvPath?.data?.includes("/api/hls-live.m3u8"));
           const onSubProxy = !!(mpvPath?.data?.includes("/api/hls-sub.m3u8"));
           if (!onSubProxy && subProxyAnchor) subProxyAnchor = null;
           const dvrActive = onSubProxy;
-          // Scrubber shows the full YouTube DVR window always.
-          // - Live proxy: mpv's tiny cache at live edge → thumb near right.
-          //   behindLive = mpvDur - timePos (small, ≤ ~20s).
-          // - Sub proxy: anchored behind-live at seek time. Playing at 1x
-          //   means behindLive stays constant (live edge + user both
-          //   advance 1x). Paused means behindLive grows (live moves, we
-          //   don't). Compute: anchor.behindLive + (wall_elapsed - play_elapsed).
+          // Scrubber + phone-sync position both derive from `behindLive`,
+          // which is seconds behind YouTube's real live edge.
+          //   Live proxy: behindLive = mpvDur - timePos (small cache offset).
+          //   Sub proxy: anchored behindLive + (wall_elapsed - play_elapsed),
+          //     so at 1x playback it stays constant, paused it grows.
           let scrubPos = timePos;
           let scrubDur = reportedDur > 0 ? reportedDur : histDur;
+          let behindLiveSec = null;
           if (isHls && lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
-            let behindLive;
             if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null) {
               const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
               const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
-              behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
+              behindLiveSec = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
             } else {
-              behindLive = Math.max(0, reportedDur - timePos);
+              behindLiveSec = Math.max(0, reportedDur - timePos);
             }
-            scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLive));
+            scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
+          }
+          // Phone PDT sync: compute the wall-clock time of the content mpv
+          // is currently showing. Phone's AVPlayerItem.currentDate() gives
+          // the same thing on its side, so drift = mpv_pdt - phone_pdt.
+          //
+          //   Live proxy: mpv_pdt = liveEdge_now - behindLiveSec.
+          //   Sub proxy: same formula using the anchor-derived behindLiveSec.
+          //
+          // Do NOT use `mpvPdtEpochMs + timePos*1000` here — that worked
+          // when mpv was on the VOD+ENDLIST proxy (timePos was absolute
+          // PTS), but on the live/sub proxies timePos is local to mpv's
+          // cache, not the stream epoch. Empirically off by 30+ hours.
+          let mpvAbsoluteMs = null;
+          if (isHls && behindLiveSec != null && lastManifestEdgeEpochMs && lastManifestFetchedAt) {
+            const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
+            mpvAbsoluteMs = liveEdgeNow - behindLiveSec * 1000 + syncOffsetMs;
           }
           state = {
             type: "playback",
