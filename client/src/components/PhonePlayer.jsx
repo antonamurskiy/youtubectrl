@@ -544,10 +544,12 @@ export default function PhonePlayer({ send }) {
             }
 
             // Force a seek right after calibration so the newly-learned
-            // bias actually applies. Otherwise |drift|>0.5 is needed
-            // which leaves the system stuck at whatever residual was
-            // first learned.
-            const shouldSeek = (calibrated || Math.abs(smoothed) > 0.5) && sinceLastSeek > 2500
+            // bias actually applies. Also fire when drift grows beyond
+            // 0.2s even without calibration — otherwise the system can
+            // settle at a 0.3s residual forever because that's below
+            // the old 0.5s trigger but above the 0.05s calibration
+            // floor, so seekBias never updates.
+            const shouldSeek = (calibrated || Math.abs(smoothed) > 0.2) && sinceLastSeek > 2500
             if (tick % 3 === 0 || shouldSeek || calibrated) {
               logTick({
                 state: 'drift',
