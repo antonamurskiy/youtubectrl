@@ -27,7 +27,19 @@ let historyMap = new Map(); // url -> entry for O(1) lookup
 try {
   if (fs.existsSync(HISTORY_FILE)) {
     history = JSON.parse(fs.readFileSync(HISTORY_FILE, "utf8"));
-    for (const h of history) historyMap.set(h.url, h);
+    // Scrub poisoned titles (proxy filenames written during live playback)
+    let scrubbed = 0;
+    for (const h of history) {
+      if (typeof h.title === "string" && /\.m3u8($|\?)/.test(h.title)) {
+        h.title = "";
+        scrubbed++;
+      }
+      historyMap.set(h.url, h);
+    }
+    if (scrubbed > 0) {
+      console.log(`Scrubbed ${scrubbed} poisoned history titles`);
+      fs.writeFileSync(HISTORY_FILE, JSON.stringify(history, null, 2));
+    }
   }
 } catch (err) { console.error("Failed to load history:", err.message); }
 
@@ -4411,7 +4423,10 @@ function startWsSync() {
             phoneSyncOk: !isHls || !!mpvAbsoluteMs,
             absoluteMs: mpvAbsoluteMs,
             url: nowPlaying, serverTs: Date.now(),
-            title: historyMap.get(nowPlaying)?.title || "",
+            title: (() => {
+              const t = historyMap.get(nowPlaying)?.title || "";
+              return /\.m3u8($|\?)/.test(t) ? "" : t;
+            })(),
             channel: historyMap.get(nowPlaying)?.channel || "",
             thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
             monitor: currentMonitor, windowMode: windowMode || "floating",
@@ -4504,13 +4519,19 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           const onScreen = screens.find(s => wx >= s.x && wx < s.x + s.w);
           currentMonitor = (onScreen?.isLaptop) ? "laptop" : "lg";
         } catch {}
-        // Update title from mpv if missing in history
+        // Update title from mpv if missing in history — but only when
+        // the media-title is a real title, not one of our proxy
+        // pathnames. For live streams mpv's media-title is whatever
+        // URL segment comes through (e.g. "hls-live.m3u8") which
+        // would poison history.
         try {
           const t = await mpvCommand(["get_property", "media-title"]);
-          if (t?.data) {
+          const title = t?.data;
+          const looksLikeProxy = typeof title === "string" && /\.m3u8($|\?)/.test(title);
+          if (title && !looksLikeProxy) {
             const entry = historyMap.get(nowPlaying);
-            if (entry && (!entry.title || entry.title === '')) { entry.title = t.data; saveHistory(); }
-            if (!entry) addToHistory(nowPlaying, t.data, "");
+            if (entry && (!entry.title || entry.title === '')) { entry.title = title; saveHistory(); }
+            if (!entry) addToHistory(nowPlaying, title, "");
           }
         } catch {}
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode, "monitor:", currentMonitor);
