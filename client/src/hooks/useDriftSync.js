@@ -7,6 +7,7 @@ import { isNativeIOS, NativePlayer } from '../native/player'
 // to await on every drift check.
 let _nativePos = 0
 let _nativePosAt = 0
+let _lastVodSeek = 0
 
 function nativePosNow() {
   // Interpolate from last poll assuming rate=1
@@ -101,22 +102,22 @@ function syncVod(pb, video, phonePos, send, sync) {
     else if (!pb.paused && video.paused) video.play().catch(() => {})
   }
 
-  if (Math.abs(drift) > 5) {
-    // Large drift: hard seek phone to mpv's *current* position
+  // VOD sync is hard-seek only — rate-nudging destabilizes the system
+  // (AVPlayer + mpv oscillate, never converge). Threshold is 0.2s with
+  // a 5s cooldown to avoid thrashing the decoder. Add +0.5s seek-latency
+  // compensation so the phone lands near where mpv will be once the
+  // seek completes (rather than where mpv was when we started seeking).
+  const now = Date.now()
+  if (Math.abs(drift) > 0.2 && (now - _lastVodSeek) > 5000) {
+    _lastVodSeek = now
+    const target = mpvNow + 0.5
     if (isNativeIOS) {
-      NativePlayer.seek(mpvNow).catch(() => {})
-      _nativePos = mpvNow
+      NativePlayer.seek(target).catch(() => {})
+      _nativePos = target
       _nativePosAt = Date.now()
     } else if (video) {
-      video.currentTime = mpvNow
+      video.currentTime = target
     }
-    useSyncStore.getState().setSettling(Date.now() + 3000)
+    useSyncStore.getState().setSettling(Date.now() + 2000)
   }
-  // Rate-nudging removed: tried it with 0.9-1.1 clamp + 1s throttle,
-  // still destabilized VOD sync. The small drift (<5s) we leave alone —
-  // AVPlayer and mpv both run at 1x, they don't accumulate drift fast
-  // enough to matter within a single view, and the hard-seek path above
-  // catches anything worse than that. The 2× button on NowPlayingBar
-  // still displays mpv's live speed; if anything else leaves mpv stuck
-  // off-1x, it's visible there.
 }
