@@ -173,6 +173,7 @@ app.get("/api/_debug/sync", (_req, res) => {
     manifestStatsAgeMs: lastManifestFetchedAt ? Date.now() - lastManifestFetchedAt : null,
     subProxyAnchor,
     subProxyAnchorAgeMs: subProxyAnchor ? Date.now() - subProxyAnchor.wallMs : null,
+    playbackAnchor,
   });
 });
 
@@ -1648,6 +1649,7 @@ app.post("/api/play", async (req, res) => {
         currentLiveHlsUrl = stdout.trim();
       } catch {}
       subProxyAnchor = null;
+      playbackAnchor = null;
       // Kick off mpv PDT tracking so the phone can sync frame-accurately.
       startMpvPdtTracking(currentLiveHlsUrl);
       // Prime manifest stats immediately so /api/seek knows the DVR
@@ -2617,10 +2619,14 @@ function startMpvPdtTracking(hlsUrl) {
 
 let manifestStatsRefresh = null;
 // When user seeks back to a sub-proxy window, we anchor "how far behind
-// live they wanted to be" + wall-clock at seek time. The WS broadcast
-// computes effective behindLive dynamically, which keeps the scrubber
-// thumb correct when user plays at 1x (stays put) or pauses (drifts left).
+// live they wanted to be" + wall-clock at seek time. Used for scrubber
+// math during the brief transition before `playbackAnchor` takes over.
 let subProxyAnchor = null;
+// Unified smooth anchor for phone-sync + scrubber. Captures user's PDT
+// at a stable moment; user_pdt advances from there via mpv time-pos
+// delta. Stable regardless of mpv cache growth noise.
+// Invalidated on mpv path change (new loadfile).
+let playbackAnchor = null;
 
 function stopMpvPdtTracking() {
   if (mpvPdtRefreshInterval) { clearInterval(mpvPdtRefreshInterval); mpvPdtRefreshInterval = null; }
@@ -4278,41 +4284,66 @@ function startWsSync() {
           const onSubProxy = !!(mpvPath?.data?.includes("/api/hls-sub.m3u8"));
           if (!onSubProxy && subProxyAnchor) subProxyAnchor = null;
           const dvrActive = onSubProxy;
-          // Scrubber + phone-sync position both derive from `behindLive`,
-          // which is seconds behind YouTube's real live edge.
-          //   Live proxy: behindLive = mpvDur - timePos (small cache offset).
-          //   Sub proxy: anchored behindLive + (wall_elapsed - play_elapsed),
-          //     so at 1x playback it stays constant, paused it grows.
+
+          // ── Unified playback anchor ────────────────────────────────
+          // For phone-sync stability (and a smooth scrubber), we need
+          // mpv's "user PDT" (wall-clock of the frame mpv shows) to
+          // advance smoothly at 1x. Computing it per-tick from
+          // `reportedDur - timePos` is noisy: mpv's cache grows in 5s
+          // chunks but timePos advances smoothly, so the derived
+          // behindLive bounces ~5s up then decays. Phone sync chases
+          // every bounce and never stabilizes.
+          //
+          // Fix: at a moment when we can trust the math (steady state,
+          // cache populated), capture ONE anchor:
+          //     userPdtAtAnchor = liveEdge_then - (reportedDur - timePos) * 1000
+          //     mpvPosAtAnchor  = timePos
+          // From then on:
+          //     user_pdt_now = userPdtAtAnchor + (mpv_pos_now - mpvPosAtAnchor) * 1000
+          // Playback at 1x → smooth. Pause → user_pdt stays put (correct).
+          if (isHls && (onLiveProxy || onSubProxy) && lastManifestEdgeEpochMs && lastManifestFetchedAt
+              && reportedDur > 5 && timePos > 1
+              && (!playbackAnchor || playbackAnchor.path !== mpvPath?.data)) {
+            const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
+            const behindNow = Math.max(0, reportedDur - timePos);
+            playbackAnchor = {
+              path: mpvPath.data,
+              mpvPosAtAnchor: timePos,
+              userPdtAtAnchor: liveEdgeNow - behindNow * 1000,
+            };
+          }
+          if (!onLiveProxy && !onSubProxy && playbackAnchor) playbackAnchor = null;
+
+          // ── Scrubber position ────────────────────────────────────
           let scrubPos = timePos;
           let scrubDur = reportedDur > 0 ? reportedDur : histDur;
-          let behindLiveSec = null;
+          let userPdt = null;
           if (isHls && lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
-            if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null) {
+            const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
+            if (playbackAnchor) {
+              userPdt = playbackAnchor.userPdtAtAnchor + (timePos - playbackAnchor.mpvPosAtAnchor) * 1000;
+            } else if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null && liveEdgeNow) {
+              // Fallback during initial sub-proxy transition before
+              // playbackAnchor is set.
               const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
               const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
-              behindLiveSec = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
-            } else {
-              behindLiveSec = Math.max(0, reportedDur - timePos);
+              const behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
+              userPdt = liveEdgeNow - behindLive * 1000;
+            } else if (liveEdgeNow) {
+              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000;
             }
-            scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
+            if (userPdt != null && liveEdgeNow) {
+              const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
+              scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
+            }
           }
-          // Phone PDT sync: compute the wall-clock time of the content mpv
-          // is currently showing. Phone's AVPlayerItem.currentDate() gives
-          // the same thing on its side, so drift = mpv_pdt - phone_pdt.
-          //
-          //   Live proxy: mpv_pdt = liveEdge_now - behindLiveSec.
-          //   Sub proxy: same formula using the anchor-derived behindLiveSec.
-          //
-          // Do NOT use `mpvPdtEpochMs + timePos*1000` here — that worked
-          // when mpv was on the VOD+ENDLIST proxy (timePos was absolute
-          // PTS), but on the live/sub proxies timePos is local to mpv's
-          // cache, not the stream epoch. Empirically off by 30+ hours.
-          let mpvAbsoluteMs = null;
-          if (isHls && behindLiveSec != null && lastManifestEdgeEpochMs && lastManifestFetchedAt) {
-            const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
-            mpvAbsoluteMs = liveEdgeNow - behindLiveSec * 1000 + syncOffsetMs;
-          }
+
+          // ── Phone PDT sync ───────────────────────────────────────
+          // absoluteMs = wall-clock of the content frame mpv is showing.
+          // Phone's AVPlayerItem.currentDate() returns the same for the
+          // frame it's showing. drift = mpv_pdt - phone_pdt.
+          const mpvAbsoluteMs = userPdt != null ? userPdt + syncOffsetMs : null;
           state = {
             type: "playback",
             playing: true, isLive: isHls, player: "mpv",
