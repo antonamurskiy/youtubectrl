@@ -3,8 +3,6 @@ import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import { isNativeIOS, NativePlayer } from '../native/player'
 
-let _lastRateSend = 0
-
 // Native AVPlayer position cache — polled separately so sync doesn't have
 // to await on every drift check.
 let _nativePos = 0
@@ -113,29 +111,12 @@ function syncVod(pb, video, phonePos, send, sync) {
       video.currentTime = mpvNow
     }
     useSyncStore.getState().setSettling(Date.now() + 3000)
-  } else if (Math.abs(drift) > 0.5) {
-    // Medium drift: nudge mpv's playback rate to converge on phone.
-    // AVPlayer is the more reliable clock (can't easily rate-adjust),
-    // so we move mpv toward phone rather than the other way around.
-    //
-    // Throttled to 1x/sec to avoid thrashing, and only when drift is
-    // >500ms so we don't fight within the jitter floor. The rate
-    // button in NowPlayingBar displays mpv's current speed live, so
-    // stuck-rate bugs are glanceable — if you see anything other than
-    // 1× when drift is low, something's wrong.
-    const now = Date.now()
-    if (now - _lastRateSend > 1000) {
-      _lastRateSend = now
-      const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.05))
-      send({ type: 'mpv-speed', speed: +rate.toFixed(4) })
-    }
-  } else {
-    // Small drift (< 0.5s): ensure we're back at 1× if a prior nudge
-    // left us off. Throttled to avoid spamming when drift is stable.
-    const now = Date.now()
-    if (now - _lastRateSend > 1000) {
-      _lastRateSend = now
-      send({ type: 'mpv-speed', speed: 1.0 })
-    }
   }
+  // Rate-nudging removed: tried it with 0.9-1.1 clamp + 1s throttle,
+  // still destabilized VOD sync. The small drift (<5s) we leave alone —
+  // AVPlayer and mpv both run at 1x, they don't accumulate drift fast
+  // enough to matter within a single view, and the hard-seek path above
+  // catches anything worse than that. The 2× button on NowPlayingBar
+  // still displays mpv's live speed; if anything else leaves mpv stuck
+  // off-1x, it's visible there.
 }
