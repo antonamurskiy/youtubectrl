@@ -476,6 +476,17 @@ export default function PhonePlayer({ send }) {
             // and phone's displayed frame. Positive = phone behind mpv.
             const mpvPdt = pb.absoluteMs + elapsed
             const drift = (mpvPdt - phonePdt) / 1000
+            // Filter bogus readings: phone's AVPlayer returns stale or
+            // zero currentDate while the HLS stream is still loading,
+            // which makes drift look like 100s-3000s+. Those values
+            // break the EMA and the calibration logic. Drop anything
+            // >30s as "phone not ready yet".
+            if (Math.abs(drift) > 30) {
+              setDrift(`live (loading, raw drift ${drift.toFixed(0)}s)`)
+              send({ type: 'phone-state', drift: 0 })
+              if (tick % 5 === 0) logTick({ state: 'loading', rawDrift: drift })
+              return
+            }
             // Seek target: add seekBiasRef (self-calibrated from past
             // undershoots) plus an audio-lead so phone visibly leads mpv
             // demux enough to match Mac speaker output.
