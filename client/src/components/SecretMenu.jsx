@@ -9,103 +9,42 @@ import { tick as hapticTick, thump as hapticThump, selection as hapticSelection,
 const MIN_SIZE = 9
 const MAX_SIZE = 20
 
-// Phone sync offset slider. The MPV_DISPLAY_LAG we subtract from
-// reported mpv_pdt has a stream-dependent component (depends on
-// mpv's internal buffer behavior per bitrate/cache). Auto-calibration
-// is impossible from available signals — phone's observed drift
-// converges to 0 by construction, so no error signal to learn from.
-// Manual slider is the pragmatic fix. Persisted server-side to
-// `.sync-offset.json` and restored on server start.
-const SYNC_OFFSET_MIN = -3000
-const SYNC_OFFSET_MAX = 3000
-const SYNC_OFFSET_STEP = 100
+// Phone sync offset slider. Uses native <input type=range> for
+// bulletproof touch handling. Persisted server-side to
+// `.sync-offset.json`.
 function SyncOffsetSlider() {
   const [ms, setMs] = useState(null)
-  const ref = useRef(null)
-  const draggingRef = useRef(false)
-  const latestRef = useRef(ms)
-  latestRef.current = ms
-
   useEffect(() => {
-    fetch('/api/sync-offset').then(r => r.json()).then(d => setMs(d.ms || 0)).catch(() => setMs(0))
+    fetch('/api/sync-offset').then(r => r.json()).then(d => setMs(d.ms ?? 0)).catch(() => setMs(0))
   }, [])
-
-  const post = useCallback((v) => {
+  const onChange = (e) => {
+    const v = parseInt(e.target.value, 10)
+    setMs(v)
+    hapticSelection()
     fetch('/api/sync-offset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ms: v }),
     }).catch(() => {})
-  }, [])
-
-  const update = useCallback((clientX) => {
-    const el = ref.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    if (rect.width <= 0) return
-    const x = Math.max(0, Math.min(clientX - rect.left, rect.width))
-    const pct = x / rect.width
-    const raw = SYNC_OFFSET_MIN + pct * (SYNC_OFFSET_MAX - SYNC_OFFSET_MIN)
-    const snapped = Math.round(raw / SYNC_OFFSET_STEP) * SYNC_OFFSET_STEP
-    if (snapped !== latestRef.current) {
-      setMs(snapped)
-      hapticSelection()
-      post(snapped)
-    }
-  }, [post])
-
-  useEffect(() => {
-    const el = ref.current
-    if (!el) return
-    const onTouchStart = (e) => {
-      if (!e.touches || e.touches.length === 0) return
-      e.preventDefault()
-      draggingRef.current = true
-      hapticSelectionStart()
-      update(e.touches[0].clientX)
-    }
-    const onTouchMove = (e) => {
-      if (!draggingRef.current || !e.touches || e.touches.length === 0) return
-      e.preventDefault()
-      update(e.touches[0].clientX)
-    }
-    const onTouchEnd = () => {
-      setTimeout(() => { draggingRef.current = false }, 50)
-      hapticSelectionEnd()
-    }
-    const onMouseDown = (e) => {
-      draggingRef.current = true
-      update(e.clientX)
-      const move = (ev) => { if (draggingRef.current) update(ev.clientX) }
-      const up = () => {
-        setTimeout(() => { draggingRef.current = false }, 50)
-        window.removeEventListener('mousemove', move)
-        window.removeEventListener('mouseup', up)
-      }
-      window.addEventListener('mousemove', move)
-      window.addEventListener('mouseup', up)
-    }
-    el.addEventListener('touchstart', onTouchStart, { passive: false })
-    el.addEventListener('touchmove', onTouchMove, { passive: false })
-    el.addEventListener('touchend', onTouchEnd)
-    el.addEventListener('touchcancel', onTouchEnd)
-    el.addEventListener('mousedown', onMouseDown)
-    return () => {
-      el.removeEventListener('touchstart', onTouchStart)
-      el.removeEventListener('touchmove', onTouchMove)
-      el.removeEventListener('touchend', onTouchEnd)
-      el.removeEventListener('touchcancel', onTouchEnd)
-      el.removeEventListener('mousedown', onMouseDown)
-    }
-  }, [update])
-
+  }
   if (ms == null) return null
-  const pct = ((ms - SYNC_OFFSET_MIN) / (SYNC_OFFSET_MAX - SYNC_OFFSET_MIN)) * 100
-  const label = `Sync ${ms > 0 ? '+' : ''}${ms}ms`
   return (
-    <div className="secret-menu-item size-area" ref={ref}>
-      <div className="size-fill" style={{ width: `${pct}%` }} />
-      <div className="size-label">{label}</div>
+    <div className="sync-offset-row">
+      <div className="sync-offset-label">
+        <span>Sync</span>
+        <span style={{ color: ms === 0 ? 'var(--text-dim)' : 'var(--text)' }}>
+          {ms > 0 ? '+' : ''}{ms}ms
+        </span>
+      </div>
+      <input
+        className="sync-offset-slider"
+        type="range"
+        min="-3000"
+        max="3000"
+        step="100"
+        value={ms}
+        onChange={onChange}
+      />
     </div>
   )
 }

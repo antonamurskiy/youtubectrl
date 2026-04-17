@@ -1023,6 +1023,49 @@ body {
   background-size: 2px 2px, 2px 2px, 100% 100% !important;
 }
 
+/* ── Sync offset slider ── */
+.sync-offset-row {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.sync-offset-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--font-lg);
+  color: var(--text);
+}
+.sync-offset-slider {
+  width: 100%;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: var(--surface-hover);
+  outline: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.sync-offset-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  background: var(--text);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+.sync-offset-slider::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  background: var(--text);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+}
+
 /* ── Font size scrubber (matches timeline scrubber) ── */
 .size-area {
   position: relative;
