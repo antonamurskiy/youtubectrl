@@ -49,7 +49,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
         brightCyan: v('--cyan'),
         brightWhite: v('--bright-white'),
       },
-      cursorBlink: true,
+      cursorBlink: false,
       allowProposedApi: true,
       scrollback: 1000,
     })
