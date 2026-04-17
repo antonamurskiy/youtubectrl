@@ -476,17 +476,6 @@ export default function PhonePlayer({ send }) {
             // and phone's displayed frame. Positive = phone behind mpv.
             const mpvPdt = pb.absoluteMs + elapsed
             const drift = (mpvPdt - phonePdt) / 1000
-            // Filter bogus readings: phone's AVPlayer returns stale or
-            // zero currentDate while the HLS stream is still loading,
-            // which makes drift look like 100s-3000s+. Those values
-            // break the EMA and the calibration logic. Drop anything
-            // >30s as "phone not ready yet".
-            if (Math.abs(drift) > 30) {
-              setDrift(`live (loading, raw drift ${drift.toFixed(0)}s)`)
-              send({ type: 'phone-state', drift: 0 })
-              if (tick % 5 === 0) logTick({ state: 'loading', rawDrift: drift })
-              return
-            }
             // Seek target: add seekBiasRef (self-calibrated from past
             // undershoots) plus an audio-lead so phone visibly leads mpv
             // demux enough to match Mac speaker output.
@@ -495,7 +484,14 @@ export default function PhonePlayer({ send }) {
             driftSamplesRef.current.push(drift)
             if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
             const smoothed = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
-            setDrift(`live drift: ${smoothed.toFixed(2)}s`)
+            // UI: show "syncing…" while drift is huge (initial
+            // calibration) or samples are unstable. Show actual value
+            // once we're in the steady-state range (<10s drift).
+            if (Math.abs(smoothed) > 10) {
+              setDrift('live: syncing…')
+            } else {
+              setDrift(`live drift: ${smoothed.toFixed(2)}s`)
+            }
             send({ type: 'phone-state', drift: +smoothed.toFixed(2), mpvPdt: Math.round(mpvPdt), phonePdt: Math.round(phonePdt) })
 
             const now = Date.now()
