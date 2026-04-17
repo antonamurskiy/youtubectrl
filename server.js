@@ -151,6 +151,26 @@ fs.watch(path.join(__dirname, "public"), { recursive: true }, () => { lastModifi
 fs.watch(path.join(__dirname, "server.js"), () => { lastModified = Date.now(); });
 app.get("/api/version", (_req, res) => res.json({ ts: lastModified }));
 
+app.post("/api/client-log", (req, res) => {
+  try {
+    const line = `[${new Date().toISOString()}] ${JSON.stringify(req.body || {})}\n`;
+    fs.appendFileSync("/tmp/ytctl-client.log", line);
+  } catch {}
+  res.json({ ok: true });
+});
+
+app.get("/api/_debug/sync", (_req, res) => {
+  res.json({
+    activePlayer,
+    nowPlaying,
+    lastVlcHlsUrl: lastVlcHlsUrl ? (lastVlcHlsUrl.slice(0, 80) + "...") : null,
+    mpvPdtEpochMs,
+    mpvPdtISO: mpvPdtEpochMs ? new Date(mpvPdtEpochMs).toISOString() : null,
+    mpvPdtRefreshActive: !!mpvPdtRefreshInterval,
+    vlcPdtEpochMs,
+  });
+});
+
 app.get("/api/audio-outputs", async (_req, res) => {
   try {
     const [allOut, curOut] = await Promise.all([
@@ -1426,8 +1446,15 @@ app.post("/api/play", async (req, res) => {
       } catch {}
       // Kill VLC if running — live streams now use mpv for precise time sync
       if (activePlayer === "vlc" && vlcProcess) { killVlc(); }
+      // Kick off mpv PDT tracking so the phone can sync frame-accurately
+      // via absoluteMs. Runs async; by the time mpv starts producing
+      // time-pos the epoch should be calibrated.
+      startMpvPdtTracking(lastVlcHlsUrl);
       // Fall through to mpv playback below
       isLive = false; // let mpv handle it as a regular stream
+    } else {
+      // Not live — tear down any live-sync machinery from a previous video.
+      stopMpvPdtTracking();
     }
 
     const savedEntry = historyMap.get(url);
@@ -1682,6 +1709,7 @@ app.post("/api/stop", async (_req, res) => {
   mpvProcess = null;
   nowPlaying = null;
   activePlayer = null;
+  stopMpvPdtTracking();
   res.json({ ok: true });
 });
 
@@ -2077,6 +2105,11 @@ app.get("/api/hls-seg", async (req, res) => {
 
 // VLC absolute time via HLS PDT — for phone sync
 let vlcPdtEpochMs = 0;
+// Stream-epoch wall-clock for the mpv live-HLS path. Same semantics as
+// vlcPdtEpochMs — the wall-clock of PTS=0 — but scoped to mpv so DVR
+// logic doesn't clobber it. Zero means "not calibrated / not live".
+let mpvPdtEpochMs = 0;
+let mpvPdtRefreshInterval = null;
 let syncOffsetMs = 0; // tunable offset for drift calibration (milliseconds)
 app.post("/api/sync-offset", (req, res) => { syncOffsetMs = (req.body.ms || 0); console.log("  Sync offset:", syncOffsetMs, "ms"); res.json({ ok: true, ms: syncOffsetMs }); });
 app.get("/api/sync-offset", (_req, res) => { res.json({ ms: syncOffsetMs }); });
@@ -2127,13 +2160,18 @@ async function fetchHead(url, bytes) {
   });
 }
 
-async function fetchPdtFromUrl(hlsUrl) {
+// Capture the PDT↔PTS mapping for an HLS stream. Returns the "stream epoch":
+// the wall-clock ms corresponding to stream PTS=0, so any player-reported
+// PTS-based position can be converted to absolute wall-clock via
+// `pdtEpochMs + positionSeconds * 1000`. Returns null if the manifest lacks
+// #EXT-X-PROGRAM-DATE-TIME or the fetch fails.
+async function capturePdtEpoch(hlsUrl, label = "PDT") {
   try {
     const manifest = await fetchManifest(hlsUrl);
     const lines = manifest.split('\n');
     const pdtMatch = manifest.match(/#EXT-X-PROGRAM-DATE-TIME:(.+)/);
     const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
-    if (!pdtMatch) return;
+    if (!pdtMatch) return null;
     const pdtMs = new Date(pdtMatch[1].trim()).getTime();
     const mediaSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
 
@@ -2148,27 +2186,60 @@ async function fetchPdtFromUrl(hlsUrl) {
 
     if (segUrl) {
       try {
-        // Fetch first 10KB of segment and extract PTS from MPEG-TS
         const segBuf = await fetchHead(segUrl, 10240);
         const segPts = extractFirstPts(segBuf);
         if (segPts !== null) {
-          // Precise mapping: segment's PDT corresponds to segment's PTS
-          // vlcPdtEpochMs = PDT_of_segment - PTS_of_segment (in ms)
-          // Then: vlcDisplayTime = vlcPdtEpochMs + vlcGetTime * 1000
-          vlcPdtEpochMs = pdtMs - segPts * 1000;
-          console.log(`  PDT (PTS): seq=${mediaSeq} segPTS=${segPts.toFixed(1)}s → streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
-          return;
+          // Precise: segment's PDT corresponds to its PTS. Stream epoch is
+          // the wall-clock of PTS=0: epoch = PDT_of_segment - PTS_of_segment.
+          const epochMs = pdtMs - segPts * 1000;
+          console.log(`  ${label} (PTS): seq=${mediaSeq} segPTS=${segPts.toFixed(1)}s → streamStart=${new Date(epochMs).toISOString()}`);
+          return epochMs;
         }
-      } catch (e) { console.error("  PTS extraction failed:", e.message); }
+      } catch (e) { console.error(`  ${label} PTS extraction failed:`, e.message); }
     }
 
-    // Fallback: imprecise avgSegDuration method
+    // Fallback: imprecise avg-segment-duration method.
     let totalDur = 0, count = 0;
     lines.filter(l => l.startsWith('#EXTINF')).forEach(l => { totalDur += parseFloat(l.split(':')[1]); count++; });
     const avgSeg = count > 0 ? totalDur / count : 5;
-    vlcPdtEpochMs = pdtMs - mediaSeq * avgSeg * 1000;
-    console.log(`  PDT (fallback): seq=${mediaSeq} avgSeg=${avgSeg.toFixed(1)}s → streamStart=${new Date(vlcPdtEpochMs).toISOString()}`);
-  } catch (e) { console.error("fetchPdt error:", e.message); }
+    const epochMs = pdtMs - mediaSeq * avgSeg * 1000;
+    console.log(`  ${label} (fallback): seq=${mediaSeq} avgSeg=${avgSeg.toFixed(1)}s → streamStart=${new Date(epochMs).toISOString()}`);
+    return epochMs;
+  } catch (e) {
+    console.error(`${label} error:`, e.message);
+    return null;
+  }
+}
+
+async function fetchPdtFromUrl(hlsUrl) {
+  const epoch = await capturePdtEpoch(hlsUrl, "VLC PDT");
+  if (epoch != null) vlcPdtEpochMs = epoch;
+}
+
+// Start PDT tracking for an mpv-hosted live stream. Calibrates mpvPdtEpochMs
+// once up front, then refreshes every 60s so long-running streams don't
+// accumulate drift from encoder clock skew or PDT re-anchors on the server.
+// The refresh reads the *current* lastVlcHlsUrl each cycle so a URL change
+// (e.g. /api/watch-on-phone re-resolving the stream) seamlessly retargets
+// the calibration instead of stopping the loop.
+function startMpvPdtTracking(hlsUrl) {
+  stopMpvPdtTracking();
+  if (!hlsUrl) return;
+  (async () => {
+    const epoch = await capturePdtEpoch(hlsUrl, "mpv PDT");
+    if (epoch != null) mpvPdtEpochMs = epoch;
+  })();
+  mpvPdtRefreshInterval = setInterval(async () => {
+    const currentUrl = lastVlcHlsUrl;
+    if (!currentUrl || !mpvProcess) { stopMpvPdtTracking(); return; }
+    const epoch = await capturePdtEpoch(currentUrl, "mpv PDT refresh");
+    if (epoch != null) mpvPdtEpochMs = epoch;
+  }, 60000);
+}
+
+function stopMpvPdtTracking() {
+  if (mpvPdtRefreshInterval) { clearInterval(mpvPdtRefreshInterval); mpvPdtRefreshInterval = null; }
+  mpvPdtEpochMs = 0;
 }
 app.get("/api/vlc-absolute-time", async (_req, res) => {
   if (activePlayer !== "vlc") return res.json({});
@@ -2228,6 +2299,7 @@ app.post("/api/switch-to-vlc", async (_req, res) => {
   // Kill mpv
   if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+  stopMpvPdtTracking();
   // Start VLC
   spawnVlc(lastVlcHlsUrl);
   activePlayer = "vlc";
@@ -2706,6 +2778,9 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     }
     if (isLiveStream && hlsUrl) {
       lastVlcHlsUrl = hlsUrl;
+      // Phone handing off from a fresh URL — restart mpv PDT tracking so
+      // the refresh loop doesn't stop itself due to the URL mismatch.
+      startMpvPdtTracking(hlsUrl);
       phoneActive = true;
       return res.json({
         streamUrl: hlsUrl,
@@ -4056,12 +4131,23 @@ function startWsSync() {
           // (mpv returns null while loading — don't broadcast 0 or it resets phone UI)
           const histDur = historyMap.get(nowPlaying)?.duration || 0;
           const reportedDur = dur?.data || 0;
+          // For mpv live HLS: compute absoluteMs so the phone can PDT-sync.
+          // mpv's time-pos for HLS is in the segment PTS domain (same as
+          // VLC's get_time), so the same stream-epoch → wall-clock formula
+          // applies: absoluteMs = epoch + timePos*1000.
+          const timePos = pos?.data || 0;
+          let mpvAbsoluteMs = null;
+          if (isHls && mpvPdtEpochMs && timePos > 0) {
+            mpvAbsoluteMs = mpvPdtEpochMs + timePos * 1000 + syncOffsetMs;
+          }
           state = {
             type: "playback",
             playing: true, isLive: isHls, player: "mpv",
-            position: pos?.data || 0,
+            position: timePos,
             duration: reportedDur > 0 ? reportedDur : histDur,
-            paused: pause?.data || false, phoneSyncOk: !isHls,
+            paused: pause?.data || false,
+            phoneSyncOk: !isHls || !!mpvAbsoluteMs,
+            absoluteMs: mpvAbsoluteMs,
             url: nowPlaying, serverTs: Date.now(),
             title: historyMap.get(nowPlaying)?.title || "",
             channel: historyMap.get(nowPlaying)?.channel || "",
@@ -4158,12 +4244,29 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
         } catch {}
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode, "monitor:", currentMonitor);
         await mpvCommand(["set_property", "vid", "auto"]).catch(() => {}); // restore video if phone mode hid it
+        // If reconnected to a live HLS stream, re-resolve the HLS URL and
+        // kick off PDT tracking so phone sync works after server restart.
+        try {
+          const fmt = await mpvCommand(["get_property", "file-format"]).catch(() => null);
+          if ((fmt?.data || "").includes("hls") && nowPlaying.startsWith("https://www.youtube.com/")) {
+            (async () => {
+              try {
+                const { stdout } = await execFileP(
+                  "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
+                  { timeout: 15000 }
+                );
+                lastVlcHlsUrl = stdout.trim();
+                startMpvPdtTracking(lastVlcHlsUrl);
+              } catch (e) { console.error("  reconnect PDT resolve failed:", e.message); }
+            })();
+          }
+        } catch {}
         // Start progress tracking for reconnected player
         startProgressTracking(nowPlaying);
         // Monitor mpv liveness — if IPC fails, clean up state
         const mpvMonitor = setInterval(async () => {
           try { await mpvCommand(["get_property", "pid"]); }
-          catch { clearInterval(mpvMonitor); progressGen++; if (progressInterval) { clearInterval(progressInterval); progressInterval = null; } mpvProcess = null; nowPlaying = null; activePlayer = null; }
+          catch { clearInterval(mpvMonitor); progressGen++; if (progressInterval) { clearInterval(progressInterval); progressInterval = null; } mpvProcess = null; nowPlaying = null; activePlayer = null; stopMpvPdtTracking(); }
         }, 5000);
       }
     }

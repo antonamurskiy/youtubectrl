@@ -100,6 +100,28 @@ export function useLiveActivity() {
     Object.assign(lastPushedRef.current, diff)
   }, [title, channel, thumbnail, duration, isLive, paused, playing])
 
+  // Heartbeat: re-push `paused` every 3s while the activity is alive.
+  // iOS throttles Live Activity updates to ~1/sec from a backgrounded app,
+  // so a `paused` change landing on a busy tick gets silently dropped. The
+  // diff logic above still marks it as "pushed", producing a permanent
+  // desync until the next toggle. Periodic reconciliation ensures the
+  // widget eventually catches up.
+  useEffect(() => {
+    if (!isNativeIOS) return
+    const id = setInterval(() => {
+      if (!startedRef.current) return
+      const want = !!paused
+      if (lastPushedRef.current.paused === want) {
+        // Re-send anyway occasionally — cheap and corrects any silent drop
+        NativePlayer.updateLiveActivity({ paused: want }).catch(() => {})
+      } else {
+        NativePlayer.updateLiveActivity({ paused: want }).catch(() => {})
+        lastPushedRef.current.paused = want
+      }
+    }, 3000)
+    return () => clearInterval(id)
+  }, [paused])
+
   useEffect(() => {
     return () => {
       if (startedRef.current) NativePlayer.endLiveActivity().catch(() => {})

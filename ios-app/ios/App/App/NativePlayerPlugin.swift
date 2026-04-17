@@ -64,7 +64,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "startLiveActivity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "updateLiveActivity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "endLiveActivity", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "setLayerFrame", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "setLayerFrame", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getLiveState", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "seekToDate", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -87,14 +89,15 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     // buttons are converted into deltas that the web layer forwards to the
     // Mac via /api/volume-bump. We keep a hidden MPVolumeView anchored
     // offscreen so we can silently restore the phone's volume after each
-    // button press.
+    // button press — the phone's own volume should stay fixed at the
+    // baseline while the app is controlling the Mac.
     private var volumeInterceptEnabled = false
-    private var volumeBaseline: Float = 0.5
+    private let volumeBaseline: Float = 0.5
     private var lastObservedVolume: Float = 0.5
     private var hiddenVolumeView: MPVolumeView?
     private var volumeSlider: UISlider?
     private var volumeObserver: NSKeyValueObservation?
-    private var restoringVolume = false
+    private var lastRestoreRequestedAt = Date.distantPast
 
     // Live Activity (lock screen widget)
     private var liveActivity: Any? // Activity<YouTubeCtrlActivityAttributes> on iOS 16.1+
@@ -283,6 +286,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = p.currentTime().seconds
         info[MPNowPlayingInfoPropertyPlaybackRate] = p.rate
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+        if #available(iOS 13.0, *) {
+            MPNowPlayingInfoCenter.default().playbackState = p.rate == 0 ? .paused : .playing
+        }
     }
 
     private func setIdleTimer(disabled: Bool) {
@@ -344,11 +350,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         DispatchQueue.main.async {
             self.ensureLayer()
             let item = AVPlayerItem(url: url)
-            // Pull closer to live edge for HLS live streams (default is
-            // ~6s behind). 2s = aggressive but stable on a decent network.
+            // Don't pin the item to a live-offset target — when we seek to
+            // an arbitrary Date (for sync with mpv), AVPlayer otherwise
+            // drifts back toward N-seconds-behind-live after the seek,
+            // fighting the drift loop and producing persistent residual.
             if #available(iOS 13.0, *) {
-                item.configuredTimeOffsetFromLive = CMTime(seconds: 2, preferredTimescale: 1)
-                item.automaticallyPreservesTimeOffsetFromLive = true
+                item.automaticallyPreservesTimeOffsetFromLive = false
             }
             if self.player == nil {
                 self.player = AVPlayer(playerItem: item)
@@ -435,6 +442,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             self.player = nil
             self.setIdleTimer(disabled: false)
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            if #available(iOS 13.0, *) {
+                MPNowPlayingInfoCenter.default().playbackState = .stopped
+            }
             call.resolve()
         }
     }
@@ -499,6 +509,62 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
     }
 
+    /// Returns PDT (PROGRAM-DATE-TIME) information for HLS live playback.
+    /// `currentDateMs` is the wall-clock of the frame currently on screen;
+    /// `liveEdgeMs` is the wall-clock of the newest available segment.
+    /// Both are NSNull when the stream has no PDT metadata (non-live, or
+    /// pre-roll before the first frame has a date).
+    @objc func getLiveState(_ call: CAPPluginCall) {
+        DispatchQueue.main.async {
+            let player = self.player
+            let item = player?.currentItem
+            let position = player?.currentTime().seconds ?? 0
+            let duration = item?.duration.seconds ?? 0
+            let rate = player?.rate ?? 0
+            let currentDate = item?.currentDate()
+            var liveEdgeMs: Any = NSNull()
+            if let item = item, let cur = currentDate,
+               let lastRange = item.seekableTimeRanges.last?.timeRangeValue {
+                let liveEdgeTime = CMTimeAdd(lastRange.start, lastRange.duration).seconds
+                let curTime = item.currentTime().seconds
+                if liveEdgeTime.isFinite && curTime.isFinite {
+                    liveEdgeMs = cur.timeIntervalSince1970 * 1000 + (liveEdgeTime - curTime) * 1000
+                }
+            }
+            let currentDateMs: Any = currentDate.map { $0.timeIntervalSince1970 * 1000 } ?? NSNull()
+            call.resolve([
+                "currentDateMs": currentDateMs,
+                "liveEdgeMs": liveEdgeMs,
+                "position": position.isFinite ? position : 0,
+                "duration": duration.isFinite ? duration : 0,
+                "rate": rate,
+                "paused": rate == 0
+            ])
+        }
+    }
+
+    /// Seek the current HLS item to a specific wall-clock PDT. AVPlayerItem's
+    /// date-based seek is frame-accurate for HLS streams with PDT tags —
+    /// exactly what we need for cross-player sync with mpv.
+    @objc func seekToDate(_ call: CAPPluginCall) {
+        guard let epochMs = call.getDouble("epochMs") else {
+            call.reject("epochMs required"); return
+        }
+        let date = Date(timeIntervalSince1970: epochMs / 1000)
+        DispatchQueue.main.async {
+            guard let item = self.player?.currentItem else {
+                call.resolve(["ok": false, "reason": "no item"]); return
+            }
+            let ok = item.seek(to: date) { finished in
+                call.resolve(["ok": finished])
+            }
+            if !ok {
+                // Stream lacks PDT metadata; nothing to seek against.
+                call.resolve(["ok": false, "reason": "no PDT"])
+            }
+        }
+    }
+
     @objc func setNowPlaying(_ call: CAPPluginCall) {
         let title = call.getString("title") ?? ""
         let artist = call.getString("artist") ?? ""
@@ -525,7 +591,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 diag["audioSessionError"] = "\(error)"
             }
 
-            // Silent keep-alive
+            // Silent keep-alive. iOS's lock-screen Now Playing widget
+            // infers play/pause partly from whether the app's audio session
+            // is actively playing audio. Keeping the silent player at
+            // rate=1 while mpv is paused makes the widget show the pause
+            // icon (i.e. "playing") even though playbackState=.paused. So
+            // mirror the reported paused state onto the silent player.
             if self.silentPlayer == nil {
                 if let url = URL(string: "http://yuzu.local:3000/silent.m4a") {
                     let item = AVPlayerItem(url: url)
@@ -535,15 +606,20 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                         self.silentLooper = AVPlayerLooper(player: p, templateItem: item)
                     }
                     p.volume = 1.0
-                    p.play()
+                    if paused { p.pause() } else { p.play() }
                     self.silentPlayer = p
                     diag["silentPlayerStarted"] = true
                 } else {
                     diag["silentPlayerStarted"] = false
                 }
             } else {
-                self.silentPlayer?.play()
-                diag["silentPlayerResumed"] = true
+                if paused {
+                    self.silentPlayer?.pause()
+                    diag["silentPlayerPaused"] = true
+                } else {
+                    self.silentPlayer?.play()
+                    diag["silentPlayerResumed"] = true
+                }
             }
             diag["silentPlayerRate"] = self.silentPlayer?.rate ?? -1
 
@@ -569,6 +645,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 info[MPMediaItemPropertyArtwork] = existing
             }
             MPNowPlayingInfoCenter.default().nowPlayingInfo = info
+            // On iOS 13+, the lock-screen widget uses playbackState as the
+            // authoritative play/pause indicator. Setting only the rate in
+            // nowPlayingInfo leaves the widget stuck on its previous state.
+            if #available(iOS 13.0, *) {
+                MPNowPlayingInfoCenter.default().playbackState = paused ? .paused : .playing
+            }
             diag["infoSet"] = true
             call.resolve(diag)
 
@@ -596,6 +678,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     @objc func clearNowPlaying(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
             MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
+            if #available(iOS 13.0, *) {
+                MPNowPlayingInfoCenter.default().playbackState = .stopped
+            }
             self.currentArtwork = nil
             self.currentArtworkUrl = nil
             // Stop silent keep-alive track so iOS releases the audio session
@@ -650,14 +735,6 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         do {
             try AVAudioSession.sharedInstance().setActive(true)
         } catch {}
-        volumeBaseline = AVAudioSession.sharedInstance().outputVolume
-        // Drift the baseline slightly away from 0 and 1 so we can always
-        // detect increments/decrements. Land on 0.5.
-        if volumeBaseline < 0.05 || volumeBaseline > 0.95 {
-            restoreVolume(to: 0.5)
-            volumeBaseline = 0.5
-        }
-        lastObservedVolume = volumeBaseline
         // Hidden MPVolumeView suppresses the system HUD when we change
         // volume via its slider.
         if hiddenVolumeView == nil, let wv = self.bridge?.webView {
@@ -670,13 +747,22 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 if let s = sub as? UISlider { volumeSlider = s; break }
             }
         }
+        // Snap phone volume to baseline on enable so delta computation is
+        // stable from the first press.
+        restoreVolume(to: volumeBaseline)
         volumeObserver = AVAudioSession.sharedInstance().observe(\.outputVolume, options: [.new]) { [weak self] _, change in
             guard let self = self else { return }
             if !self.volumeInterceptEnabled { return }
             guard let newValue = change.newValue else { return }
 
-            // Ignore our own programmatic changes
-            if self.restoringVolume {
+            // Swallow our own restore echoes: an observation that lands
+            // back at baseline within a short window after we asked for a
+            // restore is our slider change, not a user press. Using both
+            // the target-value match AND the time window narrows the race
+            // to the (rare) case where a physical press happens to land on
+            // baseline within ~80ms of our restore.
+            let sinceRestore = Date().timeIntervalSince(self.lastRestoreRequestedAt)
+            if sinceRestore < 0.08 && abs(newValue - self.volumeBaseline) < 0.01 {
                 self.lastObservedVolume = newValue
                 return
             }
@@ -688,11 +774,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             let bump = delta > 0 ? 3 : -3
             self.notifyListeners("volumeButton", data: ["delta": bump])
 
-            // Only recentre if we're approaching an edge. This avoids the
-            // restore→press race that was swallowing direction changes.
-            if newValue < 0.15 || newValue > 0.85 {
-                self.restoreVolume(to: 0.5)
-            }
+            // Recentre after every press so the phone's own volume stays
+            // fixed while the app is controlling the Mac.
+            self.restoreVolume(to: self.volumeBaseline)
         }
     }
 
@@ -706,16 +790,13 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     }
 
     private func restoreVolume(to value: Float) {
-        restoringVolume = true
+        lastRestoreRequestedAt = Date()
         lastObservedVolume = value
         if let slider = volumeSlider {
             slider.setValue(value, animated: false)
             slider.sendActions(for: .valueChanged)
         } else {
             MPVolumeView.setVolume(value)
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) { [weak self] in
-            self?.restoringVolume = false
         }
     }
 

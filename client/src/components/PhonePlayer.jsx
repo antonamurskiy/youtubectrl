@@ -15,10 +15,19 @@ function nativePosNow() {
   return _nativePos + elapsed
 }
 
+// Native AVPlayer PDT cache for live streams. `currentDateMs` is AVPlayerItem's
+// currentDate() — the wall-clock of the frame on screen — sampled every
+// 250ms and interpolated forward by elapsed wall-clock between samples.
+let _nativePdtMs = 0
+let _nativePdtAt = 0
+function nativePdtNow() {
+  if (!_nativePdtMs) return 0
+  return _nativePdtMs + (Date.now() - _nativePdtAt)
+}
+
 
 export default function PhonePlayer({ send }) {
   const videoRef = useRef(null)
-  const userOffsetRef = useRef(0)
   const readyRef = useRef(false) // true after video starts playing for the first time
   const readyAtRef = useRef(0) // timestamp when video became ready
   const calibOffsetRef = useRef(null) // one-time PDT calibration offset (ms)
@@ -26,10 +35,17 @@ export default function PhonePlayer({ send }) {
   const steadyDriftAtRef = useRef(0) // timestamp when drift entered the steady band
   const driftAtSteadyRef = useRef(0) // drift value when steady started
   const lastSeekRef = useRef(0) // timestamp of last live seek (cooldown)
+  // Self-calibrating seek bias (ms). After each seek, AVPlayer's actual
+  // landing point tends to undershoot the requested Date by a consistent
+  // amount (HLS segment granularity + buffering). We learn the offset
+  // post-seek and fold it into subsequent seeks so drift converges to 0.
+  const seekBiasRef = useRef(0)
+  // One-shot per seek: true right after a seek, cleared once we've
+  // folded the post-seek drift into seekBiasRef. Prevents the bias from
+  // growing unboundedly when drift is stable between seeks.
+  const calibPendingRef = useRef(false)
   const driftDisplayRef = useRef(null)
-  const offsetDisplayRef = useRef(null)
   const waitForVlcRef = useRef(null) // track waitForVlc interval for cleanup
-  const nudgeRef = useRef(null)
   const hlsRef = useRef(null)
   const syncUrlRef = useRef(null)
   const vlcLastPosRef = useRef(null)
@@ -133,6 +149,15 @@ export default function PhonePlayer({ send }) {
               // Sync mode: mpv is the audio source, phone must be muted to
               // avoid a doubled audio track.
               muted: !phoneOnlyRef.current,
+            }).then(() => {
+              // On native iOS AVPlayer is the real player; the HTML <video>
+              // is just a sized placeholder with no src and never fires
+              // loadedmetadata/play. Mark sync-ready once AVPlayer.load
+              // resolves so the drift loop can run.
+              if (!phoneOnlyRef.current) {
+                readyRef.current = true
+                readyAtRef.current = Date.now()
+              }
             }).catch(() => {})
           }
 
@@ -336,16 +361,6 @@ export default function PhonePlayer({ send }) {
 
     const setDrift = (text) => { const el = driftDisplayRef.current; if (el) el.textContent = text }
 
-    nudgeRef.current = (delta) => {
-      const v = videoRef.current
-      if (!v) return
-      v.currentTime += delta
-      lastSeekRef.current = Date.now()
-      userOffsetRef.current = +(userOffsetRef.current + delta).toFixed(1)
-      const el = offsetDisplayRef.current
-      if (el) el.textContent = `offset: ${userOffsetRef.current.toFixed(1)}s`
-    }
-
     let tick = 0
     const interval = setInterval(() => {
       tick++
@@ -371,9 +386,6 @@ export default function PhonePlayer({ send }) {
         lastSeekRef.current = 0
         calibOffsetRef.current = null
         driftSamplesRef.current = []
-        userOffsetRef.current = 0
-        const el = offsetDisplayRef.current
-        if (el) el.textContent = '0.0s'
         // Re-fetch phone stream URL for new video
         fetch('/api/watch-on-phone', { method: 'POST' })
           .then(r => r.json())
@@ -399,11 +411,14 @@ export default function PhonePlayer({ send }) {
         return // don't interfere during first 5s
       }
       if (!pb.playing || pb.paused) {
-        if (!video.paused) video.pause()
+        if (!isNativeIOS && !video.paused) video.pause()
         return
       }
-      // Resume phone if mpv is playing but phone is paused
-      if (video.paused) {
+      // Resume phone if mpv is playing but phone is paused. On native iOS
+      // the HTML <video> is an empty placeholder (AVPlayer drives real
+      // playback), so skip the video.paused check — otherwise the loop
+      // returns here forever and sync never runs.
+      if (!isNativeIOS && video.paused) {
         if (pb.isLive) {
           // For live: resume and let sync loop correct position on next tick
         } else {
@@ -416,12 +431,132 @@ export default function PhonePlayer({ send }) {
       const behindLive = pb.duration - pb.position
 
       if (pb.isLive && pb.player === 'mpv') {
-        // Live: don't fight the live edge. AVPlayer on iOS maintains a
-        // stable latency from live, mpv does the same. Both naturally
-        // converge near live edge. Trying to force-sync produced worse
-        // results than leaving them alone.
-        setDrift('live (no sync)')
-        send({ type: 'phone-state', drift: 0 })
+        // ========================================================
+        // LIVE HLS PDT SYNC — see CLAUDE.md "Live Sync Architecture"
+        // ========================================================
+        // Strategy: Program-Date-Time (PDT) as the single source of
+        // truth. The server broadcasts `pb.absoluteMs` = wall-clock ms
+        // of the frame mpv is demuxing. AVPlayerItem.currentDate()
+        // gives us the same for the phone. We compute drift, and when
+        // it exceeds 0.5s we seek the phone via seek(to: Date). A
+        // self-calibrating bias compensates for AVPlayer's post-seek
+        // undershoot so drift converges to ~0 over a few cycles.
+        //
+        // To debug: uncomment DEBUG_SYNC_LOG below and curl /tmp/ytctl-client.log
+        const DEBUG_SYNC_LOG = false
+        const logTick = DEBUG_SYNC_LOG ? (extra) => {
+          fetch('/api/client-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              src: 'livesync', tick,
+              absoluteMs: pb.absoluteMs, phoneSyncOk: pb.phoneSyncOk,
+              serverTs: pb.serverTs, mpvPos: pb.position,
+              nativePdt: _nativePdtMs,
+              nativePdtAgeMs: _nativePdtAt ? Date.now() - _nativePdtAt : null,
+              clockOffset: useSyncStore.getState().clockOffset || 0,
+              ...(extra || {}),
+            }),
+          }).catch(() => {})
+        } : () => {}
+        if (!isNativeIOS) {
+          setDrift('live (web: no sync)')
+          send({ type: 'phone-state', drift: 0 })
+        } else if (!pb.absoluteMs) {
+          setDrift('live (awaiting pdt)')
+          send({ type: 'phone-state', drift: 0 })
+          if (tick % 5 === 0) logTick({ state: 'awaiting-pdt' })
+        } else {
+          const phonePdt = nativePdtNow()
+          if (!phonePdt) {
+            setDrift('live (no native pdt)')
+            send({ type: 'phone-state', drift: 0 })
+            if (tick % 5 === 0) logTick({ state: 'no-native-pdt' })
+          } else {
+            const clockOffset = useSyncStore.getState().clockOffset || 0
+            const elapsed = pb.serverTs
+              ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000))
+              : 0
+            // Drift = honest wall-clock delta between mpv's demux frame
+            // and phone's displayed frame. Positive = phone behind mpv.
+            const mpvPdt = pb.absoluteMs + elapsed
+            const drift = (mpvPdt - phonePdt) / 1000
+            // Seek target: add seekBiasRef (self-calibrated from past
+            // undershoots) plus an audio-lead so phone visibly leads mpv
+            // demux enough to match Mac speaker output.
+            const AUDIO_LEAD_MS = 0
+            const seekTarget = mpvPdt + seekBiasRef.current + AUDIO_LEAD_MS
+            driftSamplesRef.current.push(drift)
+            if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
+            const smoothed = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+            setDrift(`live drift: ${smoothed.toFixed(2)}s`)
+            send({ type: 'phone-state', drift: +smoothed.toFixed(2), mpvPdt: Math.round(mpvPdt), phonePdt: Math.round(phonePdt) })
+
+            const now = Date.now()
+            const sinceLastSeek = now - lastSeekRef.current
+
+            // One-shot self-calibration per seek cycle: once settled
+            // (>2s since seek) and 3 samples are tight (±80ms), fold 70%
+            // of the residual into seekBiasRef. Aggressive factor + force
+            // seek after calib converges to near-zero drift in 3-6 seeks
+            // even with AVPlayer's per-seek jitter, as the signed-mean of
+            // residuals drives the bias to the right value.
+            let calibrated = false
+            if (calibPendingRef.current && sinceLastSeek > 2000 && driftSamplesRef.current.length >= 3) {
+              const min = Math.min(...driftSamplesRef.current)
+              const max = Math.max(...driftSamplesRef.current)
+              if (max - min < 0.08 && Math.abs(smoothed) > 0.05) {
+                const adjust = Math.round(smoothed * 1000 * 0.7)
+                seekBiasRef.current += adjust
+                calibPendingRef.current = false
+                calibrated = true
+              }
+            }
+
+            // Force a seek right after calibration so the newly-learned
+            // bias actually applies. Otherwise |drift|>0.5 is needed
+            // which leaves the system stuck at whatever residual was
+            // first learned.
+            const shouldSeek = (calibrated || Math.abs(smoothed) > 0.5) && sinceLastSeek > 2500
+            if (tick % 3 === 0 || shouldSeek || calibrated) {
+              logTick({
+                state: 'drift',
+                elapsed,
+                mpvPdt,
+                phonePdt,
+                seekTarget,
+                seekBias: seekBiasRef.current,
+                rawDrift: +drift.toFixed(3),
+                smoothedDrift: +smoothed.toFixed(3),
+                sinceLastSeekMs: sinceLastSeek,
+                shouldSeek,
+                calibrated,
+              })
+            }
+            if (shouldSeek) {
+              NativePlayer.seekToDate({ epochMs: seekTarget }).then(r => {
+                fetch('/api/client-log', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ src: 'livesync', tick, event: 'seekToDate-result', target: seekTarget, bias: seekBiasRef.current, result: r }),
+                }).catch(() => {})
+              }).catch((err) => {
+                fetch('/api/client-log', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ src: 'livesync', tick, event: 'seekToDate-error', err: String(err) }),
+                }).catch(() => {})
+              })
+              lastSeekRef.current = now
+              driftSamplesRef.current = []
+              calibPendingRef.current = true
+              // Kick the local PDT cache forward so the next tick doesn't
+              // re-seek before the native poll catches up.
+              _nativePdtMs = seekTarget
+              _nativePdtAt = now
+            }
+          }
+        }
       } else if (pb.isLive && pb.player === 'vlc') {
         // Detect DVR seeks by large position jumps
         const lastVlcPos = vlcLastPosRef.current || pb.position
@@ -475,7 +610,7 @@ export default function PhonePlayer({ send }) {
         const elapsed = pb.serverTs ? Math.max(0, Math.min(Date.now() + clockOffset - pb.serverTs, 2000)) / 1000 : 0
         const mpvPos = pb.position + elapsed + MPV_AUDIO_LAG
         const phonePos = isNativeIOS ? nativePosNow() : (video.currentTime || 0)
-        const rawDiff = mpvPos - phonePos + userOffsetRef.current
+        const rawDiff = mpvPos - phonePos
 
         driftSamplesRef.current.push(rawDiff)
         if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
@@ -540,7 +675,6 @@ export default function PhonePlayer({ send }) {
     }, 1000)
 
     return () => {
-      nudgeRef.current = null
       clearInterval(interval)
     }
   }, [phoneOpen, send])
@@ -625,24 +759,34 @@ export default function PhonePlayer({ send }) {
     return () => clearInterval(iv)
   }, [phoneOnlyUrl, syncToMpv])
 
-  // Poll native AVPlayer's position into the nativePosNow() cache so the
-  // sync loop can compute drift against it without awaiting every tick.
+  // Poll native AVPlayer state into the nativePosNow() / nativePdtNow()
+  // caches so the sync loop can compute drift without awaiting every tick.
+  // Use getLiveState so we pick up both position (VOD sync) and the
+  // AVPlayerItem currentDate (live PDT sync) in a single native call.
   useEffect(() => {
     if (!isNativeIOS || !phoneOpen) return
     let alive = true
     const tick = async () => {
       if (!alive) return
       try {
-        const s = await NativePlayer.getState()
-        if (s && typeof s.position === 'number') {
-          _nativePos = s.position
-          _nativePosAt = Date.now()
+        const s = await NativePlayer.getLiveState()
+        if (s) {
+          if (typeof s.position === 'number') {
+            _nativePos = s.position
+            _nativePosAt = Date.now()
+          }
+          if (typeof s.currentDateMs === 'number' && s.currentDateMs > 0) {
+            _nativePdtMs = s.currentDateMs
+            _nativePdtAt = Date.now()
+          } else {
+            _nativePdtMs = 0
+          }
         }
       } catch {}
       if (alive) setTimeout(tick, 250)
     }
     tick()
-    return () => { alive = false }
+    return () => { alive = false; _nativePdtMs = 0 }
   }, [phoneOpen])
 
   // On native iOS in phone-only mode, poll the AVPlayer's state and push
@@ -856,13 +1000,6 @@ export default function PhonePlayer({ send }) {
       )}
       <div style={{ display: mini ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <button onClick={() => { hapticTick(); nudgeRef.current?.(-5) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-5</button>
-          <button onClick={() => { hapticTick(); nudgeRef.current?.(-1) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>-1</button>
-          <span ref={offsetDisplayRef} style={{ color: 'var(--yellow)', minWidth: '60px', textAlign: 'center' }}>0.0s</span>
-          <button onClick={() => { hapticTick(); nudgeRef.current?.(1) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+1</button>
-          <button onClick={() => { hapticTick(); nudgeRef.current?.(5) }} style={{ padding: '4px 8px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)', fontSize: '10px' }}>+5</button>
-        </div>
         <button onClick={() => { hapticThump(); setMini(true) }} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>MIN</button>
         {phoneOnlyUrl && <button onClick={compMode ? handlePhone : handleComp} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: compMode ? 'var(--green)' : 'var(--text)', border: '1px solid var(--text-dim)' }}>{compMode ? 'PHONE' : 'COMP'}</button>}
         <button onClick={handleClose} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--red)', border: '1px solid var(--text-dim)' }}>CLOSE</button>

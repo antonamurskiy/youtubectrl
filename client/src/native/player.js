@@ -27,6 +27,14 @@ export const NativePlayer = {
   async startPip() { if (plugin) return plugin.startPip() },
   async stopPip() { if (plugin) return plugin.stopPip() },
   async getState() { if (plugin) return plugin.getState() },
+  // PDT/live-sync hooks. `getLiveState` returns { currentDateMs, liveEdgeMs,
+  // position, duration, rate, paused } where the *DateMs fields are
+  // wall-clock epoch ms or null for non-live streams. `seekToDate` uses
+  // AVPlayerItem's date-based seek — frame-accurate for HLS with PDT tags.
+  async getLiveState() { if (plugin) return plugin.getLiveState() },
+  async seekToDate({ epochMs, toleranceMs = 100 }) {
+    if (plugin) return plugin.seekToDate({ epochMs, toleranceMs })
+  },
   async setNowPlaying(info) { if (plugin) return plugin.setNowPlaying(info) },
   async clearNowPlaying() { if (plugin) return plugin.clearNowPlaying() },
   async showAirPlayPicker() { if (plugin) return plugin.showAirPlayPicker() },

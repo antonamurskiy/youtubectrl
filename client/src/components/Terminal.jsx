@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
+import { WebglAddon } from '@xterm/addon-webgl'
 import { useSyncStore } from '../stores/sync'
 import { currentFont, currentFontSize, FONTS } from '../fonts'
 import '@xterm/xterm/css/xterm.css'
@@ -56,6 +57,35 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     term.loadAddon(fitAddon)
     term.open(termRef.current)
     fitAddon.fit()
+
+    // iOS + WebGL renderer: the canvas overlays the hidden xterm-helper-textarea,
+    // so after the keyboard dismisses, a tap on the canvas doesn't land on the
+    // textarea and iOS won't resummon the keyboard. Explicitly refocus on tap.
+    const termEl = termRef.current
+    const refocusOnTap = () => {
+      const ta = termEl?.querySelector('.xterm-helper-textarea')
+      if (ta) ta.focus()
+      else term.focus()
+    }
+    termEl.addEventListener('touchend', refocusOnTap)
+    termEl.addEventListener('mousedown', refocusOnTap)
+
+    // GPU-accelerated rendering. Must load after open(). If WebGL init
+    // fails (old device, context exhausted) or the context is lost later,
+    // xterm silently falls back to the canvas/DOM renderer.
+    let webgl = null
+    try {
+      webgl = new WebglAddon()
+      webgl.onContextLoss(() => {
+        console.warn('[terminal] WebGL context lost, falling back')
+        try { webgl.dispose() } catch {}
+      })
+      term.loadAddon(webgl)
+      console.log('[terminal] WebGL renderer active')
+    } catch (e) {
+      console.warn('[terminal] WebGL addon failed, using DOM renderer:', e)
+    }
+
     xtermRef.current = term
 
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
@@ -125,7 +155,10 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('app-font-change', handleFontChange)
+      termEl?.removeEventListener('touchend', refocusOnTap)
+      termEl?.removeEventListener('mousedown', refocusOnTap)
       if (wsRef.current) wsRef.current.close()
+      try { webgl?.dispose() } catch {}
       term.dispose()
     }
   }, [])

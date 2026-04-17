@@ -128,13 +128,17 @@ ios-app/
 3. If `|delta| < 0.005`, ignore (iOS noise).
 4. Emit `volumeButton` event with `±3` (fixed step). JS side POSTs
    `/api/volume-bump` which debounces osascript calls 30ms server-side.
-5. If the phone's volume hits <15% or >85%, silently snap it back to 50%
-   via the hidden `MPVolumeView`'s UISlider — prevents hitting edges
-   where direction can't be detected. `restoringVolume` flag stops the
-   observer from treating this self-change as a user press.
-6. **Do NOT** try to clamp/restore on every press — that creates a
-   restore-vs-press race that swallows direction changes. Only recenter
-   at the edges.
+5. After every press, silently restore phone volume to the 0.5 baseline
+   via the hidden `MPVolumeView`'s UISlider — the phone's own volume
+   should not drift while the app is controlling the Mac.
+6. Distinguishing our restore from a user press: an observation is
+   swallowed only if it matches baseline AND arrives within ~80ms of
+   when we requested the restore (`lastRestoreRequestedAt`). The earlier
+   blanket `restoringVolume` flag dropped *any* observation during the
+   window — including real user presses — which is why we previously
+   only recentered at the edges. The match-target + time-window check
+   narrows the race to the rare case where a physical press happens to
+   land exactly on baseline within 80ms of our restore.
 
 ### Live Activity — known constraints
 
@@ -319,19 +323,194 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - **Unified sync path (VOD + live)**:
   - Phone gets direct YouTube URL from `yt-dlp --get-url` (MP4 for VODs, HLS for live)
   - `clockOffset` (server-client clock diff) measured via ping/pong, recalibrated every 5min. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
-  - Drift = interpolated mpv position - phone currentTime. Hard-seek at 0.2s threshold with 5s cooldown, +0.5s seek latency compensation.
+  - VOD drift = interpolated mpv position - phone currentTime. Hard-seek at 0.2s threshold with 5s cooldown, +0.5s seek latency compensation.
+  - Live drift: see **Live Sync Architecture** section below — the VOD formula doesn't apply.
   - Safari ignores `playbackRate` on both MP4s and live HLS — only hard-seeks work.
   - Follows desktop scrubs (>5s position jump detection) and pause/resume.
   - Detects video switch on desktop (`pb.url` change) — full state reset + stream reload with 2s settle.
 - **`phoneActive` flag**: tracks whether phone sync is active. Prevents mpv window from showing on unpause. Synced with eye icon visibility toggle and cmux focus toggle.
 - **mpv window hidden** during phone sync via AppleScript `set visible of process "mpv" to false` (not `vid=no` which drops audio). Restored on phone close with aerospace focus + maximize restore.
-- **Offset buttons (±1s, ±5s)**: seek phone directly for manual fine-tuning of live streams.
 - **Video swap**: sync loop detects `pb.url` change, resets all sync state, re-fetches stream URL from `/api/watch-on-phone`.
 - **iOS Safari limitations**: no MSE (can't use hls.js), ignores `playbackRate` on live HLS, seeks snap to 2s keyframe boundaries.
 - **Live stream server-side detection**: if frontend doesn't send `isLive` flag, server checks via `yt-dlp --print is_live`
 - Phone player positioned below Dynamic Island (`env(safe-area-inset-top)`)
 - iOS lock screen media controls via Media Session API (`useMediaSession` hook) — silent audio loop (`public/silent.m4a`), checks mpv pause state before toggling to prevent double-toggle.
-- **PTS-based vlcPdtEpochMs**: `fetchPdtFromUrl` extracts PTS from MPEG-TS segment headers for accurate PDT mapping (replaces imprecise `mediaSequence * avgSegDuration`). Used for VLC absolute time when VLC is active.
+
+### Live Sync Architecture (READ THIS BEFORE TOUCHING LIVE SYNC)
+
+**This took a week to get right. Read in full before changing any piece.**
+
+Syncing a live YouTube HLS stream between mpv on the Mac and AVPlayer on
+the iPhone is fundamentally different from VOD sync. The VOD formula
+(`mpv_position - phone_currentTime`) doesn't work because:
+
+1. mpv and AVPlayer have independent HLS buffering, so each one picks
+   a different "live edge" offset. Their `time-pos` values don't mean
+   the same thing at the same wall-clock moment.
+2. HLS live manifests ROLL — segments drop off the front every few
+   seconds. A player's position in "stream seconds" drifts relative to
+   wall-clock as the manifest window slides.
+3. Safari-native HLS snaps seeks to keyframe (~2s) boundaries and
+   ignores `playbackRate` on live streams. It can only coarsely seek.
+
+**The solution: use the HLS `#EXT-X-PROGRAM-DATE-TIME` (PDT) tag as the
+single sync currency.** Every HLS segment has a wall-clock timestamp
+baked into its PDT tag. That timestamp is the same regardless of which
+player is rendering the segment. So both sides convert their local
+playback position to "the PDT of the frame I'm currently showing," and
+drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
+
+#### Data flow (server side, `server.js`)
+
+1. **On `/api/play` with `isLive=true`**: yt-dlp resolves the direct
+   HLS manifest URL (format 301/300/96/…). Store it in `lastVlcHlsUrl`
+   and kick off `startMpvPdtTracking(hlsUrl)`.
+2. **`capturePdtEpoch(hlsUrl)`** fetches the manifest, reads the first
+   `#EXT-X-PROGRAM-DATE-TIME` tag, fetches the first ~10KB of the first
+   segment, extracts the MPEG-TS PTS via `extractFirstPts()` (reads TS
+   packet headers — 33-bit PTS divided by 90000 to get seconds). The
+   stream epoch is `pdtMs − segPts * 1000` — i.e., the wall-clock at
+   which PTS=0 would have occurred. This epoch is stable across
+   manifest refreshes as long as the stream doesn't discontinue.
+3. **Refresh every 60s** via `mpvPdtRefreshInterval`. Recalibrates
+   against the current `lastVlcHlsUrl` so encoder clock skew and
+   manifest PDT re-anchors don't accumulate.
+4. **Also called from `/api/watch-on-phone`** when the phone hands
+   off — that endpoint *replaces* `lastVlcHlsUrl` with its own freshly
+   resolved URL, which used to orphan PDT tracking. The explicit
+   `startMpvPdtTracking` call there re-targets to the new URL.
+5. **Also called on reconnect** in the server startup path — if mpv is
+   already playing a live stream when the server restarts, we
+   re-resolve and re-track. Without this, server restart leaves
+   `mpvPdtEpochMs=0` until the user triggers `/api/play` again.
+6. **Broadcast**: in the `/ws/sync` playback tick for mpv-live,
+   `absoluteMs = mpvPdtEpochMs + mpv.time-pos * 1000 + syncOffsetMs`
+   — this is the *demux* PDT (mpv's internal decode position).
+   Also sends `phoneSyncOk: true` when absoluteMs is available.
+
+#### Data flow (native plugin, `NativePlayerPlugin.swift`)
+
+1. **`getLiveState()`** returns `currentDateMs` (from
+   `AVPlayerItem.currentDate()` — the PDT of the frame currently on
+   screen, in epoch ms) plus `liveEdgeMs`, `position`, `duration`,
+   `rate`, `paused`.
+2. **`seekToDate({epochMs})`** uses `AVPlayerItem.seek(to: Date)`.
+   Frame-accurate for HLS with PDT tags (MUCH better than Safari's
+   keyframe-snap seeks). Returns `ok:false` if the target is outside
+   the DVR window — AVPlayer silently clamps to nearest seekable
+   range in that case, which is why early post-load seeks land at
+   live edge and need another pass once the target comes into range.
+3. **`automaticallyPreservesTimeOffsetFromLive = false`** on the
+   `AVPlayerItem` — critical. With this left on, AVPlayer fights our
+   seeks by drifting back to its own "N seconds behind live" target
+   after every `seek(to: Date)`. We need AVPlayer to actually honor
+   our seeks and stay where we put it.
+
+#### Drift loop (client, `PhonePlayer.jsx`)
+
+The sync interval ticks every 1 second. For `pb.isLive && pb.player ==='mpv'`:
+
+```
+mpvPdt    = pb.absoluteMs + elapsed              (server's demux PDT now)
+phonePdt  = native.currentDateMs (cached, polled every 250ms)
+drift     = (mpvPdt - phonePdt) / 1000           (positive = phone behind)
+seekTarget = mpvPdt + seekBiasRef                (learned compensation)
+```
+
+- **`elapsed`** = `Date.now() + clockOffset - pb.serverTs`, clamped
+  [0, 2000ms]. Accounts for WS latency + tick timing between when the
+  server computed `absoluteMs` and when we read it.
+- **`drift`** is reported as-is to the UI and over WebSocket — it's
+  the honest mpv-vs-phone delta, NOT pre-compensated. Don't bake
+  corrections into the drift reading itself; they belong in
+  `seekBiasRef` only.
+
+#### Self-calibrating bias (the key insight)
+
+AVPlayer's `seek(to: Date)` lands on an HLS segment boundary, which
+means it **undershoots** the requested Date by a player-dependent
+offset (observed ~400–650ms, with per-seek jitter of ~±200ms). Apply
+a static LAG constant and drift stabilizes at whatever the residual is
+(≈ 0.4s). Not good enough.
+
+The fix is a feedback loop: learn the undershoot from observed
+post-seek drift and fold it into the next seek's target.
+
+```
+On each seek:
+  calibPendingRef = true
+  seekToDate(seekTarget)          // seekTarget = mpvPdt + seekBiasRef
+
+Post-seek (≥2s after, 3+ stable drift samples within ±80ms):
+  seekBiasRef += round(smoothedDrift * 1000 * 0.7)
+  calibPendingRef = false
+  (force another seek to apply the updated bias)
+```
+
+**Convergence behavior** (typical): drift starts at ~0.5s → bias grows
+to ~400ms → drift drops to ~0.2s → bias grows to ~550ms → drift
+oscillates through ±0.2s for 2–3 cycles as per-seek jitter averages
+out → settles at |drift| < 0.05s. Takes 4–8 seeks, ~20–30 seconds.
+
+**Knobs** (in `PhonePlayer.jsx`, sync interval):
+
+- `70% learning rate` — aggressive enough to converge in a few cycles.
+  Smaller rates (25%) technically avoid overshoot but converge too
+  slowly and get stuck when seek threshold isn't tripped to re-test.
+- `0.5s seek threshold` — below this the system is inside the AVPlayer
+  jitter floor and additional seeks would bounce.
+- `2.5s seek cooldown` — minimum time between seeks. HLS buffering
+  needs time to settle before we can trust the post-seek measurement.
+- **Force-seek after calibration**: `shouldSeek = calibrated || …`.
+  Without this, once drift drops below 0.5s the loop stops seeking
+  and the newly-learned bias never gets applied — drift stalls at
+  whatever residual was first learned.
+- `drift sample window = 5` for EMA smoothing; `variance bound = 80ms`
+  to decide "stable."
+
+**Things NOT to do** (tried, didn't work):
+
+- ❌ Apply a static `LIVE_AUDIO_LAG_MS` bias directly to the drift
+  value — it's a lie to the displayed number and doesn't converge.
+- ❌ Recenter on every seek regardless of outcome with a small learning
+  rate — converges too slowly because the loop stops seeking before
+  the bias is fully learned.
+- ❌ Let AVPlayer drift back to its `configuredTimeOffsetFromLive`
+  target — the seeks work but AVPlayer pulls back afterwards.
+- ❌ Use `rate` adjustments to close the drift gradually instead of
+  hard seeking — AVPlayer live HLS ignores `rate` changes in
+  practice. And Safari web ignores them too.
+- ❌ Rely on `pb.position` (mpv `time-pos` in seconds) + phone
+  `currentTime` as the sync currency. They're each offset from PDT
+  by different constants depending on how each player initialized.
+
+#### Lifecycle tear-down
+
+`stopMpvPdtTracking()` zeros `mpvPdtEpochMs` and clears the refresh
+interval. Called from:
+- `/api/stop` (user stopped playback)
+- `/api/switch-to-vlc` (phone handing off to VLC for DVR)
+- `/api/play` with `isLive=false` (new VOD)
+- mpv-liveness monitor on IPC failure
+
+Without these, stale `mpvPdtEpochMs` could bleed into the next stream
+and wreck its sync.
+
+#### Debug endpoints
+
+- `GET /api/_debug/sync` — dumps `activePlayer`, `nowPlaying`,
+  `lastVlcHlsUrl`, `mpvPdtEpochMs` (+ISO string), refresh-active flag,
+  and `vlcPdtEpochMs`. First stop for "why is sync broken."
+- `POST /api/client-log` — appends JSON lines to `/tmp/ytctl-client.log`.
+  The `DEBUG_SYNC_LOG` flag in `PhonePlayer.jsx` gates the client-side
+  ticker; flip it to `true`, rebuild, and you get every drift/seek/
+  calibration event. Invaluable for debugging convergence issues.
+
+- **PTS-based vlcPdtEpochMs**: `capturePdtEpoch` (formerly
+  `fetchPdtFromUrl`) extracts PTS from MPEG-TS segment headers for
+  accurate PDT mapping (replaces imprecise
+  `mediaSequence * avgSegDuration`). Shared between VLC and mpv PDT
+  tracking — VLC uses `vlcPdtEpochMs`, mpv uses `mpvPdtEpochMs`.
 
 ### Frontend (React)
 
