@@ -582,6 +582,38 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
     raise it. The value is added to reported `mpv_pdt`; higher value
     → phone seeks further forward → phone closer to live. Typical
     good values live in ±1-2s range; -3s to +3s is the sweet spot
+
+12. **Two anchor systems, one per proxy mode** — see the scrubber
+    section for the full writeup, but the short version for sync:
+    - `playbackAnchor` (live proxy): captured from cache-offset once
+      at steady state. Includes `MPV_DISPLAY_LAG_MS` subtraction.
+    - `subProxyAnchor` (sub proxy, = DVR-scrubbed): captured at seek
+      time with `userPdtAtAnchor = liveEdgeAtSeek - behindLive * 1000`.
+      **Do NOT derive userPdt from `liveEdgeNow - behindLive * 1000`
+      each tick** — liveEdgeNow jitters ~1s on every 10s manifest
+      refresh because YouTube's edge doesn't advance perfectly
+      linearly, and phone sync chases every jitter. Instead use
+      `userPdtAtAnchor + (mpv_pos_now - mpvPosAtAnchor) * 1000`. This
+      pattern fails silently with drifting-but-not-obviously-broken
+      sync — confirmed via logging and a painful afternoon.
+
+13. **Drop outlier drift samples from the EMA.** Phone's
+    `AVPlayerItem.currentDate()` returns stale values while the HLS
+    stream first loads, producing drift readings like 7000s+. Feeding
+    those into the 5-sample EMA polluted it for multiple ticks even
+    after phone successfully seeked to match. Guard in
+    `PhonePlayer.jsx`: `if (Math.abs(drift) < 10) samples.push(drift)`.
+    Raw drift still drives the forced seek decision (so we don't miss
+    big initial corrections), but the displayed/smoothed drift
+    converges cleanly.
+
+14. **Rate button shows live mpv speed.** The `2×` button in
+    `NowPlayingBar` renders mpv's actual `speed` property, broadcast
+    via WS. At 1.0 it shows `1×`, during hold `2×`, off-1.0 shows in
+    red (e.g. `0.97×`). Whenever `syncVod` rate-nudging bugs out and
+    leaves mpv at a non-1 speed, it's visible at a glance. Also reset
+    to 1.0 on every `loadfile` in `/api/play`, `/api/seek` (sub-proxy
+    swap), and `/api/go-live`.
     for most streams. The ±8s headroom exists for bizarre edge cases
     (extreme bitrate, weird encoder buffering).
 
