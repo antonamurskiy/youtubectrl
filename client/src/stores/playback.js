@@ -7,10 +7,9 @@ export const usePlaybackStore = create((set) => ({
   duration: 0,
   paused: false,
   isLive: false,
-  player: null, // 'mpv' | 'vlc'
-  vlcTime: null,
+  dvrActive: false, // true when mpv is on the VOD proxy — full-duration scrubbing available
+  player: null, // 'mpv' | null
   absoluteMs: null,
-  dvrWindow: 0,
   title: '',
   channel: '',
   thumbnail: '',
@@ -21,7 +20,7 @@ export const usePlaybackStore = create((set) => ({
   update: (state) => set(state),
   reset: () => set({
     playing: false, url: '', position: 0, duration: 0, paused: false,
-    isLive: false, player: null, vlcTime: null, absoluteMs: null,
-    dvrWindow: 0, title: '', channel: '', windowMode: null,
+    isLive: false, player: null, absoluteMs: null,
+    title: '', channel: '', windowMode: null,
   }),
 }))

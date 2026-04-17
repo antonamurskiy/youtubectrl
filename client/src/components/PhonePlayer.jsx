@@ -45,11 +45,9 @@ export default function PhonePlayer({ send }) {
   // growing unboundedly when drift is stable between seeks.
   const calibPendingRef = useRef(false)
   const driftDisplayRef = useRef(null)
-  const waitForVlcRef = useRef(null) // track waitForVlc interval for cleanup
+  const waitForPlayerRef = useRef(null) // track stream-ready wait interval for cleanup
   const hlsRef = useRef(null)
   const syncUrlRef = useRef(null)
-  const vlcLastPosRef = useRef(null)
-  const vlcBufDelayRef = useRef(21)
   const [streamUrl, setStreamUrl] = useState(null)
   const [isLive, setIsLive] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -160,8 +158,6 @@ export default function PhonePlayer({ send }) {
               }
             }).catch(() => {})
           }
-
-          const vlcBufDelay = data.vlcBufferDelay || 19
 
           // Phone-only: load immediately, no mpv sync
           if (phoneOnlyRef.current) {
@@ -277,27 +273,26 @@ export default function PhonePlayer({ send }) {
               useSyncStore.getState().setPhoneVideoCtrl(null)
             }
             // Store cleanup ref for the effect's return
-            waitForVlcRef.current = { clear: origCleanup }
+            waitForPlayerRef.current = { clear: origCleanup }
             return
           }
 
           // Normal mode: wait for mpv to be playing before loading phone video
-          waitForVlcRef.current = setInterval(() => {
+          waitForPlayerRef.current = setInterval(() => {
             const pb = usePlaybackStore.getState()
             if (!pb.playing || pb.paused) return
-            clearInterval(waitForVlcRef.current)
-            waitForVlcRef.current = null
+            clearInterval(waitForPlayerRef.current)
+            waitForPlayerRef.current = null
 
             setTimeout(() => {
               const video = videoRef.current
               if (!video) return
               const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
-              vlcBufDelayRef.current = vlcBufDelay
               if (data.isLive && Hls.isSupported()) {
                 if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
-                const segDur = data.segDuration || 2
-                const pb = usePlaybackStore.getState()
-                const syncCount = pb.player === 'mpv' ? 4 : Math.round((data.vlcBufferDelay || 19) / segDur)
+                // 4 segments of hold-back = ~8s lag from live edge (matches
+                // what mpv-side sees with default HLS buffering).
+                const syncCount = 4
                 const hls = new Hls({
                   liveSyncDurationCount: syncCount,
                   liveMaxLatencyDurationCount: syncCount + 6,
@@ -313,11 +308,12 @@ export default function PhonePlayer({ send }) {
               } else {
                 video.src = fullUrl
                 if (data.isLive) {
-                  const vlcBuf = data.vlcBufferDelay || 25
+                  // Safari native HLS: land ~25s behind live edge for buffer.
+                  const liveTailGap = 25
                   const waitSeekable = () => {
                     if (video.seekable?.length > 0) {
                       const seekableEnd = video.seekable.end(video.seekable.length - 1)
-                      video.currentTime = Math.max(0, seekableEnd - vlcBuf)
+                      video.currentTime = Math.max(0, seekableEnd - liveTailGap)
                       video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
                     } else {
                       setTimeout(waitSeekable, 500)
@@ -343,9 +339,9 @@ export default function PhonePlayer({ send }) {
 
     return () => {
       abortCtrl.abort()
-      if (waitForVlcRef.current?.clear) { waitForVlcRef.current.clear() }
-      else if (waitForVlcRef.current) { clearInterval(waitForVlcRef.current) }
-      waitForVlcRef.current = null
+      if (waitForPlayerRef.current?.clear) { waitForPlayerRef.current.clear() }
+      else if (waitForPlayerRef.current) { clearInterval(waitForPlayerRef.current) }
+      waitForPlayerRef.current = null
     }
   }, [phoneOpen, phoneOnlyUrl, addToast])
 
@@ -354,10 +350,9 @@ export default function PhonePlayer({ send }) {
     if (!phoneOpen) return
 
     let lastRateSend = 0
-    // Sanity: make sure mpv/VLC rates are at 1.0 when we enter sync mode.
-    // Leaves from earlier sessions could have left them nudged.
+    // Sanity: make sure mpv speed is at 1.0 when we enter sync mode.
+    // Earlier drift-nudging sessions could have left it off.
     send({ type: 'mpv-speed', speed: 1.0 })
-    send({ type: 'vlc-rate', rate: 1.0 })
 
     const setDrift = (text) => { const el = driftDisplayRef.current; if (el) el.textContent = text }
 
@@ -557,41 +552,6 @@ export default function PhonePlayer({ send }) {
             }
           }
         }
-      } else if (pb.isLive && pb.player === 'vlc') {
-        // Detect DVR seeks by large position jumps
-        const lastVlcPos = vlcLastPosRef.current || pb.position
-        vlcLastPosRef.current = pb.position
-        const posJump = Math.abs(pb.position - lastVlcPos)
-        if (posJump > 10) {
-          // VLC position jumped — DVR scrub detected, reload phone stream
-          setDrift(`DVR jump: ${posJump.toFixed(0)}s, reloading...`)
-          send({ type: 'phone-state', debug: `DVR jump=${posJump.toFixed(0)} old=${lastVlcPos.toFixed(0)} new=${pb.position.toFixed(0)}` })
-          calibOffsetRef.current = null
-          driftSamplesRef.current = []
-          readyRef.current = false
-          if (hlsRef.current) {
-            hlsRef.current.stopLoad()
-            hlsRef.current.loadSource(`/api/phone-hls?_t=${Date.now()}`)
-            hlsRef.current.startLoad()
-            setTimeout(() => { readyRef.current = true; readyAtRef.current = Date.now() }, 3000)
-          } else {
-            video.src = ''
-            video.src = `/api/phone-hls?direct=1&_t=${Date.now()}`
-            video.addEventListener('loadedmetadata', () => {
-              if (video.seekable?.length > 0) {
-                // DVR reload: use measured VLC buffer delay + 2s for rebuffer
-                const pb2 = usePlaybackStore.getState()
-                video.currentTime = video.seekable.end(video.seekable.length - 1) - (vlcBufDelayRef.current || 21)
-              }
-              video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
-            }, { once: true })
-          }
-          return
-        }
-        // Live: don't fight the live edge. Phone + VLC both naturally
-        // stay at live edge; drift-chasing made things worse.
-        setDrift('live (no sync)')
-        send({ type: 'phone-state', drift: 0 })
       } else {
         // VOD sync — hard seek on big drift, plus a "steady state" seek
         // once drift has stabilised in the sub-second band.

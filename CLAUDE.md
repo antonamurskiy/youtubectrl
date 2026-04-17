@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv. VLC is available for DVR scrubbing on live streams. Single-user, runs on the local network at `yuzu.local:3000`.
+YouTubeCtrl — a local web app to browse/search YouTube on your phone and play videos on your computer via mpv. Single-user, runs on the local network at `yuzu.local:3000`.
 
 ## Commands
 
@@ -109,12 +109,17 @@ ios-app/
 - **AirPlay route picker** via a hidden `AVRoutePickerView` whose button we
   programmatically trigger.
 - **Keep-awake** via `UIApplication.isIdleTimerDisabled` while playing.
-- **Live Activity (lock screen widget)** via the `YouTubeCtrlWidget`
-  extension — shows artwork + title + ±10% volume buttons + play/pause.
-  Taps are `AppIntents` that update the Activity's `ContentState`
-  optimistically (read-modify-write from `Activity.activities`) then POST
-  the server in a detached Task. Position isn't pushed (iOS rate-limits
-  updates to ~1/sec without APNs push).
+- **Live Activity — REMOVED (2026-04).** We used to ship a
+  `YouTubeCtrlWidget` extension with play/pause/volume buttons on the
+  lock screen via ActivityKit + AppIntents. It worked, but the standard
+  MPNowPlayingInfoCenter media widget covers the same use case with less
+  code, no iOS rate-limit quirks, and better OS integration (AirPods,
+  CarPlay). The widget extension target + Swift files are still in the
+  Xcode project but dormant — the plugin's `startLiveActivity` /
+  `updateLiveActivity` bridged methods exist but aren't called from JS.
+  App.jsx calls `endLiveActivity()` once on mount to clean up any
+  stragglers from older installs. Easy to revive by wiring the hook back
+  in; don't re-add without a specific reason.
 - **Deep link**: `youtubectrl://play?url=...` forwards to `/api/play` so a
   Shortcut can share YouTube URLs into the app.
 - **Background audio**: Info.plist has `UIBackgroundModes=audio` and the
@@ -139,20 +144,6 @@ ios-app/
    only recentered at the edges. The match-target + time-window check
    narrows the race to the rare case where a physical press happens to
    land exactly on baseline within 80ms of our restore.
-
-### Live Activity — known constraints
-
-- iOS throttles activity updates to ~1/sec from a backgrounded app. Push
-  updates (APNs) would bypass this but require a paid Apple Developer
-  Program account.
-- Widget intents run in a **fresh process per tap** — no shared actor
-  state persists. Don't rely on singletons for coalescing. Instead,
-  read-modify-write the current `Activity.activities` content state
-  directly inside `perform()`, then fire the server call as a detached
-  `Task`.
-- `ContentState` updates with partial data on the native side: the plugin
-  merges incoming fields with `act.content.state` so JS can send only
-  what changed (e.g. `{volume: 60}`) without clobbering the rest.
 
 ### Capacitor / Xcode project gotchas
 
@@ -246,6 +237,9 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - OAuth (optional): scope `youtube.force-ssl`, tokens in `.tokens.json`, auto-refreshed
 - OAuth client shared with the `/dev/hk` project (Nest integration)
 - Redirect URI: `http://localhost:3000/oauth/callback`
+- **Prefer cookie auth for new features.** OAuth is present but `.tokens.json` may not exist on every install, and cookies work for everything the YouTube web client can do. Pattern: `parseCookieFile()` + `sapisidHash()` + innertube endpoint (`/youtubei/v1/...`). Use OAuth only as a fallback when cookies refuse, or when the feature truly needs a Data API capability that innertube doesn't expose.
+- **Cookie-based subscribe/unsubscribe**: `POST /youtubei/v1/subscription/{subscribe,unsubscribe}` with `{channelIds: [id], context, params: "EgIIAhgA"}` for subscribe. Response's `actions[].updateSubscribeButtonAction.subscribed` is authoritative — browse-cache propagation takes ~5s so don't trust a follow-up `/api/channel` read for UI confirmation.
+- **Cookie-based subscription status**: parse `subscriptionStateEntity` records from a channel browse response. Each entity key is a base64 protobuf containing the channel id; match by substring of decoded bytes. The older `subscribeButtonRenderer.subscribed` field is NOT reliable on modern responses — it's a template, not state.
 
 ### mpv Playback
 
@@ -260,50 +254,199 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - `startProgressTracking(url)` captures the URL at setup time to prevent saving progress to the wrong video
 - Cross-device resume: local `.history.json` position takes priority; falls back to `watchPct` from YouTube history API → mpv `--start=N%` (percentage-based seek). Frontend sends `video.startPercent` in play request.
 
-### VLC Playback (Live Streams)
+### Live stream DVR — READ THIS BEFORE TOUCHING
 
-- **Why VLC**: mpv/ffmpeg's HLS demuxer cannot seek outside its local cache in live streams. VLC has its own HLS demuxer that properly re-requests segments from YouTube's CDN, enabling full DVR seeking.
-- VLC 4.0 nightly (`brew install --cask vlc@nightly`) — must clear quarantine: `xattr -cr /Applications/VLC.app`
-- Controlled via CLI RC interface over TCP (`--extraintf cli --rc-host 127.0.0.1:9091`)
-- RC commands: `get_time`, `get_length`, `is_playing`, `seek N`, `pause`, `fullscreen`, `clear`, `add`
-- RC responses are plain text (just the value + newline), no JSON, no prompt
-- **CRITICAL: VLC RC calls must be sequential** — `vlcStatus()` queries `get_time`, `get_length`, `is_playing` one at a time. Parallel TCP connections cause VLC to hang or crash, especially during seeks.
-- `get_time` returns integer seconds only — use `vlcTimeModel` for sub-second interpolation (detects integer transitions at 1s polling)
-- `vlcPaused` is toggled manually in playpause handler — do NOT sync from `is_playing` in the playback poll (causes race condition that prevents window hide on pause)
-- **Stream switching without restart**: write HLS URL to `/tmp/vlc-next.m3u`, then `clear` + `add /tmp/vlc-next.m3u` via RC (direct URLs are too long for RC's line buffer)
-- VLC 4 removed the HTTP Lua interface from VLC 3 — must use CLI RC instead
-- VLC 4 has a sidebar/media library that cannot be disabled via config or CLI flags
-- VLC enforces minimum window size based on video aspect ratio — cannot resize smaller via AppleScript
-- Hide on pause / show on resume: `osascript` to set `visible of process "VLC"` (same as mpv)
-- **VLC `seek` command is broken for live HLS DVR** — hangs/buffers indefinitely. Do NOT use `vlcSeek()` for live streams.
-- **DVR scrubbing uses reload-based seeking**: instead of VLC's `seek`, reload the stream via an HLS proxy (`/api/vlc-hls-offset`) that serves the YouTube manifest with segments trimmed from the end. `clear` + `add /tmp/vlc-next.m3u` reloads VLC at the desired offset.
-- **DVR position tracked server-side** (`vlcDvrBehind`): VLC's `get_time` PTS is unreliable for live HLS — resets to a different base after every reload. Do NOT use `get_time` for position tracking in live streams. **`vlcDvrBehind` itself is also unreliable for phone sync** — it's manually tracked and drifts. Phone sync should use PDT-based absolute time (`pb.absoluteMs`) instead.
-- **VLC `get_length` reports local buffer, not real DVR window**: after a trimmed reload, `get_length` shrinks. Use `vlcDvrWindow` which is refreshed from the real YouTube manifest every 5s (`startDvrRefresh()`).
-- **YouTube HLS `playlist_duration` is signed** — cannot modify the URL to request a larger DVR window. The manifest contains whatever YouTube provides (often 30s for some streams, 2+ hours for others).
-- **YouTube HLS manifests can have discontinuities** — multiple `#EXT-X-PROGRAM-DATE-TIME` tags with time gaps. When computing live edge PDT, use the LAST PDT tag + durations after it (not first PDT + total duration).
-- `vlcDvrBehind` = 0 at live edge, increases when user scrubs back. "Go live" (seek to duration) sets it to 0 and reloads the original HLS URL directly.
-- `vlcSeekBusy` flag blocks seeks for 3s after each reload to let VLC rebuffer.
-- `--video-on-top` flag for always-on-top in floating mode
-- `/api/vlc-rate` endpoint to set VLC playback rate (used for phone sync experiments, kept for future use)
-- `/api/vlc-absolute-time` endpoint: at live edge uses `vlcPdtEpochMs + vlcTimeNow()` (accurate, accounts for VLC buffering); after DVR seeks uses manifest-based calculation (`vlcManifestLiveEdgeMs - vlcDvrBehind`). Returns empty during active seeks (`vlcSeekBusy`) to prevent drift sync from computing bad values.
-- `/api/vlc-hls-offset` endpoint: HLS proxy that fetches the real YouTube manifest and trims segments from the end based on `vlcDvrBehind`. VLC refreshes from this URL periodically, maintaining the time offset.
-- `/api/mpv-speed` endpoint: sets mpv `speed` property
-- `/api/switch-to-vlc` endpoint: switches live stream from mpv to VLC for DVR scrubbing
+mpv handles live playback AND DVR scrubbing. VLC is gone. This section
+was rewritten multiple times — the design is subtle and every piece
+is load-bearing.
+
+#### The core limitation
+
+**ffmpeg's HLS demuxer cannot seek past its cache on live manifests.**
+It clamps `seekable-ranges` to whatever segments are currently buffered
+(~15-30s), regardless of `--demuxer-max-back-bytes` or
+`--force-seekable=yes` or `--demuxer-lavf-o=live_seekable=1`. Tested
+with mpv 0.41 + ffmpeg 8.1 in April 2026 — still broken.
+
+The decision "is this live?" is based on **ENDLIST presence**, not the
+`EXT-X-PLAYLIST-TYPE` tag. So:
+
+| Manifest shape                    | mpv behavior            | Seekable |
+|-----------------------------------|-------------------------|----------|
+| Live (no ENDLIST)                 | auto-polls, never EOFs  | Cache only |
+| VOD tag (no ENDLIST)              | auto-polls, never EOFs  | Cache only (tested!) |
+| ENDLIST (+/- VOD tag)             | no polling, EOFs at end | Full manifest |
+| EVENT tag (no ENDLIST)            | auto-polls              | Cache only (tested!) |
+
+**You cannot have both "mpv polls for new segments" AND "full
+seekable range" with ffmpeg's HLS demuxer.** Mutually exclusive.
+Reading this and thinking you have a clever workaround? You don't.
+Try it, then confirm it in `demuxer-cache-state.seekable-ranges`.
+
+#### The hybrid solution
+
+Two proxy endpoints, mpv swaps between them on user action:
+
+- **`/api/hls-live.m3u8`** — pass-through of the YouTube live manifest.
+  No tag injection. mpv treats as live, auto-polls, never EOFs, plays
+  continuously. Seekable = ~15-30s of cache.
+
+- **`/api/hls-sub.m3u8?from_seq=<N>`** — "sub-live" proxy. Serves all
+  segments with media-sequence ≥ N, plus new ones as YouTube produces
+  them. No tags. mpv treats as live, auto-polls, extends forever.
+  `from_seq` pins the start to an ABSOLUTE segment number (not "behind
+  N seconds") so as the live manifest rolls, mpv's cached segments
+  never shift under it. **This pinning is the trick that makes mpv's
+  time-pos advance at true 1x instead of drifting.**
+
+**mpv is always on one of these**. It's always "live-style", so:
+- Playback never cuts out at a manifest end (no ENDLIST → never EOFs).
+- No periodic reloads, no reload-induced skips.
+- Skips only happen when the user explicitly seeks outside mpv's cache.
+
+#### How a scrub-back works
+
+1. Frontend sends `POST /api/seek { position }` where `position` is in
+   scrubber-space (0 to `lastManifestFullDuration`).
+2. Server computes `behindLive = lastManifestFullDuration - position`.
+3. If `behindLive < mpv's reported duration` (target is in the current
+   cache), direct `seek` within the current proxy. No skip.
+4. Else: `resolveBehindToFromSeq(behindLive)` reads the current
+   YouTube manifest and converts `behindLive` seconds into an absolute
+   `from_seq`. Then `loadfile hls-sub.m3u8?from_seq=X` with options
+   `start=0,demuxer-lavf-o=live_start_index=0`. **One skip.**
+5. Anchor recorded (see "Scrubber math" below).
+
+`live_start_index=0` is the critical option: ffmpeg's default for live
+HLS is `-3` (near end, so mpv lands at ~live edge). We need it to land
+at the BEGINNING of the sub-window (= `behindLive` seconds back).
+
+#### Scrubber math — the anchor system
+
+Problem: mpv's `time-pos` on the sub-proxy does NOT correspond to any
+absolute DVR timeline. It's local to mpv's current cache. Separately,
+`lastManifestFullDuration` (the real DVR window size) updates every
+10s from the server-side manifest refresh. We need to compute "where
+in the 4h window is the user right now" for the scrubber UI.
+
+Solution: on every sub-proxy seek, capture an anchor:
+```
+subProxyAnchor = {
+  wallMs: Date.now(),            // wall clock at seek
+  mpvPosAtAnchor: <captured>,    // mpv's time-pos at seek (polled, can take ~2s for mpv to report)
+  behindLive: <requested>,       // seconds behind live at seek moment
+}
+```
+
+Each WS broadcast tick, compute:
+```
+wallElapsed = (Date.now() - anchor.wallMs) / 1000
+playElapsed = mpv_time_pos - anchor.mpvPosAtAnchor
+behindLive  = anchor.behindLive + (wallElapsed - playElapsed)
+scrubDur    = lastManifestFullDuration
+scrubPos    = scrubDur - behindLive
+```
+
+Math works out: playback at 1x → wallElapsed == playElapsed → behindLive
+stays constant (thumb stays put). Paused → playElapsed == 0 → behindLive
+grows at 1x (thumb drifts left as live advances). Both correct.
+
+Anchor capture is **async** because mpv takes up to ~3s to report a
+valid `time-pos` after a sub-proxy `loadfile` (the new manifest needs
+to download + parse). Poll every 100ms up to 40 times. Until anchor is
+captured, WS broadcast falls back to the live-proxy formula (tiny
+behindLive, thumb at right edge) — acceptable transient.
+
+Anchor is cleared automatically when mpv is no longer on the sub-proxy
+(WS tick does `if (!onSubProxy) subProxyAnchor = null`).
+
+#### UI layer
+
+- **Scrubber shows `lastManifestFullDuration`** even when mpv is on
+  live-proxy (where mpv's raw duration is 20s). Server lies: the WS
+  broadcast reports `duration = lastManifestFullDuration` and computes
+  `position` via the anchor or cache offset. Frontend consumes these.
+- **Time displays (`NowPlayingBar`)**:
+  - Left position span: `-${formatTime(liveTimeBehind)}` (or `LIVE`
+    if <5s). Never shows raw position number for live streams — that
+    reads as "stream has been going for N hours" which is misleading
+    for a rolling DVR.
+  - Right duration span: blank for live streams.
+  - Center badge: `LIVE` in red when at edge, `GO LIVE` in dim gray
+    when scrubbed back. Tap → `/api/go-live` (swap back to live proxy
+    if on sub, then seek to live edge).
+
+#### /api/play lifecycle
+
+For `isLive: true`:
+1. `yt-dlp -f 301/300/96/… --get-url` resolves the upstream HLS URL,
+   stored in `currentLiveHlsUrl`.
+2. `subProxyAnchor = null` (stale state from prior stream wiped).
+3. `startMpvPdtTracking(url)` — PDT tracking + `manifestStatsRefresh`
+   (polls manifest every 10s to keep `lastManifestFullDuration` and
+   `lastManifestEdgeEpochMs` fresh).
+4. Synchronous `fetchManifest()` once right now — primes
+   `lastManifestFullDuration` before user can scrub. Without this, a
+   seek in the first ~10s would fall into the non-live fallback path
+   and fail silently.
+5. `mpv loadfile /api/hls-live.m3u8` with `--start=-3` (near live edge
+   of cache). Zero skips for normal watching.
+
+#### Things we tried that DON'T work (do not re-litigate)
+
+- **`--demuxer-max-back-bytes=2048M`** alone — cache grows but ffmpeg
+  still clamps `seekable-ranges` to its own calculated live window.
+- **`EXT-X-PLAYLIST-TYPE:EVENT`** alone — still treated as live
+  (clamped). EVENT vs VOD tag doesn't matter without ENDLIST.
+- **VOD tag without ENDLIST** — still treated as live (clamped).
+- **Reload on approach to EOF** (old `mpvLiveReload` every N min) —
+  works but causes periodic visible skips. Removed in favor of the
+  sub-proxy approach.
+- **Use mpv's PDT (`mpvPdtEpochMs + time_pos * 1000`) to compute
+  "behind live"** — mpv's `time-pos` on live HLS is NOT absolute PTS.
+  It's local to mpv's current cache. Confirmed by probe: PDT formula
+  gave a 30-hour delta for a stream that was clearly near live edge.
+  Use the anchor system instead.
+- **Trim sub-proxy by `behind=N` seconds each request** — as YouTube's
+  live edge advances, the "start" of the trimmed window shifts. mpv's
+  cached segments get renumbered underneath, and `time-pos` starts
+  going BACKWARD. Must pin by absolute `from_seq` instead.
+
+#### Relevant state
+
+- `currentLiveHlsUrl` — upstream YouTube HLS URL. Set by `/api/play`.
+- `lastManifestFullDuration` — DVR window size (seconds). Refreshed
+  by `/api/hls-live.m3u8` fetches + the 10s interval.
+- `lastManifestEdgeEpochMs`, `lastManifestFetchedAt` — live edge PDT
+  + when captured. Kept around for potential future use in phone-sync
+  math; not currently used by scrubber.
+- `subProxyAnchor = null | { wallMs, mpvPosAtAnchor, behindLive }` —
+  see "Scrubber math" above.
+- `mpvPdtEpochMs` — stream-epoch wall-clock for phone sync
+  (unchanged, pre-existed). NOT used for the scrubber because mpv's
+  time-pos on live doesn't give absolute PDT. See above.
+
+#### Relevant endpoints
+
+- `GET /api/hls-live.m3u8` — pass-through live manifest
+- `GET /api/hls-sub.m3u8?from_seq=N` — trimmed live manifest, pinned start
+- `GET /api/hls-sub.m3u8?behind=N` — behind-mode (resolved to from_seq at request time; only useful for one-shot tests, don't pass this from normal seeks)
+- `POST /api/seek { position }` — scrubber-space seek, may swap to sub-proxy
+- `POST /api/go-live` — swap back to live-proxy, seek live edge
+- `GET /api/_debug/sync` — dumps all the state above; check here first
+  when debugging live/DVR
 
 ### AeroSpace Integration
 
 - mpv `floatTopRight()` now sets `aerospace layout floating` + `ontop` (was missing `layout floating`)
 
 - mpv rule: `layout floating` with `check-further-callbacks = false` — aerospace can't switch mpv to tiling
-- VLC has no aerospace rule — it's a normal managed window
 - Monitor 1 (Built-in/laptop) = workspace 8, Monitor 2 (LG UltraFine) = workspace 1
 - Three window modes tracked server-side (`windowMode`): `floating`, `maximize` (aerospace fullscreen with dock), `fullscreen` (native)
 - Floating: top-right corner, always-on-top (mpv only), auto-hides on pause
-- Moving between monitors: mpv uses fullscreen bounce; VLC uses `aerospace move-node-to-workspace`
+- Moving between monitors: mpv uses fullscreen bounce
 - **mpv maximize**: `aerospace fullscreen --no-outer-gaps on/off` works directly on floating windows
-- **VLC maximize**: must `layout tiling` first, then `fullscreen --no-outer-gaps on`; exit with `fullscreen off` then `layout floating`
-- `vlcAerospace()` helper wraps try/catch since commands like `layout tiling` fail if already tiled
-- Find window IDs: `aerospace list-windows --all | grep mpv` or `grep VLC`
+- Find window IDs: `aerospace list-windows --all | grep mpv`
 
 ### HiDPI and Resolution Switching
 
@@ -319,7 +462,7 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 ### Phone Mode (Watch on Phone)
 
 - Phone plays the same video as the desktop player, synced via mpv position
-- **All streams use mpv** — live streams play via mpv (not VLC) for precise `time-pos` sync. VLC only used when explicitly switching for DVR via `/api/switch-to-vlc`.
+- **All streams use mpv** — live and VOD. mpv plays a VOD-tagged HLS proxy for live so DVR scrubbing works the same way as VOD seeking.
 - **Unified sync path (VOD + live)**:
   - Phone gets direct YouTube URL from `yt-dlp --get-url` (MP4 for VODs, HLS for live)
   - `clockOffset` (server-client clock diff) measured via ping/pong, recalibrated every 5min. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
@@ -363,7 +506,7 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
 #### Data flow (server side, `server.js`)
 
 1. **On `/api/play` with `isLive=true`**: yt-dlp resolves the direct
-   HLS manifest URL (format 301/300/96/…). Store it in `lastVlcHlsUrl`
+   HLS manifest URL (format 301/300/96/…). Store it in `currentLiveHlsUrl`
    and kick off `startMpvPdtTracking(hlsUrl)`.
 2. **`capturePdtEpoch(hlsUrl)`** fetches the manifest, reads the first
    `#EXT-X-PROGRAM-DATE-TIME` tag, fetches the first ~10KB of the first
@@ -373,10 +516,10 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    which PTS=0 would have occurred. This epoch is stable across
    manifest refreshes as long as the stream doesn't discontinue.
 3. **Refresh every 60s** via `mpvPdtRefreshInterval`. Recalibrates
-   against the current `lastVlcHlsUrl` so encoder clock skew and
+   against the current `currentLiveHlsUrl` so encoder clock skew and
    manifest PDT re-anchors don't accumulate.
 4. **Also called from `/api/watch-on-phone`** when the phone hands
-   off — that endpoint *replaces* `lastVlcHlsUrl` with its own freshly
+   off — that endpoint *replaces* `currentLiveHlsUrl` with its own freshly
    resolved URL, which used to orphan PDT tracking. The explicit
    `startMpvPdtTracking` call there re-targets to the new URL.
 5. **Also called on reconnect** in the server startup path — if mpv is
@@ -486,10 +629,9 @@ out → settles at |drift| < 0.05s. Takes 4–8 seeks, ~20–30 seconds.
 
 #### Lifecycle tear-down
 
-`stopMpvPdtTracking()` zeros `mpvPdtEpochMs` and clears the refresh
-interval. Called from:
+`stopMpvPdtTracking()` zeros `mpvPdtEpochMs` and clears the refresh +
+live-reload intervals. Called from:
 - `/api/stop` (user stopped playback)
-- `/api/switch-to-vlc` (phone handing off to VLC for DVR)
 - `/api/play` with `isLive=false` (new VOD)
 - mpv-liveness monitor on IPC failure
 
@@ -499,18 +641,16 @@ and wreck its sync.
 #### Debug endpoints
 
 - `GET /api/_debug/sync` — dumps `activePlayer`, `nowPlaying`,
-  `lastVlcHlsUrl`, `mpvPdtEpochMs` (+ISO string), refresh-active flag,
-  and `vlcPdtEpochMs`. First stop for "why is sync broken."
+  `currentLiveHlsUrl`, `mpvPdtEpochMs` (+ISO string), and refresh-active
+  flag. First stop for "why is sync broken."
 - `POST /api/client-log` — appends JSON lines to `/tmp/ytctl-client.log`.
   The `DEBUG_SYNC_LOG` flag in `PhonePlayer.jsx` gates the client-side
   ticker; flip it to `true`, rebuild, and you get every drift/seek/
   calibration event. Invaluable for debugging convergence issues.
 
-- **PTS-based vlcPdtEpochMs**: `capturePdtEpoch` (formerly
-  `fetchPdtFromUrl`) extracts PTS from MPEG-TS segment headers for
-  accurate PDT mapping (replaces imprecise
-  `mediaSequence * avgSegDuration`). Shared between VLC and mpv PDT
-  tracking — VLC uses `vlcPdtEpochMs`, mpv uses `mpvPdtEpochMs`.
+- **PTS-based PDT**: `capturePdtEpoch` extracts PTS from MPEG-TS segment
+  headers for accurate PDT mapping (avoids imprecise `mediaSequence ×
+  avgSegDuration` fallback).
 
 ### Frontend (React)
 
@@ -551,7 +691,6 @@ and wreck its sync.
 - `.history.json` — Watch history with position/duration (runtime, gitignored)
 - `cookies.txt` — Firefox YouTube cookies, exported on startup (runtime, gitignored)
 - `/tmp/mpv-socket` — mpv IPC socket (runtime)
-- `/tmp/vlc-next.m3u` — temp file for VLC stream switching (runtime)
-- `activePlayer` — server-side variable: `'mpv'` | `'vlc'` | `null`
-- `lastVlcHlsUrl` — stored HLS URL for fMP4 relay and stream reload
+- `activePlayer` — server-side variable: `'mpv'` | `null`
+- `currentLiveHlsUrl` — upstream YouTube HLS URL for the live stream currently playing (used by the VOD proxy and PDT tracking)
 - `public/silent.m4a` — truly silent 5-minute m4a for iOS Media Session (must be actual silence, not low volume — iOS drops session at volume=0)

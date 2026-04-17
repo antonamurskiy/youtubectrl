@@ -163,11 +163,16 @@ app.get("/api/_debug/sync", (_req, res) => {
   res.json({
     activePlayer,
     nowPlaying,
-    lastVlcHlsUrl: lastVlcHlsUrl ? (lastVlcHlsUrl.slice(0, 80) + "...") : null,
+    currentLiveHlsUrl: currentLiveHlsUrl ? (currentLiveHlsUrl.slice(0, 80) + "...") : null,
     mpvPdtEpochMs,
     mpvPdtISO: mpvPdtEpochMs ? new Date(mpvPdtEpochMs).toISOString() : null,
     mpvPdtRefreshActive: !!mpvPdtRefreshInterval,
-    vlcPdtEpochMs,
+    lastManifestFullDuration,
+    lastManifestEdgeISO: lastManifestEdgeEpochMs ? new Date(lastManifestEdgeEpochMs).toISOString() : null,
+    lastManifestFetchedAt,
+    manifestStatsAgeMs: lastManifestFetchedAt ? Date.now() - lastManifestFetchedAt : null,
+    subProxyAnchor,
+    subProxyAnchorAgeMs: subProxyAnchor ? Date.now() - subProxyAnchor.wallMs : null,
   });
 });
 
@@ -743,10 +748,20 @@ app.get("/api/channel", async (req, res) => {
     const url = channelId
       ? `https://www.youtube.com/channel/${channelId}/videos`
       : `https://www.youtube.com/@${channelName.replace(/\s+/g, '')}/videos`;
-    const { stdout } = await execFileP("yt-dlp", [
+
+    // yt-dlp (slow, ~1-3s) and channel metadata (two googleapis calls)
+    // run in parallel when we already have channelId. When we only have a
+    // name, we have to wait for yt-dlp to resolve the canonical id first,
+    // so fall through to sequential for that case.
+    const videosPromise = execFileP("yt-dlp", [
       "--cookies", COOKIES_FILE, "--flat-playlist", "--dump-json", "--no-warnings",
       "-I", "1:30", url,
     ], { timeout: 20000, maxBuffer: 10 * 1024 * 1024 });
+    const channelInfoPromise = channelId
+      ? fetchChannelInfo(channelId).catch(() => null)
+      : null;
+
+    const { stdout } = await videosPromise;
     const videos = stdout.trim().split("\n").filter(Boolean).map(line => {
       const v = JSON.parse(line);
       return {
@@ -754,33 +769,350 @@ app.get("/api/channel", async (req, res) => {
         thumbnail: v.thumbnails?.[v.thumbnails.length - 1]?.url || `https://i.ytimg.com/vi/${v.id}/hqdefault.jpg`,
         duration: v.duration_string || (v.duration ? fmtSecs(v.duration) : ""),
         channel: v.channel || v.uploader,
+        channelId: v.channel_id || v.uploader_id || "",
         views: v.view_count || 0,
         url: `https://www.youtube.com/watch?v=${v.id}`,
       };
     });
-    // Enrich with YouTube Data API for dates
+    const resolvedId = channelId || videos.find(v => v.channelId)?.channelId || null;
+
+    // Enrich with YouTube Data API for dates (independent of channel info)
     const ids = videos.map(v => v.id).filter(Boolean);
-    if (ids.length) {
-      try {
-        const token = await getAccessToken();
-        const enriched = await enrichVideos(ids, token);
-        const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
-        for (const v of videos) {
-          const e = enrichMap[v.id];
-          if (e) {
-            v.duration = e.duration || v.duration;
-            v.views = e.views || v.views;
-            v.uploadedAt = e.uploadedAt || "";
-            v.channelId = e.channelId || "";
-            if (e.live) v.live = true;
-          }
-        }
-      } catch {}
+    const enrichPromise = ids.length
+      ? getAccessToken().then(token => enrichVideos(ids, token)).catch(() => [])
+      : Promise.resolve([]);
+
+    // If we didn't already start the channel-info fetch (name-only case),
+    // start it now using the id we just resolved from yt-dlp.
+    const finalChannelInfoPromise = channelInfoPromise
+      || (resolvedId ? fetchChannelInfo(resolvedId).catch(() => null) : Promise.resolve(null));
+
+    const [enriched, channel] = await Promise.all([enrichPromise, finalChannelInfoPromise]);
+    const enrichMap = Object.fromEntries(enriched.map(v => [v.id, v]));
+    for (const v of videos) {
+      const e = enrichMap[v.id];
+      if (e) {
+        v.duration = e.duration || v.duration;
+        v.views = e.views || v.views;
+        v.uploadedAt = e.uploadedAt || "";
+        v.channelId = e.channelId || v.channelId;
+        if (e.live) v.live = true;
+      }
     }
-    res.json({ videos });
+
+    res.json({ channel, videos });
   } catch (err) {
     console.error("Channel fetch failed:", err.message);
     res.json({ videos: [] });
+  }
+});
+
+// Fetch channel metadata (name, avatar, sub count) + whether the current
+// OAuth user is subscribed. Returns null fields on failure but never throws
+// a non-200 — this is best-effort augmentation for the channel page header.
+async function fetchChannelInfo(channelId) {
+  const token = await getAccessToken();
+  const info = {
+    id: channelId,
+    name: "",
+    thumbnail: "",
+    subscriberCount: null,
+    subscribed: false,
+    subscriptionId: null, // needed for DELETE when unsubscribing via OAuth
+  };
+
+  // channels.list (API key) + subscriptions.list (OAuth) + cookie-based
+  // innertube browse all run in parallel. We prefer OAuth's subscriptionId
+  // when available (required for DELETE), but fall back to the cookie-
+  // derived `subscribed` flag when OAuth isn't set up — that way the
+  // correct button state renders even without OAuth. The POST toggle still
+  // requires OAuth; we surface a toast if it fails.
+  const metaPromise = fetch(
+    `${YT_API}/channels?part=snippet,statistics&id=${channelId}&key=${API_KEY}`
+  ).then(r => r.json()).catch(err => {
+    console.error("channels.list failed:", err.message);
+    return null;
+  });
+
+  const subPromise = token
+    ? fetch(
+        `${YT_API}/subscriptions?part=id&mine=true&forChannelId=${channelId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      ).then(r => r.json()).catch(err => {
+        console.error("subscriptions.list failed:", err.message);
+        return null;
+      })
+    : Promise.resolve(null);
+
+  const cookieSubPromise = checkSubscribedViaCookies(channelId).catch(() => null);
+
+  const [metaData, subData, cookieSubbed] = await Promise.all([
+    metaPromise, subPromise, cookieSubPromise,
+  ]);
+
+  const item = metaData?.items?.[0];
+  if (item) {
+    info.name = item.snippet?.title || "";
+    info.thumbnail =
+      item.snippet?.thumbnails?.high?.url ||
+      item.snippet?.thumbnails?.default?.url || "";
+    const count = item.statistics?.subscriberCount;
+    if (count != null) info.subscriberCount = Number(count);
+  }
+
+  const sub = subData?.items?.[0];
+  if (sub) {
+    info.subscribed = true;
+    info.subscriptionId = sub.id;
+  } else if (cookieSubbed != null) {
+    // Fall back to cookie-based state when OAuth didn't report
+    info.subscribed = !!cookieSubbed;
+  }
+
+  return info;
+}
+
+// Cookie-based subscription check via innertube browse. Returns true/false
+// if the subscribed field is found in the channel page response, or null
+// if the call/parse fails. No OAuth required — works off the same cookies
+// that drive the recommended feed.
+async function checkSubscribedViaCookies(channelId) {
+  const { cookieStr, cookieMap } = parseCookieFile();
+  const sapisid = cookieMap["SAPISID"] || cookieMap["__Secure-3PAPISID"];
+  if (!sapisid) return null;
+  const res = await fetch(
+    "https://www.youtube.com/youtubei/v1/browse?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cookie": cookieStr,
+        "Authorization": sapisidHash(sapisid, "https://www.youtube.com"),
+        "Origin": "https://www.youtube.com",
+        "X-Origin": "https://www.youtube.com",
+      },
+      body: JSON.stringify({
+        browseId: channelId,
+        context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00" } },
+      }),
+    }
+  );
+  if (!res.ok) return null;
+  const text = await res.text();
+
+  // YouTube's newer framework keeps live subscription state in
+  // `subscribeStateEntity` records. Each record has a base64 key that
+  // encodes a protobuf message containing the channel id plus flag bytes,
+  // so multiple keys exist per channel (one per button instance). But the
+  // `subscribed` bool is consistent across keys for the same channel. We
+  // find any record whose decoded key contains this channel's id bytes
+  // and read `subscribed` off it.
+  //
+  // The older `subscribeButtonRenderer` blocks ALSO carry a "subscribed"
+  // field, but on modern responses those are "button state templates" —
+  // false/true variants meaning "what would the button show in this
+  // state," not the current state. Don't trust them as a signal.
+  const entityRe = /"subscriptionStateEntity":\{"key":"([^"]+)","subscribed":(true|false)\}/g;
+  let m;
+  while ((m = entityRe.exec(text)) !== null) {
+    const keyB64 = decodeURIComponent(m[1]).replace(/-/g, "+").replace(/_/g, "/");
+    try {
+      const decoded = Buffer.from(keyB64, "base64").toString("binary");
+      if (decoded.includes(channelId)) return m[2] === "true";
+    } catch { /* ignore decode errors */ }
+  }
+  return null;
+}
+
+// Toggle subscription to a channel. Body: { channelId, subscribe: bool }.
+// Prefers the cookie-based innertube endpoint (no OAuth needed) — same
+// mechanism the YouTube web client uses when you click the button. Falls
+// back to the Data API if tokens.json exists.
+app.post("/api/subscribe", express.json(), async (req, res) => {
+  const { channelId, subscribe } = req.body || {};
+  if (!channelId) return res.status(400).json({ error: "channelId required" });
+
+  // Cookie path (primary)
+  try {
+    const result = await toggleSubscriptionViaCookies(channelId, !!subscribe);
+    if (result.ok) {
+      // Use YouTube's action-confirmed state when available. Subscription
+      // state takes ~5s to propagate through the browse cache, so the next
+      // channel fetch may still report the old value — the authoritative
+      // signal is the endpoint response itself.
+      const subscribed = result.subscribed != null ? result.subscribed : !!subscribe;
+      return res.json({ ok: true, subscribed });
+    }
+    if (result.definitive) {
+      return res.status(result.status || 500).json({ error: result.error || "subscribe failed" });
+    }
+  } catch (err) {
+    console.error("cookie subscribe failed, falling back to OAuth:", err.message);
+  }
+
+  const token = await getAccessToken();
+  if (!token) return res.status(401).json({ error: "No cookies or OAuth available" });
+
+  try {
+    if (subscribe) {
+      const r = await fetch(`${YT_API}/subscriptions?part=snippet`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          snippet: { resourceId: { kind: "youtube#channel", channelId } },
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        const reason = data.error?.errors?.[0]?.reason;
+        if (reason === "subscriptionDuplicate") {
+          return res.json({ ok: true, subscribed: true });
+        }
+        return res.status(r.status).json({ error: data.error?.message || "subscribe failed" });
+      }
+      return res.json({ ok: true, subscribed: true, subscriptionId: data.id });
+    } else {
+      const lookup = await fetch(
+        `${YT_API}/subscriptions?part=id&mine=true&forChannelId=${channelId}`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      const lookupData = await lookup.json();
+      const subId = lookupData.items?.[0]?.id;
+      if (!subId) return res.json({ ok: true, subscribed: false });
+      const r = await fetch(`${YT_API}/subscriptions?id=${subId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!r.ok && r.status !== 204) {
+        const data = await r.json().catch(() => ({}));
+        return res.status(r.status).json({ error: data.error?.message || "unsubscribe failed" });
+      }
+      return res.json({ ok: true, subscribed: false });
+    }
+  } catch (err) {
+    console.error("/api/subscribe failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Cookie-based subscribe/unsubscribe via the innertube endpoints that the
+// YouTube web client uses for its Subscribe button clicks. No OAuth scope
+// required — just the SAPISID cookie and the signed auth header, which
+// we already have working for the browse calls.
+//
+// Returns:
+//   { ok: true }                         — YouTube accepted the change
+//   { ok: false, definitive: false }     — fall through to OAuth
+//   { ok: false, definitive: true, status, error } — YouTube said no
+async function toggleSubscriptionViaCookies(channelId, subscribe) {
+  const { cookieStr, cookieMap } = parseCookieFile();
+  const sapisid = cookieMap["SAPISID"] || cookieMap["__Secure-3PAPISID"];
+  if (!sapisid) return { ok: false, definitive: false };
+
+  const endpoint = subscribe
+    ? "https://www.youtube.com/youtubei/v1/subscription/subscribe"
+    : "https://www.youtube.com/youtubei/v1/subscription/unsubscribe";
+
+  const body = {
+    channelIds: [channelId],
+    context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00" } },
+  };
+  // The subscribe endpoint expects a `params` field that encodes the
+  // notification preference. "EgIIAhgA" = no notifications for this channel
+  // (user can toggle later). This is the same value the web client sends.
+  if (subscribe) body.params = "EgIIAhgA";
+
+  const r = await fetch(
+    `${endpoint}?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Cookie": cookieStr,
+        "Authorization": sapisidHash(sapisid, "https://www.youtube.com"),
+        "Origin": "https://www.youtube.com",
+        "X-Origin": "https://www.youtube.com",
+      },
+      body: JSON.stringify(body),
+    }
+  );
+
+  // 401 from YouTube = auth cookie invalid. Fall through to OAuth rather
+  // than reporting a hard failure.
+  if (r.status === 401) return { ok: false, definitive: false };
+
+  const text = await r.text();
+  if (!r.ok) {
+    return { ok: false, definitive: true, status: r.status, error: `YouTube ${r.status}: ${text.slice(0, 200)}` };
+  }
+
+  // Parse the `actions` array for an updateSubscribeButtonAction which
+  // contains YouTube's confirmed post-toggle state. That value is
+  // authoritative even though the browse cache lags by a few seconds.
+  try {
+    const data = JSON.parse(text);
+    if (data.error) {
+      return { ok: false, definitive: true, status: 500, error: data.error.message };
+    }
+    const confirmed = data.actions?.find(a => a.updateSubscribeButtonAction)
+      ?.updateSubscribeButtonAction?.subscribed;
+    return { ok: true, subscribed: typeof confirmed === "boolean" ? confirmed : undefined };
+  } catch {
+    return { ok: true };
+  }
+}
+
+// Extract the "Not interested" feedback token from a video's menu JSON.
+// Each video's menu has entries with `imageName` icons; the one with
+// imageName=NOT_INTERESTED is followed by a feedbackEndpoint whose token
+// we POST to /youtubei/v1/feedback to hide the video from the feed.
+function extractNotInterestedToken(json) {
+  const m = json.match(/"imageName":"NOT_INTERESTED"[\s\S]{0,600}?"feedbackToken":"([^"]+)"/);
+  return m?.[1] || null;
+}
+
+// POST /api/not-interested { token } — tells YouTube's algo to downvote
+// this video and hide it from future feeds. Uses cookie auth (no OAuth).
+app.post("/api/not-interested", express.json(), async (req, res) => {
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ error: "token required" });
+  const { cookieStr, cookieMap } = parseCookieFile();
+  const sapisid = cookieMap["SAPISID"] || cookieMap["__Secure-3PAPISID"];
+  if (!sapisid) return res.status(401).json({ error: "No SAPISID cookie" });
+  try {
+    const r = await fetch(
+      "https://www.youtube.com/youtubei/v1/feedback?key=AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8&prettyPrint=false",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Cookie": cookieStr,
+          "Authorization": sapisidHash(sapisid, "https://www.youtube.com"),
+          "Origin": "https://www.youtube.com",
+          "X-Origin": "https://www.youtube.com",
+        },
+        body: JSON.stringify({
+          feedbackTokens: [token],
+          isFeedbackTokenUnencrypted: false,
+          shouldMerge: false,
+          context: { client: { clientName: "WEB", clientVersion: "2.20240101.00.00" } },
+        }),
+      }
+    );
+    if (!r.ok) {
+      const text = await r.text();
+      return res.status(r.status).json({ error: `YouTube ${r.status}: ${text.slice(0, 200)}` });
+    }
+    const data = await r.json();
+    // YouTube returns { feedbackResponses: [{ isProcessed: true }] } on success
+    const ok = data.feedbackResponses?.[0]?.isProcessed === true;
+    res.json({ ok });
+  } catch (err) {
+    console.error("/api/not-interested failed:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -913,6 +1245,7 @@ async function browseRecommended(continuation = null) {
         uploadedAt: vrUpcomingText || (vr.publishedTimeText?.simpleText || ""),
         url: `https://www.youtube.com/watch?v=${vr.videoId}`,
         live: vrIsLive, upcoming: vrIsUpcoming,
+        notInterestedToken: extractNotInterestedToken(JSON.stringify(vr)),
       });
       return;
     }
@@ -974,7 +1307,7 @@ async function browseRecommended(continuation = null) {
         if (totalSecs > 0 && totalSecs <= 180 && !isLive && !isUpcoming) {
           shorts.push({ id, title, channel, views: viewsText, thumbnail: thumb, url: `https://www.youtube.com/shorts/${id}`, isShort: true });
         } else {
-          videos.push({ id, title, channel, channelId, thumbnail: thumb, duration: isLive ? "LIVE" : (isUpcoming ? "SOON" : duration), views, uploadedAt, url: `https://www.youtube.com/watch?v=${id}`, live: isLive, upcoming: isUpcoming, concurrentViewers: isLive ? views : undefined });
+          videos.push({ id, title, channel, channelId, thumbnail: thumb, duration: isLive ? "LIVE" : (isUpcoming ? "SOON" : duration), views, uploadedAt, url: `https://www.youtube.com/watch?v=${id}`, live: isLive, upcoming: isUpcoming, concurrentViewers: isLive ? views : undefined, notInterestedToken: extractNotInterestedToken(lvJson) });
         }
       }
       return;
@@ -1243,7 +1576,6 @@ app.get("/api/trending", async (_req, res) => {
 // Play on computer via mpv
 
 let mpvProcess = null;
-let vlcProcess = null;
 let nowPlaying = null;
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let _lastPolledPaused = null; // track mpv pause state for auto-hide on external pause (AirPods etc)
@@ -1253,140 +1585,8 @@ let _mpvVideoInfoCache = { url: null, height: null, videoCodec: null, hwdec: nul
 let currentMonitor = "lg"; // tracked server-side, updated on move-monitor
 let progressInterval = null;
 let progressGen = 0; // generation counter to prevent overlapping intervals
-let activePlayer = null; // 'mpv' | 'vlc' | null
-let vlcPaused = false;
-let vlcPausedAt = 0; // timestamp when VLC was paused (for DVR behind correction)
-let vlcDvrWindow = 0; // last known DVR window size from get_length
-let vlcDvrBehind = 0; // seconds behind live edge (0 = at live edge)
-let lastVlcHlsUrl = null; // stored for fMP4 relay
-
-const VLC_RC_PORT = 9091;
-function vlcRC(cmd) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => { if (!settled) { settled = true; client.destroy(); resolve(buf.trim()); } }, 1000);
-    const client = net.createConnection(VLC_RC_PORT, "127.0.0.1", () => {
-      client.write(cmd + "\n");
-    });
-    let buf = "";
-    client.on("data", (chunk) => {
-      buf += chunk;
-      if (buf.includes("\n")) {
-        if (!settled) { settled = true; clearTimeout(timer); client.destroy(); resolve(buf.trim()); }
-      }
-    });
-    client.on("error", (err) => { if (!settled) { settled = true; clearTimeout(timer); client.destroy(); reject(err); } });
-  });
-}
-async function vlcStatus() {
-  // Sequential — VLC RC can't handle parallel TCP connections reliably
-  const time = parseInt(await vlcRC("get_time")) || 0;
-  const length = parseInt(await vlcRC("get_length")) || 0;
-  const playing = (await vlcRC("is_playing")).trim() === "1";
-  return { time, length, state: playing ? "playing" : "paused", fullscreen: false };
-}
-async function vlcSeek(val) { return vlcRC(`seek ${val}`); }
-async function vlcPause() { return vlcRC("pause"); }
-async function vlcCommand(cmd) { return vlcRC(cmd); }
-
-function killVlc() {
-  if (vlcProcess) { try { vlcProcess.kill("SIGKILL"); } catch {} vlcProcess = null; }
-  try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {}
-  vlcDvrWindow = 0; vlcDvrBehind = 0; vlcPausedAt = 0; vlcManifestLiveEdgeMs = 0; vlcManifestFetchedAt = 0; vlcManifestCalibOffset = 0;
-  vlcTimeModel.lastInt = 0; vlcTimeModel.lastIntAt = 0; vlcTimeModel.prevInt = 0; vlcTimeModel.prevIntAt = 0;
-}
-
-function vlcAerospace(cmd) {
-  const wid = execSync("aerospace list-windows --all | grep VLC | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-  if (!wid) return null;
-  try { execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" }); } catch {}
-  try { execSync(`aerospace ${cmd} --window-id ${wid}`, { stdio: "ignore" }); } catch {}
-  return wid;
-}
-
-async function vlcFloatTopRight() {
-  try {
-    vlcAerospace("layout floating");
-    await new Promise(r => setTimeout(r, 150));
-    const screens = getScreenOrigins();
-    const screen = screens.find(s => s.isMain) || screens[0];
-    if (!screen) return;
-    const w = Math.round(screen.w * 0.38);
-    const h = Math.round(w * 9 / 16);
-    execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
-    // Read actual size (VLC may clamp to minimum)
-    const sizeStr = execSync(`osascript -e 'tell application "System Events" to get size of first window of process "VLC"'`, { encoding: "utf8" }).trim();
-    const actualW = parseInt(sizeStr.split(",")[0]);
-    const x = screen.x + screen.w - actualW;
-    const y = screen.y;
-    execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set position of first window to {${x}, ${y}}'`, { stdio: "ignore" });
-  } catch {}
-}
-
-function spawnVlc(hlsUrl) {
-  lastVlcHlsUrl = hlsUrl;
-  vlcPdtEpochMs = 0; // reset PDT cache for new stream
-  killVlc();
-  vlcProcess = spawn("/Applications/VLC.app/Contents/MacOS/VLC", [
-    "--extraintf", "cli",
-    "--rc-host", `127.0.0.1:${VLC_RC_PORT}`,
-    "--no-video-title-show", "--no-fullscreen", "--video-on-top",
-    "--network-caching", "1000",
-    "--clock-jitter", "0",
-    "--low-delay",
-    hlsUrl,
-  ], { stdio: "ignore" });
-  vlcProcess.on("exit", () => { if (activePlayer === "vlc") { vlcProcess = null; activePlayer = null; } });
-  activePlayer = "vlc";
-  windowMode = null;
-  vlcPaused = false;
-  // Hide play queue sidebar after VLC window is ready
-  const hideQueue = (attempts = 0) => {
-    if (attempts > 5) return;
-    try {
-      // Check if queue pane is visible (3rd split view pane not collapsed)
-      const state = execSync(`defaults read org.videolan.vlc "NSSplitView Subview Frames librarywindowsplitview"`, { encoding: "utf8" });
-      // If the 3rd pane has width > 0 and isn't collapsed (YES), toggle it
-      const panes = state.match(/"([^"]+)"/g) || [];
-      if (panes.length >= 3) {
-        const thirdPane = panes[2];
-        // Format: "x, y, w, h, collapsed, ..."  — if not collapsed, click to hide
-        if (!thirdPane.includes("YES")) {
-          execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to click menu item "Play Queue..." of menu "Window" of menu bar 1'`, { stdio: "ignore" });
-        }
-      }
-    } catch {
-      setTimeout(() => hideQueue(attempts + 1), 1000);
-    }
-  };
-  // Wait for VLC window, then position + hide queue
-  let fsResets = 0;
-  const initVlc = (attempts = 0) => {
-    if (attempts > 15) return;
-    try {
-      execSync(`osascript -e 'tell application "System Events" to get size of first window of process "VLC"'`, { encoding: "utf8" });
-      // Force exit fullscreen if VLC restored to it
-      try {
-        const isFs = execSync(`osascript -e 'tell application "System Events" to get value of attribute "AXFullScreen" of first window of process "VLC"'`, { encoding: "utf8" }).trim();
-        if (isFs === "true") {
-          if (++fsResets > 3) { windowMode = "fullscreen"; return; }
-          execSync(`osascript -e 'tell application "System Events" to tell process "VLC" to set value of attribute "AXFullScreen" of first window to false'`, { stdio: "ignore" });
-          setTimeout(() => initVlc(0), 1200);
-          return;
-        }
-      } catch {}
-      hideQueue();
-      vlcFloatTopRight();
-      windowMode = "floating";
-    } catch {
-      setTimeout(() => initVlc(attempts + 1), 200);
-    }
-  };
-  setTimeout(initVlc, 500);
-  startVlcTimeModel();
-  fetchPdtFromUrl(hlsUrl); // capture PDT from the same manifest VLC uses
-  startDvrRefresh();
-}
+let activePlayer = null; // 'mpv' | null — kept for WS clients that check this field
+let currentLiveHlsUrl = null; // upstream YouTube HLS URL for the live stream currently playing
 
 app.get("/api/now-playing", (_req, res) => {
   res.json({ url: nowPlaying });
@@ -1433,37 +1633,47 @@ app.post("/api/play", async (req, res) => {
   }
 
   try {
-    // If live, use VLC for DVR support + phone sync
+    // If live, resolve the HLS URL and route mpv through the VOD proxy
+    // so DVR scrubbing works inside mpv itself (no VLC needed). The
+    // proxy injects `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST` which
+    // makes ffmpeg's HLS demuxer treat the 4-hour DVR window as a VOD
+    // and allow free seeking.
+    let liveProxyUrl = null;
     if (isLive) {
-      // Kill mpv if switching from VOD to live
-      // Store HLS URL for VLC DVR switch later
       try {
         const { stdout } = await execFileP(
           "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", url],
           { timeout: 15000 }
         );
-        lastVlcHlsUrl = stdout.trim();
+        currentLiveHlsUrl = stdout.trim();
       } catch {}
-      // Kill VLC if running — live streams now use mpv for precise time sync
-      if (activePlayer === "vlc" && vlcProcess) { killVlc(); }
-      // Kick off mpv PDT tracking so the phone can sync frame-accurately
-      // via absoluteMs. Runs async; by the time mpv starts producing
-      // time-pos the epoch should be calibrated.
-      startMpvPdtTracking(lastVlcHlsUrl);
-      // Fall through to mpv playback below
-      isLive = false; // let mpv handle it as a regular stream
+      subProxyAnchor = null;
+      // Kick off mpv PDT tracking so the phone can sync frame-accurately.
+      startMpvPdtTracking(currentLiveHlsUrl);
+      // Prime manifest stats immediately so /api/seek knows the DVR
+      // window size even if user scrubs within the first few seconds.
+      try {
+        const m = await fetchManifest(currentLiveHlsUrl);
+        updateManifestStatsFromText(m);
+      } catch {}
+      // The proxy URL mpv actually plays. Stable across "go live"
+      // reloads — reloading this URL gets a fresh/extended manifest.
+      // Default to live proxy — smooth playback without reload skips.
+      // Frontend calls /api/enable-dvr to swap to VOD proxy on demand.
+      liveProxyUrl = "http://localhost:3000/api/hls-live.m3u8";
     } else {
-      // Not live — tear down any live-sync machinery from a previous video.
       stopMpvPdtTracking();
     }
+
+    // What we actually hand to mpv. For live streams this is our VOD
+    // proxy URL (so mpv can seek the full 4-hour DVR window); for VODs
+    // it's the YouTube watch URL (yt-dlp resolves it inside mpv).
+    const playUrl = liveProxyUrl || url;
 
     const savedEntry = historyMap.get(url);
     const pos = savedEntry?.position || 0;
     const dur = savedEntry?.duration || 0;
     const resumePos = pos > 0 && dur > 0 && pos < dur * 0.95 && pos < dur - 10 ? pos : 0;
-    // Kill VLC if switching from live to VOD
-    killVlc();
-
     // If mpv is already running, load new video in existing player
     if (mpvProcess) {
       try {
@@ -1480,7 +1690,7 @@ app.post("/api/play", async (req, res) => {
         if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
         // Load new video + reset state in parallel
         await Promise.all([
-          mpvCommand(["loadfile", url, "replace"]),
+          mpvCommand(["loadfile", playUrl, "replace"]),
           mpvCommand(["set_property", "pause", false]).catch(() => {}),
           mpvCommand(["set_property", "mute", false]).catch(() => {}),
           mpvCommand(["set_property", "vid", "auto"]).catch(() => {}),
@@ -1526,22 +1736,30 @@ app.post("/api/play", async (req, res) => {
             nowPlaying = null;
             return;
           }
-          // Seek to resume position, or compute from YouTube watch percentage
+          // Seek to resume position, or compute from YouTube watch
+          // percentage. For live streams (VOD-tagged proxy), land at
+          // live edge (100%) instead of 0.
           try {
-            let seekTo = resumePos;
-            if (seekTo <= 0 && watchPct > 0 && watchPct < 95) {
-              const actualDur = await mpvCommand(["get_property", "duration"]);
-              if (actualDur?.data > 0) seekTo = Math.floor(actualDur.data * watchPct / 100);
-            }
-            if (seekTo > 0) {
-              const actualDur = await mpvCommand(["get_property", "duration"]);
-              if (actualDur?.data && seekTo < actualDur.data * 0.95) {
-                await mpvCommand(["seek", seekTo, "absolute"]);
+            if (isLive) {
+              // Live proxy — small cache window, seek near its end.
+              const d = await mpvCommand(["get_property", "duration"]);
+              if (d?.data > 5) await mpvCommand(["seek", d.data - 3, "absolute"]);
+            } else {
+              let seekTo = resumePos;
+              if (seekTo <= 0 && watchPct > 0 && watchPct < 95) {
+                const actualDur = await mpvCommand(["get_property", "duration"]);
+                if (actualDur?.data > 0) seekTo = Math.floor(actualDur.data * watchPct / 100);
+              }
+              if (seekTo > 0) {
+                const actualDur = await mpvCommand(["get_property", "duration"]);
+                if (actualDur?.data && seekTo < actualDur.data * 0.95) {
+                  await mpvCommand(["seek", seekTo, "absolute"]);
+                } else {
+                  await mpvCommand(["seek", 0, "absolute"]);
+                }
               } else {
                 await mpvCommand(["seek", 0, "absolute"]);
               }
-            } else {
-              await mpvCommand(["seek", 0, "absolute"]);
             }
           } catch {}
           // Re-apply window mode again after video loads (aspect ratio change can disrupt it)
@@ -1596,8 +1814,11 @@ app.post("/api/play", async (req, res) => {
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`];
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
-    mpvArgs.push(url);
-    if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
+    mpvArgs.push(playUrl);
+    if (isLive) {
+      // Live proxy has ~15s cache, so start near that cache's end.
+      mpvArgs.push(`--start=-3`);
+    } else if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
     else if (watchPct > 0 && watchPct < 95) mpvArgs.push(`--start=${Math.floor(watchPct)}%`);
 
     // Focus LG workspace so mpv spawns there
@@ -1689,13 +1910,6 @@ app.post("/api/play", async (req, res) => {
 // Stop playback
 app.post("/api/stop", async (_req, res) => {
   killPhoneStream();
-  // Save final position before stopping
-  if (activePlayer === "vlc") {
-    killVlc();
-    activePlayer = null;
-    nowPlaying = null;
-    return res.json({ ok: true });
-  }
   try {
     const [pos, dur] = await Promise.all([
       mpvCommand(["get_property", "time-pos"]),
@@ -1781,34 +1995,6 @@ function mpvCommand(cmd) {
 
 // Get playback position
 app.get("/api/playback", async (_req, res) => {
-  // VLC playback
-  if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
-    try {
-      const s = await vlcStatus();
-      const monitor = currentMonitor;
-      // vlcDvrWindow is set from the real YouTube manifest (not VLC's get_length which shrinks after trimmed reload)
-      if (vlcDvrWindow <= 0 && s.length > 0) vlcDvrWindow = s.length; // fallback only if never set
-      // DVR position: tracked server-side (VLC PTS is unreliable for live HLS)
-      const dvrPos = Math.max(0, vlcDvrWindow - vlcDvrBehind);
-      return res.json({
-        playing: true,
-        url: nowPlaying,
-        position: dvrPos,
-        duration: vlcDvrWindow,
-        dvrWindow: vlcDvrWindow,
-        title: historyMap.get(nowPlaying)?.title || "",
-        channel: historyMap.get(nowPlaying)?.channel || "",
-        paused: vlcPaused,
-        fullscreen: windowMode === "fullscreen",
-        isLive: true,
-        windowMode: windowMode || "floating",
-        monitor,
-        player: "vlc",
-      });
-    } catch {
-      return res.json({ playing: !!nowPlaying, url: nowPlaying, position: 0, duration: 0 });
-    }
-  }
   if (!mpvProcess || !nowPlaying) {
     return res.json({ playing: false });
   }
@@ -1844,34 +2030,77 @@ app.get("/api/playback", async (_req, res) => {
 });
 
 // Seek absolute
-let vlcSeekBusy = false;
 app.post("/api/seek", async (req, res) => {
   const { position } = req.body;
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
-    if (activePlayer === "vlc") {
-      if (vlcSeekBusy) { console.log("VLC seek SKIPPED (busy), position:", position); return res.json({ ok: true, skipped: true }); }
-      vlcSeekBusy = true;
-      // position is DVR-relative (0 = DVR start, dvrWindow = live edge)
-      const targetBehind = Math.max(0, vlcDvrWindow - position);
-      vlcDvrBehind = targetBehind;
-      console.log(`VLC seek: pos=${position} behind=${targetBehind} dvrWin=${vlcDvrWindow}`);
-      if (targetBehind < 2) {
-        // Go live — reload original HLS URL
-        vlcDvrBehind = 0;
-        fs.writeFileSync("/tmp/vlc-next.m3u", lastVlcHlsUrl);
-      } else {
-        // Reload via proxy that trims segments from the end
-        fs.writeFileSync("/tmp/vlc-next.m3u", "http://localhost:3000/api/vlc-hls-offset");
+    const pathR = await mpvCommand(["get_property", "path"]).catch(() => null);
+    const onLiveProxy = !!pathR?.data?.includes("/api/hls-live.m3u8");
+    const onSubProxy = !!pathR?.data?.includes("/api/hls-sub.m3u8");
+
+    // Frontend's `position` is in scrubber space [0, lastManifestFullDuration]
+    // with live edge at the right. behindLive is how many seconds back
+    // from real live edge the user wants.
+    if ((onLiveProxy || onSubProxy) && lastManifestFullDuration > 0) {
+      const dur = await mpvCommand(["get_property", "duration"]).catch(() => null);
+      const mpvDur = dur?.data || 0;
+      const behindLive = Math.max(0, lastManifestFullDuration - position);
+
+      if (behindLive < mpvDur) {
+        // Target is within mpv's current seekable window — seek directly,
+        // no swap, no skip. Works for both live-proxy (small window) and
+        // sub-proxy (whatever window was loaded).
+        const localTarget = Math.max(0, mpvDur - behindLive);
+        await mpvCommand(["seek", localTarget, "absolute"]);
+        return res.json({ ok: true });
       }
-      await vlcRC("clear");
-      await vlcRC("add /tmp/vlc-next.m3u");
-      // Reset time model — VLC PTS changes base after reload
-      vlcTimeModel.lastInt = 0; vlcTimeModel.lastIntAt = 0; vlcTimeModel.prevInt = 0; vlcTimeModel.prevIntAt = 0;
-      // Give VLC time to rebuffer before allowing next seek
-      setTimeout(() => { vlcSeekBusy = false; }, 3000);
+
+      // Target outside current window — load a sub-manifest starting
+      // ~behindLive before live edge. Sub-manifest is live-style so
+      // mpv auto-polls and catches up to live naturally.
+      //
+      // `live_start_index=0` forces mpv to start at the FIRST segment
+      // of the sub-window (= behindLive behind real live edge). Without
+      // this, ffmpeg's HLS demuxer defaults to -3 (near the end) and
+      // the user would land back at live edge instead of their seek
+      // target. Setting via file-local-options so subsequent loadfiles
+      // (of the full live proxy) aren't affected.
+      const wasPaused = (await mpvCommand(["get_property", "pause"]).catch(() => null))?.data === true;
+      // Resolve behind→absolute media-sequence NOW. The proxy pins to
+      // this sequence for all subsequent polls from mpv, so segments
+      // never shift under mpv's cache.
+      const fromSeq = await resolveBehindToFromSeq(Math.ceil(behindLive) + 10);
+      const subUrl = `http://localhost:3000/api/hls-sub.m3u8?from_seq=${fromSeq}`;
+      await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
+      if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
+      // Poll for mpv's time-pos in the new file; stop as soon as we see
+      // it has a value (mpv just started playing). Anchor wallMs and
+      // mpvPos are captured at the SAME instant so the drift-formula
+      // in the WS broadcast is accurate from the first tick.
+      subProxyAnchor = null;
+      const intendedBehindLive = behindLive;
+      (async () => {
+        // Can take up to ~3s for mpv to load the sub-manifest and report
+        // a valid time-pos. Poll until it does.
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          try {
+            const p = await mpvCommand(["get_property", "time-pos"]);
+            if (p?.data != null) {
+              subProxyAnchor = {
+                wallMs: Date.now(),
+                mpvPosAtAnchor: p.data,
+                behindLive: intendedBehindLive,
+              };
+              return;
+            }
+          } catch {}
+        }
+      })();
       return res.json({ ok: true });
     }
+
+    // Non-live / fallback — seek directly.
     await mpvCommand(["seek", position, "absolute"]);
     res.json({ ok: true });
   } catch (err) {
@@ -1885,11 +2114,6 @@ app.post("/api/seek-relative", async (req, res) => {
   const { offset } = req.body;
   if (typeof offset !== "number") return res.status(400).json({ error: "Invalid offset" });
   try {
-    if (activePlayer === "vlc") {
-      // Use VLC's native seek for small offsets (no reload)
-      await vlcRC(`seek ${offset > 0 ? '+' : ''}${offset}`);
-      return res.json({ ok: true });
-    }
     await mpvCommand(["seek", offset, "relative"]);
     res.json({ ok: true });
   } catch {
@@ -1954,72 +2178,232 @@ function parseHlsManifest(manifest) {
   };
 }
 
-// Compat wrappers for callers that pass raw manifest string
-function hlsTotalDuration(manifest) { return parseHlsManifest(manifest).totalDuration; }
-function hlsLiveEdgePdt(manifest) { return parseHlsManifest(manifest).liveEdgePdt; }
+// HLS VOD proxy — serves the current live stream's manifest with
+// `#EXT-X-PLAYLIST-TYPE:VOD` + `#EXT-X-ENDLIST` injected. ffmpeg/mpv's
+// HLS demuxer refuses to seek past its local cache on live manifests,
+// but honors the full segment list when the manifest is tagged VOD.
+// Since YouTube's live manifest already contains 4 hours of segment
+// URLs, this lets mpv seek anywhere in the DVR window via plain HTTP
+// GETs — no VLC needed.
+//
+// Tradeoff: once mpv loads this as VOD it won't auto-refresh. To catch
+// up to live edge, call `loadfile` on the same URL — YouTube returns a
+// fresh manifest with a longer window.
+// Two proxy endpoints for the same live stream, used in different modes:
+//
+//   /api/hls-live.m3u8  — pass through unchanged. mpv treats this as a
+//     live stream, auto-polls for new segments, plays smoothly with no
+//     reload skips. Scrub-back limited to ffmpeg's HLS cache window
+//     (~15-30s), because ffmpeg's HLS demuxer clamps the seekable range
+//     to the cached window regardless of cache size settings.
+//
+//   /api/hls-vod.m3u8  — injects EXT-X-PLAYLIST-TYPE:VOD + ENDLIST.
+//     mpv treats the full manifest as a finite VOD, enabling seek-back
+//     across the entire 4h DVR window. Downside: mpv stops polling
+//     the manifest, so it'll eventually EOF when it plays through
+//     what was captured in that snapshot (no periodic reload).
+//
+// Hybrid playback: default is the live proxy for smooth watching.
+// When user scrubs past mpv's cache, `/api/seek` transparently swaps
+// to the VOD proxy and seeks there (one skip). User stays on VOD
+// until they tap LIVE (hits `/api/go-live`), which swaps back.
+// Track the full DVR window duration (sum of all EXTINFs in YouTube's
+// manifest) + live-edge PDT so the scrubber UI can show the real 4h
+// context and the thumb keeps advancing as YouTube produces new
+// segments, even while mpv plays a static VOD snapshot.
+let lastManifestFullDuration = 0;      // total seconds of DVR window
+let lastManifestEdgeEpochMs = 0;       // PDT of the last segment (= live edge)
+let lastManifestFetchedAt = 0;         // Date.now() when we read it
 
-// Refresh real DVR window from YouTube manifest periodically
-let vlcDvrRefreshInterval = null;
-function startDvrRefresh() {
-  if (vlcDvrRefreshInterval) clearInterval(vlcDvrRefreshInterval);
-  vlcDvrRefreshInterval = setInterval(async () => {
-    if (!lastVlcHlsUrl || activePlayer !== "vlc") { clearInterval(vlcDvrRefreshInterval); vlcDvrRefreshInterval = null; return; }
-    try {
-      const m = await fetchManifest(lastVlcHlsUrl);
-      const parsed = parseHlsManifest(m);
-      if (parsed.totalDuration > 0) vlcDvrWindow = parsed.totalDuration;
-      const liveEdge = parsed.liveEdgePdt;
-      if (liveEdge > 0) {
-        vlcManifestLiveEdgeMs = liveEdge; vlcManifestFetchedAt = Date.now();
-        // Calibrate manifest-based time against accurate PDT+vlcTime while at live edge
-        if (vlcPdtEpochMs && vlcDvrBehind < 2 && vlcTimeNow() > 0) {
-          const pdtAbsMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
-          vlcManifestCalibOffset = pdtAbsMs - liveEdge;
-        }
-      }
-    } catch {}
-  }, 5000);
+function updateManifestStatsFromText(manifest) {
+  let total = 0;
+  let lastPdt = null;
+  let durSinceLastPdt = 0;
+  const lines = manifest.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+      lastPdt = new Date(line.substring("#EXT-X-PROGRAM-DATE-TIME:".length).trim()).getTime();
+      durSinceLastPdt = 0;
+      continue;
+    }
+    if (line.startsWith("#EXTINF:")) {
+      const d = parseFloat(line.split(":")[1]) || 0;
+      total += d;
+      durSinceLastPdt += d;
+    }
+  }
+  if (total > 60) lastManifestFullDuration = total;
+  if (lastPdt) {
+    lastManifestEdgeEpochMs = lastPdt + durSinceLastPdt * 1000;
+    lastManifestFetchedAt = Date.now();
+  }
 }
-
-// HLS proxy for DVR seeking — serves playlist with segments trimmed from end
-app.get("/api/vlc-hls-offset", async (_req, res) => {
-  if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
+// Default live proxy — full manifest, mpv starts near live edge.
+app.get("/api/hls-live.m3u8", async (_req, res) => {
+  if (!currentLiveHlsUrl) return res.status(400).send("No HLS URL");
   try {
-    const manifest = await fetchManifest(lastVlcHlsUrl);
-    const parsed = parseHlsManifest(manifest);
-    if (parsed.totalDuration > 0) vlcDvrWindow = parsed.totalDuration;
-    if (vlcDvrBehind <= 0) {
-      return res.type('application/vnd.apple.mpegurl').send(manifest);
-    }
-    // Parse segments and trim the last N seconds worth
-    const lines = parsed.lines;
-    const segLines = []; // [{idx, dur}]
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('#EXTINF:')) {
-        segLines.push({ idx: i, dur: parseFloat(lines[i].split(':')[1]) });
-      }
-    }
-    // Remove segments from the end to cover vlcDvrBehind seconds
-    let trimDur = 0;
-    let trimFrom = segLines.length;
-    for (let i = segLines.length - 1; i >= 0; i--) {
-      trimDur += segLines[i].dur;
-      if (trimDur >= vlcDvrBehind) { trimFrom = i; break; }
-    }
-    // Keep lines up to (but not including) the first trimmed segment's #EXTINF line
-    const cutAt = trimFrom < segLines.length ? segLines[trimFrom].idx : lines.length;
-    const trimmed = lines.slice(0, cutAt).join('\n');
-    res.type('application/vnd.apple.mpegurl').send(trimmed);
+    const manifest = await fetchManifest(currentLiveHlsUrl);
+    updateManifestStatsFromText(manifest);
+    res.type("application/vnd.apple.mpegurl").send(manifest);
   } catch (e) {
     res.status(500).send("Proxy error: " + e.message);
   }
 });
 
-// Lightweight HLS proxy for phone — only last 30s of segments (full manifest is 5MB+)
-app.get("/api/phone-hls", async (req, res) => {
-  if (!lastVlcHlsUrl) return res.status(400).send("No HLS URL");
+// Sub-live proxy — serves all segments with media-sequence >= `from_seq`.
+//
+// The starting point is an ABSOLUTE media-sequence (pinned at seek
+// time), not a "N seconds behind live" offset. This means as YouTube
+// produces new segments and mpv re-polls this URL, mpv sees the same
+// segments it already cached plus new ones appended at the end. mpv's
+// cached segments never shift under it, so time-pos advances at 1x.
+//
+// If caller passes `?from_seq=X`, use that. If they pass `?behind=N`,
+// we compute `from_seq = current_live_media_sequence - segments_for_N`
+// on THIS fetch — callers should always pin with `from_seq` after the
+// initial resolution.
+app.get("/api/hls-sub.m3u8", async (req, res) => {
+  if (!currentLiveHlsUrl) return res.status(400).send("No HLS URL");
+  const fromSeqParam = parseInt(req.query.from_seq);
+  const behindParam = Math.max(30, Math.min(14400, parseInt(req.query.behind) || 120));
   try {
-    const manifest = await fetchManifest(lastVlcHlsUrl);
+    const manifest = await fetchManifest(currentLiveHlsUrl);
+    updateManifestStatsFromText(manifest);
+    const lines = manifest.split("\n");
+    const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+    const origFirstSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
+    const segs = [];
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith("#EXTINF:")) {
+        segs.push({ idx: i, dur: parseFloat(lines[i].split(":")[1]) || 0 });
+      }
+    }
+    if (!segs.length) return res.type("application/vnd.apple.mpegurl").send(manifest);
+
+    // Determine first keep index based on from_seq (absolute) or behind (relative).
+    let firstKeepIdx;
+    if (Number.isFinite(fromSeqParam) && fromSeqParam >= origFirstSeq) {
+      firstKeepIdx = Math.min(segs.length - 1, fromSeqParam - origFirstSeq);
+    } else if (Number.isFinite(fromSeqParam)) {
+      // from_seq rolled off the front of the live manifest — clamp to oldest.
+      firstKeepIdx = 0;
+    } else {
+      // behind mode — compute backward from end.
+      let acc = 0;
+      firstKeepIdx = 0;
+      for (let j = segs.length - 1; j >= 0; j--) {
+        acc += segs[j].dur;
+        if (acc >= behindParam) { firstKeepIdx = j; break; }
+      }
+    }
+    const headerEnd = segs[0].idx;
+    const header = lines.slice(0, headerEnd).map((l) => {
+      if (l.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
+        return `#EXT-X-MEDIA-SEQUENCE:${origFirstSeq + firstKeepIdx}`;
+      }
+      return l;
+    });
+    const body = lines.slice(segs[firstKeepIdx].idx);
+    res.type("application/vnd.apple.mpegurl").send([...header, ...body].join("\n"));
+  } catch (e) {
+    res.status(500).send("Proxy error: " + e.message);
+  }
+});
+
+// Resolve a "behind seconds" request to an absolute media-sequence the
+// sub-proxy can pin to. Caller (/api/seek) uses this once at seek time.
+async function resolveBehindToFromSeq(behindSec) {
+  const manifest = await fetchManifest(currentLiveHlsUrl);
+  const lines = manifest.split("\n");
+  const seqMatch = manifest.match(/#EXT-X-MEDIA-SEQUENCE:(\d+)/);
+  const origFirstSeq = seqMatch ? parseInt(seqMatch[1]) : 0;
+  const segs = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith("#EXTINF:")) {
+      segs.push(parseFloat(lines[i].split(":")[1]) || 0);
+    }
+  }
+  let acc = 0;
+  let firstKeepIdx = 0;
+  for (let j = segs.length - 1; j >= 0; j--) {
+    acc += segs[j];
+    if (acc >= behindSec) { firstKeepIdx = j; break; }
+  }
+  return origFirstSeq + firstKeepIdx;
+}
+
+app.get("/api/hls-vod.m3u8", async (_req, res) => {
+  if (!currentLiveHlsUrl) return res.status(400).send("No HLS URL");
+  try {
+    const manifest = await fetchManifest(currentLiveHlsUrl);
+    const lines = manifest.split("\n");
+    const out = [];
+    let typeInserted = false;
+    for (const line of lines) {
+      out.push(line);
+      if (!typeInserted && line.startsWith("#EXT-X-MEDIA-SEQUENCE")) {
+        out.push("#EXT-X-PLAYLIST-TYPE:VOD");
+        typeInserted = true;
+      }
+    }
+    if (!manifest.includes("#EXT-X-ENDLIST")) out.push("#EXT-X-ENDLIST");
+    res.type("application/vnd.apple.mpegurl").send(out.join("\n"));
+  } catch (e) {
+    res.status(500).send("Proxy error: " + e.message);
+  }
+});
+
+// Switch mpv from live to VOD proxy (for scrub-back). Lands at what
+// would be "live edge" in the VOD timeline (= duration - 15) so the
+// user's apparent position stays continuous.
+app.post("/api/enable-dvr", async (_req, res) => {
+  if (activePlayer !== "mpv" || !currentLiveHlsUrl) return res.status(400).json({ error: "No live stream" });
+  try {
+    const p = await mpvCommand(["get_property", "path"]);
+    if (p?.data?.includes("/api/hls-vod.m3u8")) return res.json({ ok: true, alreadyInDvr: true });
+    const wasPaused = await mpvCommand(["get_property", "pause"]);
+    await mpvCommand(["loadfile", "http://localhost:3000/api/hls-vod.m3u8", "replace"]);
+    // Poll for new duration, seek to near-live edge in the VOD frame.
+    for (let i = 0; i < 20; i++) {
+      await new Promise(r => setTimeout(r, 250));
+      const nd = await mpvCommand(["get_property", "duration"]).catch(() => null);
+      if (nd?.data > 60) {
+        await mpvCommand(["seek", Math.max(0, nd.data - 15), "absolute"]);
+        if (!wasPaused?.data) await mpvCommand(["set_property", "pause", false]);
+        break;
+      }
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Switch mpv to the full live proxy and seek to its live edge. Used
+// when user taps "LIVE" while scrubbed back onto a sub-proxy window.
+app.post("/api/go-live", async (_req, res) => {
+  if (activePlayer !== "mpv" || !currentLiveHlsUrl) return res.status(400).json({ error: "No live stream" });
+  try {
+    const p = await mpvCommand(["get_property", "path"]);
+    if (p?.data?.includes("/api/hls-live.m3u8")) {
+      const d = await mpvCommand(["get_property", "duration"]);
+      if (d?.data > 5) await mpvCommand(["seek", d.data - 3, "absolute"]);
+      return res.json({ ok: true, alreadyLive: true });
+    }
+    const wasPaused = await mpvCommand(["get_property", "pause"]);
+    await mpvCommand(["loadfile", "http://localhost:3000/api/hls-live.m3u8", "replace"]);
+    if (!wasPaused?.data) await mpvCommand(["set_property", "pause", false]);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lightweight HLS proxy for phone — only last ~120s of segments (full manifest is 5MB+)
+app.get("/api/phone-hls", async (req, res) => {
+  if (!currentLiveHlsUrl) return res.status(400).send("No HLS URL");
+  try {
+    const manifest = await fetchManifest(currentLiveHlsUrl);
     const { lines } = parseHlsManifest(manifest);
     // Parse segments with their PDT tags
     const segLines = [];
@@ -2036,17 +2420,9 @@ app.get("/api/phone-hls", async (req, res) => {
         durSinceLastPdt += dur;
       }
     }
-    // Trim from end based on vlcDvrBehind, then keep ~120s window
-    // This makes the phone manifest match VLC's DVR position
-    let trimEnd = segLines.length;
-    if (vlcDvrBehind > 2) {
-      let trimDur = 0;
-      for (let i = segLines.length - 1; i >= 0; i--) {
-        trimDur += segLines[i].dur;
-        trimEnd = i;
-        if (trimDur >= vlcDvrBehind) break;
-      }
-    }
+    // Always serve ~120s ending at live edge (mpv owns DVR seeking now,
+    // phone just follows live in sync mode or plays independently).
+    const trimEnd = segLines.length;
     let keepDur = 0;
     let keepFrom = trimEnd;
     for (let i = trimEnd - 1; i >= 0; i--) {
@@ -2103,20 +2479,14 @@ app.get("/api/hls-seg", async (req, res) => {
   }
 });
 
-// VLC absolute time via HLS PDT — for phone sync
-let vlcPdtEpochMs = 0;
-// Stream-epoch wall-clock for the mpv live-HLS path. Same semantics as
-// vlcPdtEpochMs — the wall-clock of PTS=0 — but scoped to mpv so DVR
-// logic doesn't clobber it. Zero means "not calibrated / not live".
+// Stream-epoch wall-clock for the mpv live-HLS path — the wall-clock of
+// PTS=0. Zero means "not calibrated / not live".
 let mpvPdtEpochMs = 0;
 let mpvPdtRefreshInterval = null;
 let syncOffsetMs = 0; // tunable offset for drift calibration (milliseconds)
 app.post("/api/sync-offset", (req, res) => { syncOffsetMs = (req.body.ms || 0); console.log("  Sync offset:", syncOffsetMs, "ms"); res.json({ ok: true, ms: syncOffsetMs }); });
 app.get("/api/sync-offset", (_req, res) => { res.json({ ms: syncOffsetMs }); });
-let vlcManifestLiveEdgeMs = 0; // PDT of last segment in manifest (= live edge content time)
-let vlcManifestFetchedAt = 0; // wall-clock when manifest was last fetched
-let vlcManifestCalibOffset = 0; // offset between PDT-based and manifest-based absolute time (calibrated at live edge)
-// Fetch PDT from an HLS URL (called once at VLC spawn)
+
 // Parse first PTS from MPEG-TS segment buffer
 function extractFirstPts(buf) {
   const SYNC = 0x47, PKT = 188;
@@ -2211,15 +2581,10 @@ async function capturePdtEpoch(hlsUrl, label = "PDT") {
   }
 }
 
-async function fetchPdtFromUrl(hlsUrl) {
-  const epoch = await capturePdtEpoch(hlsUrl, "VLC PDT");
-  if (epoch != null) vlcPdtEpochMs = epoch;
-}
-
 // Start PDT tracking for an mpv-hosted live stream. Calibrates mpvPdtEpochMs
 // once up front, then refreshes every 60s so long-running streams don't
 // accumulate drift from encoder clock skew or PDT re-anchors on the server.
-// The refresh reads the *current* lastVlcHlsUrl each cycle so a URL change
+// The refresh reads the *current* currentLiveHlsUrl each cycle so a URL change
 // (e.g. /api/watch-on-phone re-resolving the stream) seamlessly retargets
 // the calibration instead of stopping the loop.
 function startMpvPdtTracking(hlsUrl) {
@@ -2230,43 +2595,41 @@ function startMpvPdtTracking(hlsUrl) {
     if (epoch != null) mpvPdtEpochMs = epoch;
   })();
   mpvPdtRefreshInterval = setInterval(async () => {
-    const currentUrl = lastVlcHlsUrl;
+    const currentUrl = currentLiveHlsUrl;
     if (!currentUrl || !mpvProcess) { stopMpvPdtTracking(); return; }
     const epoch = await capturePdtEpoch(currentUrl, "mpv PDT refresh");
     if (epoch != null) mpvPdtEpochMs = epoch;
   }, 60000);
+
+  // Refresh manifest stats every 10s so the scrubber's DVR window +
+  // live-edge PDT stays current. Stream keeps playing smoothly on
+  // whichever proxy mpv is on — live (full window, starts near edge)
+  // or sub (trimmed window, mpv plays forward and catches up to live
+  // via the live-style polling).
+  manifestStatsRefresh = setInterval(async () => {
+    if (!currentLiveHlsUrl) return;
+    try {
+      const manifest = await fetchManifest(currentLiveHlsUrl);
+      updateManifestStatsFromText(manifest);
+    } catch {}
+  }, 10_000);
 }
+
+let manifestStatsRefresh = null;
+// When user seeks back to a sub-proxy window, we anchor "how far behind
+// live they wanted to be" + wall-clock at seek time. The WS broadcast
+// computes effective behindLive dynamically, which keeps the scrubber
+// thumb correct when user plays at 1x (stays put) or pauses (drifts left).
+let subProxyAnchor = null;
 
 function stopMpvPdtTracking() {
   if (mpvPdtRefreshInterval) { clearInterval(mpvPdtRefreshInterval); mpvPdtRefreshInterval = null; }
+  if (manifestStatsRefresh) { clearInterval(manifestStatsRefresh); manifestStatsRefresh = null; }
   mpvPdtEpochMs = 0;
+  lastManifestFullDuration = 0;
+  lastManifestEdgeEpochMs = 0;
+  lastManifestFetchedAt = 0;
 }
-app.get("/api/vlc-absolute-time", async (_req, res) => {
-  if (activePlayer !== "vlc") return res.json({});
-  // Suppress during DVR seek reloads — VLC is rebuffering, drift would be wrong
-  if (vlcSeekBusy) return res.json({});
-  try {
-    if (!vlcPdtEpochMs && vlcDvrBehind < 2) {
-      // No PDT calibration (reconnected VLC) and at live edge — can't compute absolute time
-      return res.json({});
-    }
-    if (vlcDvrBehind < 2 && vlcPdtEpochMs) {
-      // At live edge with PDT: use original PDT + vlcTime (accurate, accounts for VLC buffering)
-      const absoluteMs = vlcPdtEpochMs + vlcTimeNow() * 1000;
-      return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
-    }
-    // Behind live (after DVR seek): manifest-based (VLC PTS is unreliable after reload)
-    if (vlcManifestLiveEdgeMs > 0) {
-      const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
-      const absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
-      return res.json({ absoluteMs, vlcTime: vlcTimeNow(), pdtEpoch: vlcPdtEpochMs });
-    }
-    return res.json({});
-  } catch {
-    res.json({});
-  }
-});
-
 app.post("/api/mpv-speed", async (req, res) => {
   const { speed } = req.body;
   if (typeof speed !== "number" || speed < 0.5 || speed > 2.0) return res.status(400).json({ error: "Invalid speed" });
@@ -2276,34 +2639,6 @@ app.post("/api/mpv-speed", async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-app.post("/api/vlc-rate", async (req, res) => {
-  const { rate } = req.body;
-  if (typeof rate !== "number" || rate < 0.5 || rate > 2.0) return res.status(400).json({ error: "Invalid rate" });
-  if (activePlayer !== "vlc") return res.status(400).json({ error: "VLC not active" });
-  try {
-    await vlcRC(`rate ${rate}`);
-    res.json({ ok: true, rate });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// Switch live stream from mpv to VLC for DVR scrubbing
-app.post("/api/switch-to-vlc", async (_req, res) => {
-  if (!nowPlaying || !lastVlcHlsUrl) return res.status(400).json({ error: "No live stream" });
-  // Get current mpv position for resume
-  let pos = 0;
-  try { const p = await mpvCommand(["get_property", "time-pos"]); pos = p?.data || 0; } catch {}
-  // Kill mpv
-  if (mpvProcess) { try { mpvProcess.kill("SIGKILL"); } catch {} mpvProcess = null; }
-  if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
-  stopMpvPdtTracking();
-  // Start VLC
-  spawnVlc(lastVlcHlsUrl);
-  activePlayer = "vlc";
-  res.json({ ok: true, player: "vlc" });
 });
 
 // Parse cookies.txt (Netscape format) into a cookie string and extract specific values
@@ -2629,46 +2964,11 @@ let _phoneSyncDebug = null;
 app.post("/api/phone-debug", (req, res) => { _phoneSyncDebug = { ...req.body, ts: Date.now() }; res.json({ ok: true }); });
 app.get("/api/phone-debug", (_req, res) => { res.json(_phoneSyncDebug || {}); });
 
-// VLC time interpolation — sub-second precision from integer get_time
-let vlcTimeModel = { lastInt: 0, lastIntAt: 0, prevInt: 0, prevIntAt: 0, running: false };
-
-function startVlcTimeModel() {
-  if (vlcTimeModel.running) { console.log("vlcTimeModel already running"); return; }
-  console.log("Starting vlcTimeModel");
-  vlcTimeModel.running = true;
-  let lastRaw = 0;
-  const poll = async () => {
-    if (!vlcTimeModel.running || activePlayer !== "vlc") { console.log("vlcTimeModel stopped:", vlcTimeModel.running, activePlayer); vlcTimeModel.running = false; return; }
-    try {
-      const raw = await vlcRC("get_time").then(s => parseInt(s) || 0);
-      const now = Date.now();
-      if (raw !== lastRaw && raw > 0) {
-        // Integer just changed — record the transition
-        vlcTimeModel.prevInt = vlcTimeModel.lastInt;
-        vlcTimeModel.prevIntAt = vlcTimeModel.lastIntAt;
-        vlcTimeModel.lastInt = raw;
-        vlcTimeModel.lastIntAt = now;
-      }
-      lastRaw = raw;
-    } catch {}
-    setTimeout(poll, 1000);
-  };
-  poll();
-}
-
-function vlcTimeNow() {
-  if (!vlcTimeModel.lastIntAt) return 0;
-  const elapsed = (Date.now() - vlcTimeModel.lastIntAt) / 1000;
-  return vlcTimeModel.lastInt + elapsed;
-}
-
 app.get("/api/phone-sync-target", async (_req, res) => {
-  if (activePlayer === "vlc" && vlcTimeModel.lastIntAt) {
-    return res.json({ vlcTime: vlcTimeNow(), serverTs: Date.now() });
-  }
   if (activePlayer === "mpv" && mpvProcess) {
     try {
       const p = await mpvCommand(["get_property", "time-pos"]);
+      // Field is named `vlcTime` historically; kept for client compat.
       if (p?.data) return res.json({ vlcTime: p.data, serverTs: Date.now() });
     } catch {}
   }
@@ -2681,7 +2981,7 @@ let _phoneVodUrls = null; // { video, audio } for DASH remux
 
 app.get("/api/phone-live-stream", async (_req, res) => {
   // Stream directly from ffmpeg with Content-Length for Safari compatibility
-  let streamUrl = lastVlcHlsUrl;
+  let streamUrl = currentLiveHlsUrl;
   if (!streamUrl && nowPlaying) {
     try {
       const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "95/94/93/22/18/best[height<=720]", "--get-url", nowPlaying], { timeout: 15000 });
@@ -2696,9 +2996,7 @@ app.get("/api/phone-live-stream", async (_req, res) => {
   const ffArgs = [];
   const isLive = streamUrl.includes(".m3u8") || streamUrl.includes("/live/1");
   if (!isLive) {
-    if (activePlayer === "vlc") {
-      try { const t = await vlcRC("get_time").then(s => parseInt(s) || 0); if (t > 5) ffArgs.push("-ss", String(t - 3)); } catch {}
-    } else if (activePlayer === "mpv") {
+    if (activePlayer === "mpv") {
       try { const p = await mpvCommand(["get_property", "time-pos"]); if (p?.data > 5) ffArgs.push("-ss", String(Math.floor(p.data - 3))); } catch {}
     }
   }
@@ -2720,36 +3018,14 @@ app.post("/api/watch-on-phone", async (_req, res) => {
   if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
   try {
     let seconds = 0;
-    if (activePlayer === "vlc") {
-      const s = await vlcStatus();
-      seconds = s.time || 0;
-    } else {
-      const pos = await mpvCommand(["get_property", "time-pos"]);
-      seconds = Math.floor(pos?.data || 0);
-      // Hide mpv window when playing on phone (don't use vid=no, it can drop audio)
-      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
-    }
+    const pos = await mpvCommand(["get_property", "time-pos"]);
+    seconds = Math.floor(pos?.data || 0);
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    if (activePlayer === "vlc") {
-      // Switch VLC → mpv for phone sync (shouldn't happen since live now uses mpv)
-      console.log("Phone sync: VLC active, switching to mpv");
-      killVlc();
-      try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
-      await new Promise(r => setTimeout(r, 200));
-      try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
-      mpvProcess = spawn("mpv", [
-        `--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
-        `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--autosync=30`, nowPlaying,
-      ], { stdio: "ignore" });
-      activePlayer = "mpv";
-      windowMode = "floating";
-      await new Promise(r => setTimeout(r, 3000));
-      try { const pos = await mpvCommand(["get_property", "time-pos"]); seconds = Math.floor(pos?.data || 0); } catch {}
-    }
     if (activePlayer === "mpv") {
       phoneActive = true;
+      // Hide mpv window when playing on phone (don't use vid=no, it can drop audio)
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
     }
 
@@ -2777,7 +3053,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       } catch {}
     }
     if (isLiveStream && hlsUrl) {
-      lastVlcHlsUrl = hlsUrl;
+      currentLiveHlsUrl = hlsUrl;
       // Phone handing off from a fresh URL — restart mpv PDT tracking so
       // the refresh loop doesn't stop itself due to the URL mismatch.
       startMpvPdtTracking(hlsUrl);
@@ -2813,14 +3089,8 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     console.error("Watch on phone error:", err.message);
     try {
       const m = nowPlaying.match(/v=([\w-]+)/);
-      let s = 0;
-      if (activePlayer === "vlc") {
-        const st = await vlcStatus().catch(() => ({ time: 0 }));
-        s = st.time || 0;
-      } else {
-        const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
-        s = Math.floor(pos?.data || 0);
-      }
+      const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
+      const s = Math.floor(pos?.data || 0);
       res.json({ youtubeUrl: `https://youtu.be/${m?.[1]}?t=${s}`, seconds: s });
     } catch {
       res.status(500).json({ error: "Failed" });
@@ -2979,7 +3249,7 @@ app.post("/api/phone-only", async (req, res) => {
       // so Safari plays it natively.
       const isYouTube = urls[0].includes("googlevideo.com") || urls[0].includes("youtube.com");
       if (isYouTube) {
-        lastVlcHlsUrl = urls[0];
+        currentLiveHlsUrl = urls[0];
         res.json({ streamUrl: `/api/phone-hls?t=${Date.now()}`, seconds, videoId, isLive: true, duration });
       } else {
         res.json({ streamUrl: urls[0], seconds, videoId, isLive: true, duration });
@@ -3234,30 +3504,21 @@ app.get("/api/comments", async (req, res) => {
 
 // Idempotent pause/resume (for lock screen widget — avoids toggle race conditions)
 app.post("/api/pause", async (_req, res) => {
-  if (activePlayer === "vlc") {
-    if (!vlcPaused) { try { await vlcPause(); vlcPaused = true; } catch {} }
-  } else {
-    try { await mpvCommand(["set_property", "pause", true]); } catch {}
-  }
+  try { await mpvCommand(["set_property", "pause", true]); } catch {}
   _lastPolledPaused = true;
   if (windowMode !== "fullscreen") {
-    try { execSync(`osascript -e 'tell application "System Events" to set visible of process "${activePlayer === "vlc" ? "VLC" : "mpv"}" to false'`, { stdio: "ignore" }); } catch {}
+    try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
   }
   res.json({ ok: true, paused: true });
 });
 
 app.post("/api/resume", async (_req, res) => {
-  if (activePlayer === "vlc") {
-    if (vlcPaused) { try { await vlcPause(); vlcPaused = false; } catch {} }
-  } else {
-    try { await mpvCommand(["set_property", "pause", false]); } catch {}
-  }
+  try { await mpvCommand(["set_property", "pause", false]); } catch {}
   _lastPolledPaused = false;
   if (windowMode !== "fullscreen" && !phoneActive) {
-    const proc = activePlayer === "vlc" ? "VLC" : "mpv";
     try {
-      execSync(`osascript -e 'tell application "System Events" to set visible of process "${proc}" to true'`, { stdio: "ignore" });
-      if (activePlayer !== "vlc" && windowMode === "maximize") {
+      execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" });
+      if (windowMode === "maximize") {
         const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
         if (wid) { try { execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" }); execSync(`aerospace fullscreen --no-outer-gaps on`, { stdio: "ignore" }); } catch {} }
       }
@@ -3268,27 +3529,6 @@ app.post("/api/resume", async (_req, res) => {
 
 // Play/pause (toggle)
 app.post("/api/playpause", async (_req, res) => {
-  if (activePlayer === "vlc") {
-    try {
-      await vlcPause();
-      vlcPaused = !vlcPaused;
-      // Note: don't adjust vlcDvrBehind on pause/unpause — VLC's HLS demuxer
-      // catches back up to live edge on its own after unpausing
-      if (windowMode === "floating" || windowMode === "maximize") {
-        try {
-          if (vlcPaused) {
-            execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to false'`, { stdio: "ignore" });
-          } else {
-            execSync(`osascript -e 'tell application "System Events" to set visible of process "VLC" to true'`, { stdio: "ignore" });
-            execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" });
-          }
-        } catch {}
-      }
-      return res.json({ ok: true, paused: vlcPaused });
-    } catch {
-      return res.status(500).json({ error: "VLC play/pause failed" });
-    }
-  }
   try {
     await mpvCommand(["cycle", "pause"]);
     // Small delay to let mpv apply the state change before reading it back
@@ -3356,37 +3596,8 @@ app.post("/api/move-monitor", async (req, res) => {
   windowLock = true;
   const { target } = req.body;
   try {
-    const appName = activePlayer === "vlc" ? "VLC" : "mpv";
-    const wid = execSync(`aerospace list-windows --all | grep ${appName} | awk -F'|' '{print $1}' | tr -d ' ' | head -1`, { encoding: "utf8" }).trim();
-    if (!wid) return res.status(400).json({ error: `No ${appName} window` });
-
-    if (activePlayer === "vlc") {
-      const targetWs = target === "laptop" ? "8" : "1";
-      const savedMode = windowMode;
-      if (windowMode === "fullscreen") {
-        await vlcCommand("fullscreen");
-        await new Promise(r => setTimeout(r, 500));
-      }
-      vlcAerospace("fullscreen off");
-      execSync(`aerospace move-node-to-workspace --window-id ${wid} ${targetWs}`, { stdio: "ignore" });
-      execSync(`aerospace workspace ${targetWs}`, { stdio: "ignore" });
-      await new Promise(r => setTimeout(r, 300));
-      if (savedMode === "fullscreen") {
-        await vlcCommand("fullscreen");
-        try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
-        windowMode = "fullscreen";
-      } else if (savedMode === "maximize") {
-        vlcAerospace("layout tiling");
-        vlcAerospace("fullscreen --no-outer-gaps on");
-        windowMode = "maximize";
-      } else {
-        windowMode = "floating";
-      }
-      currentMonitor = target;
-      res.json({ ok: true });
-      windowLock = false;
-      return;
-    }
+    const wid = execSync(`aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1`, { encoding: "utf8" }).trim();
+    if (!wid) return res.status(400).json({ error: "No mpv window" });
 
     const screens = getScreenOrigins();
     const screenIdx = target === "laptop" ? screens.findIndex(s => s.isLaptop) : screens.findIndex(s => s.isMain);
@@ -3486,24 +3697,6 @@ app.post("/api/maximize", async (req, res) => {
   if (windowLock) return res.json({ ok: true });
   windowLock = true;
   try {
-    if (activePlayer === "vlc") {
-      if (windowMode === "fullscreen") {
-        await vlcCommand("fullscreen");
-        await new Promise(r => setTimeout(r, 500));
-      }
-      if (windowMode === "maximize") {
-        vlcAerospace("fullscreen off");
-        await vlcFloatTopRight();
-        windowMode = "floating";
-      } else {
-        vlcAerospace("layout tiling");
-        vlcAerospace("fullscreen --no-outer-gaps on");
-        windowMode = "maximize";
-      }
-      res.json({ ok: true });
-      windowLock = false;
-      return;
-    }
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     const wasFullscreen = fs?.data === true;
     if (wasFullscreen) {
@@ -3555,24 +3748,6 @@ app.post("/api/fullscreen", async (_req, res) => {
   if (windowLock) return res.json({ ok: true });
   windowLock = true;
   try {
-    if (activePlayer === "vlc") {
-      if (windowMode === "maximize") {
-        vlcAerospace("fullscreen off");
-      }
-      await vlcCommand("fullscreen");
-      await new Promise(r => setTimeout(r, 500));
-      try {
-        const isFs = execSync(`osascript -e 'tell application "System Events" to get value of attribute "AXFullScreen" of first window of process "VLC"'`, { encoding: "utf8" }).trim();
-        windowMode = isFs === "true" ? "fullscreen" : "floating";
-      } catch { windowMode = windowMode === "fullscreen" ? "floating" : "fullscreen"; }
-      if (windowMode === "fullscreen") {
-        try { execSync(`osascript -e 'tell application "VLC" to activate'`, { stdio: "ignore" }); } catch {}
-      } else {
-        await vlcFloatTopRight();
-      }
-      res.json({ ok: true });
-      return;
-    }
     const fs = await mpvCommand(["get_property", "fullscreen"]);
     if (fs?.data === true) {
       await mpvCommand(["set_property", "fullscreen", false]);
@@ -3991,8 +4166,6 @@ wss.on("connection", (ws) => {
         _phoneSyncDebug = { ...data, ts: Date.now() };
         if (data.debug) console.log("  Phone DVR:", data.debug);
         if (data.mpvPos !== undefined) console.log(`  Sync: drift=${data.drift} mpv=${data.mpvPos} ph=${data.phonePos} el=${data.elapsed}`);
-      } else if (data.type === "vlc-rate" && typeof data.rate === "number") {
-        vlcRC(`rate ${data.rate}`).catch(() => {});
       } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
         mpvCommand(["set_property", "speed", data.speed]).catch(() => {});
       }
@@ -4041,37 +4214,7 @@ function startWsSync() {
     if (wss.clients.size === 0) return;
     try {
       let state;
-      if (activePlayer === "vlc" && vlcProcess && nowPlaying) {
-        const s = await vlcStatus();
-        if (s.length > 0 && vlcDvrWindow <= 0) vlcDvrWindow = s.length;
-        const dvrPos = Math.max(0, vlcDvrWindow - vlcDvrBehind);
-        // Absolute time for drift calculation
-        let absoluteMs = null;
-        const vlcT = vlcTimeNow();
-        // Use vlcPdtEpochMs + vlcTime — this reflects what VLC is actually displaying
-        // Note: has cumulative precision error but phone calibrates against it
-        if (vlcPdtEpochMs && vlcT > 2) {
-          absoluteMs = vlcPdtEpochMs + vlcT * 1000;
-        } else if (vlcManifestLiveEdgeMs > 0) {
-          const liveEdgeNow = vlcManifestLiveEdgeMs + (Date.now() - vlcManifestFetchedAt);
-          absoluteMs = liveEdgeNow - vlcDvrBehind * 1000;
-        }
-        const vlcRealBehind = vlcDvrBehind;
-        state = {
-          type: "playback",
-          playing: true, isLive: true, player: "vlc",
-          position: dvrPos, duration: vlcDvrWindow, vlcTime: s.time || undefined,
-          vlcBehind: vlcRealBehind,
-          paused: vlcPaused, absoluteMs: absoluteMs ? absoluteMs + syncOffsetMs : null,
-          url: nowPlaying, serverTs: Date.now(),
-          title: historyMap.get(nowPlaying)?.title || "",
-          channel: historyMap.get(nowPlaying)?.channel || "",
-          thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
-          monitor: currentMonitor, windowMode: windowMode || "floating",
-          visible: !phoneActive && !(vlcPaused && windowMode !== "fullscreen"),
-          seeking: vlcSeekBusy
-        };
-      } else if (activePlayer === "mpv" && nowPlaying) {
+      if (activePlayer === "mpv" && nowPlaying) {
         try {
           // Invalidate immutable cache when video changes
           if (_mpvVideoInfoCache.url !== nowPlaying) {
@@ -4085,6 +4228,7 @@ function startWsSync() {
             mpvCommand(["get_property", "duration"]),
             mpvCommand(["get_property", "pause"]),
             mpvCommand(["get_property", "file-format"]).catch(() => null),
+            mpvCommand(["get_property", "path"]).catch(() => null),
           ];
           if (needInfo) {
             calls.push(
@@ -4094,9 +4238,9 @@ function startWsSync() {
             );
           }
           const results = await Promise.all(calls);
-          const [pos, dur, pause, fmt] = results;
+          const [pos, dur, pause, fmt, mpvPath] = results;
           if (needInfo) {
-            const [, , , , height, vcodec, hwdec] = results;
+            const [, , , , , height, vcodec, hwdec] = results;
             if (height?.data != null) _mpvVideoInfoCache.height = height.data;
             if (vcodec?.data != null) _mpvVideoInfoCache.videoCodec = vcodec.data;
             if (hwdec?.data != null) _mpvVideoInfoCache.hwdec = hwdec.data;
@@ -4140,11 +4284,37 @@ function startWsSync() {
           if (isHls && mpvPdtEpochMs && timePos > 0) {
             mpvAbsoluteMs = mpvPdtEpochMs + timePos * 1000 + syncOffsetMs;
           }
+          const onLiveProxy = !!(mpvPath?.data?.includes("/api/hls-live.m3u8"));
+          const onSubProxy = !!(mpvPath?.data?.includes("/api/hls-sub.m3u8"));
+          if (!onSubProxy && subProxyAnchor) subProxyAnchor = null;
+          const dvrActive = onSubProxy;
+          // Scrubber shows the full YouTube DVR window always.
+          // - Live proxy: mpv's tiny cache at live edge → thumb near right.
+          //   behindLive = mpvDur - timePos (small, ≤ ~20s).
+          // - Sub proxy: anchored behind-live at seek time. Playing at 1x
+          //   means behindLive stays constant (live edge + user both
+          //   advance 1x). Paused means behindLive grows (live moves, we
+          //   don't). Compute: anchor.behindLive + (wall_elapsed - play_elapsed).
+          let scrubPos = timePos;
+          let scrubDur = reportedDur > 0 ? reportedDur : histDur;
+          if (isHls && lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
+            scrubDur = lastManifestFullDuration;
+            let behindLive;
+            if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null) {
+              const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
+              const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
+              behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
+            } else {
+              behindLive = Math.max(0, reportedDur - timePos);
+            }
+            scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLive));
+          }
           state = {
             type: "playback",
             playing: true, isLive: isHls, player: "mpv",
-            position: timePos,
-            duration: reportedDur > 0 ? reportedDur : histDur,
+            dvrActive,
+            position: scrubPos,
+            duration: scrubDur,
             paused: pause?.data || false,
             phoneSyncOk: !isHls || !!mpvAbsoluteMs,
             absoluteMs: mpvAbsoluteMs,
@@ -4255,8 +4425,8 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
                   "yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying],
                   { timeout: 15000 }
                 );
-                lastVlcHlsUrl = stdout.trim();
-                startMpvPdtTracking(lastVlcHlsUrl);
+                currentLiveHlsUrl = stdout.trim();
+                startMpvPdtTracking(currentLiveHlsUrl);
               } catch (e) { console.error("  reconnect PDT resolve failed:", e.message); }
             })();
           }
@@ -4272,33 +4442,4 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
     }
   } catch {}
 
-  // Check VLC
-  if (!activePlayer) {
-    try {
-      const time = await vlcRC("get_time");
-      if (time && time !== "") {
-        activePlayer = "vlc";
-        vlcProcess = { kill: () => { try { execSync("pkill -f VLC", { stdio: "ignore" }); } catch {} } };
-        // Find URL from recent history (most recent live stream)
-        const liveEntry = history.find(h => h.url);
-        if (liveEntry) nowPlaying = liveEntry.url;
-        console.log("  Reconnected to VLC:", (nowPlaying || "unknown").substring(0, 60));
-        startVlcTimeModel();
-        // Fetch HLS URL if not cached (needed for DVR scrubbing and phone sync)
-        if (!lastVlcHlsUrl && nowPlaying) {
-          try {
-            const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "-f", "301/300/96/95/94/93", "--get-url", nowPlaying], { timeout: 15000 });
-            if (stdout.trim()) lastVlcHlsUrl = stdout.trim();
-          } catch {}
-        }
-        vlcDvrBehind = 0; // reset stale DVR offset from previous session
-        if (lastVlcHlsUrl) { fetchPdtFromUrl(lastVlcHlsUrl); startDvrRefresh(); }
-        // Monitor VLC liveness
-        const vlcMonitor = setInterval(async () => {
-          try { await vlcRC("get_time"); }
-          catch { clearInterval(vlcMonitor); vlcProcess = null; nowPlaying = null; activePlayer = null; }
-        }, 5000);
-      }
-    } catch {}
-  }
 });

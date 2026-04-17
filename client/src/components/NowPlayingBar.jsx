@@ -84,7 +84,7 @@ const Icons = {
 export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const pb = usePlaybackStore(useShallow(s => ({
     position: s.position, duration: s.duration, url: s.url,
-    isLive: s.isLive, paused: s.paused, playing: s.playing,
+    isLive: s.isLive, dvrActive: s.dvrActive, paused: s.paused, playing: s.playing,
     monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
     height: s.height, videoCodec: s.videoCodec, hwdec: s.hwdec,
   })))
@@ -471,7 +471,12 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
       {/* Time row — right below progress bar */}
       <div className="np-sub-row">
         <button className="np-skip-btn" onClick={skipBack}>-10</button>
-        <span className="np-time">{formatTime(position)}</span>
+        <span className="np-time">
+          {pb.isLive
+            ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
+            : formatTime(position)
+          }
+        </span>
         <button
           className="np-skip-btn"
           style={{ color: pb.visible === false ? '#d05050' : (pb.visible ? 'var(--green)' : 'var(--text-dim)') }}
@@ -484,9 +489,28 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             }
           </svg>
         </button>
-        <span className="np-time" style={{ flex: 1, textAlign: 'center' }}>
+        <span
+          className="np-time"
+          style={{
+            flex: 1,
+            textAlign: 'center',
+            cursor: pb.isLive ? 'pointer' : 'default',
+            // Red = actually at live edge. Dim = scrubbed back; tapping
+            // this jumps you forward to live.
+            color: pb.isLive
+              ? (liveTimeBehind < 5 ? 'var(--red)' : 'var(--text-dim)')
+              : undefined,
+          }}
+          onClick={() => {
+            if (!pb.isLive) return
+            hapticTick()
+            const ctrl = phoneCtrl()
+            if (ctrl) { ctrl.seek(Math.max(0, pb.duration - 5)) }
+            else { fetch('/api/go-live', { method: 'POST' }).catch(() => {}) }
+          }}
+        >
           {pb.isLive
-            ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
+            ? (liveTimeBehind < 5 ? 'LIVE' : 'GO LIVE')
             : ''
           }
         </span>
@@ -499,7 +523,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
           </svg>
         </button>
-        <span className="np-time">{formatTime(duration)}</span>
+        <span className="np-time">{pb.isLive ? '' : formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>
       </div>
 

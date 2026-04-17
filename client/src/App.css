@@ -115,6 +115,30 @@ body {
 }
 
 /* ── Search ── */
+.logo-btn {
+  flex-shrink: 0;
+  /* Icon flush with the left edge of the content column (matches the
+   * thumbnail left edge in the grid below — both are inside the 16px
+   * .header-inner / .app padding). Tap area extended vertically by the
+   * header padding and horizontally via negative right margin below. */
+  width: 16px;
+  height: 28px;
+  padding: 0;
+  margin-right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  background: none;
+  border: none;
+  color: var(--green, #8ec07c);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.logo-btn:active {
+  opacity: 0.6;
+}
+
 .search-wrap {
   position: relative;
   flex: 1;
@@ -188,6 +212,73 @@ body {
 }
 
 .section-label .accent { color: var(--accent); }
+
+/* ── Channel header (shown on /channel tab) ── */
+.channel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0 16px;
+  border-bottom: 1px solid var(--surface, #3a3a3a);
+  margin-bottom: 12px;
+}
+
+.channel-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--surface, #3a3a3a);
+  object-fit: cover;
+}
+
+.channel-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.channel-name {
+  font-size: var(--font-lg, 14px);
+  color: var(--text);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.channel-subs {
+  font-size: var(--font-sm, 12px);
+  color: var(--text-dim);
+}
+
+.channel-sub-btn {
+  flex-shrink: 0;
+  font: inherit;
+  font-size: var(--font-sm, 12px);
+  padding: 7px 14px;
+  border: 1px solid var(--text);
+  background: var(--text);
+  color: var(--bg);
+  border-radius: 0;
+  cursor: pointer;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.channel-sub-btn.subscribed {
+  background: transparent;
+  color: var(--text-dim);
+  border-color: var(--text-dim);
+}
+
+.channel-sub-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 
 /* ── Video grid ── */
 .video-grid {
@@ -1444,6 +1535,18 @@ body {
   .video-title {
     font-size: var(--font-lg);
     -webkit-line-clamp: 2;
+  }
+
+  /* Desktop: no phone player reservation. Float the FAB stack right
+   * above the now-playing bar — height is published live as --np-height
+   * by NowPlayingBar's ResizeObserver, so this follows any title-wrap or
+   * progress-bar layout change. Fallback covers the pre-mount frame. */
+  .fab-stack {
+    bottom: calc(var(--np-height, 100px) + var(--safe-bottom) + 12px);
+  }
+  .claude-quick-reply {
+    /* Sit above the 136px tall FAB stack (3 × 40px + 2 × 8px gaps). */
+    bottom: calc(var(--np-height, 100px) + var(--safe-bottom) + 156px);
   }
 }
 

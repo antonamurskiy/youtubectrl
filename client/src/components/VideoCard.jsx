@@ -52,7 +52,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(months / 12)}y ago`
 }
 
-export default function VideoCard({ video, isPlaying, isActive }) {
+export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const addToast = useUIStore(s => s.addToast)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
@@ -214,6 +214,30 @@ export default function VideoCard({ video, isPlaying, isActive }) {
     setContextMenu(null)
   }, [videoUrl, addToast])
 
+  const handleNotInterested = useCallback(async () => {
+    const token = video.notInterestedToken
+    setContextMenu(null)
+    if (!token) {
+      addToast('Not available')
+      return
+    }
+    // Optimistically remove from grid; YouTube backend gets told in parallel.
+    const id = video.videoId || video.id
+    if (id) onHide?.(id)
+    try {
+      const r = await fetch('/api/not-interested', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token }),
+      })
+      const data = await r.json()
+      if (!r.ok || !data.ok) addToast(data.error || 'Feedback failed')
+      else addToast('Not interested')
+    } catch {
+      addToast('Feedback failed')
+    }
+  }, [video.notInterestedToken, video.videoId, video.id, onHide, addToast])
+
   const durationStr = formatDuration(video.duration || video.lengthSeconds)
   const viewsStr = formatViews(video.views || video.viewCount)
   const agoStr = video.uploadedAt || timeAgo(video.publishedAt || video.uploaded)
@@ -324,6 +348,11 @@ export default function VideoCard({ video, isPlaying, isActive }) {
             <button className="context-menu-item" onClick={handleCopyLink}>
               Copy link
             </button>
+            {video.notInterestedToken && (
+              <button className="context-menu-item" onClick={handleNotInterested} style={{ color: 'var(--red)' }}>
+                Not interested
+              </button>
+            )}
             <button className="context-menu-item" onClick={closeContextMenu} style={{ color: 'var(--accent2)' }}>
               Close
             </button>

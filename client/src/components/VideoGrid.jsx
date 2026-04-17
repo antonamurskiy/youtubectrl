@@ -101,6 +101,8 @@ export default function VideoGrid() {
   const [hasMore, setHasMore] = useState(false)
   const [nextPage, setNextPage] = useState(null)
   const [sectionLabel, setSectionLabel] = useState('')
+  const [channelInfo, setChannelInfo] = useState(null) // { id, name, thumbnail, subscriberCount, subscribed }
+  const [subBusy, setSubBusy] = useState(false)
 
   const genRef = useRef(0)
   const loadMoreRef = useRef(null)
@@ -209,6 +211,8 @@ export default function VideoGrid() {
           setShorts(data.shorts || [])
           if (data.filtered?.length) setFilteredVideos(data.filtered)
           setSectionLabel(label)
+          if (tab === 'channel') setChannelInfo(data.channel || null)
+          else setChannelInfo(null)
           const key = cacheKeyFor(tab, searchQuery, channelQuery)
           if (key) {
             tabCache.set(key, {
@@ -217,6 +221,7 @@ export default function VideoGrid() {
               sectionLabel: label,
               hasMore: newHasMore,
               nextPage: token,
+              channel: data.channel || null,
             })
           }
         }
@@ -271,9 +276,11 @@ export default function VideoGrid() {
       setSectionLabel(cached.sectionLabel)
       setHasMore(cached.hasMore)
       setNextPage(cached.nextPage)
+      setChannelInfo(tab === 'channel' ? (cached.channel || null) : null)
       setLoading(false)
       fetchVideos(null, { silent: true })
     } else {
+      if (tab !== 'channel') setChannelInfo(null)
       fetchVideos()
     }
   }, [activeTab, searchQuery, channelQuery, refreshKey])
@@ -299,8 +306,71 @@ export default function VideoGrid() {
     }
   }, [hasMore, loading, activeTab, nextPage, fetchVideos])
 
+  const toggleSub = async () => {
+    if (!channelInfo?.id || subBusy) return
+    const nextSubscribed = !channelInfo.subscribed
+    setSubBusy(true)
+    // Optimistic update
+    setChannelInfo(ci => ci ? { ...ci, subscribed: nextSubscribed } : ci)
+    try {
+      const r = await fetch('/api/subscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: channelInfo.id, subscribe: nextSubscribed }),
+      })
+      const data = await r.json()
+      if (!r.ok) {
+        // Rollback
+        setChannelInfo(ci => ci ? { ...ci, subscribed: !nextSubscribed } : ci)
+        addToast(data.error || 'Subscription failed')
+      } else {
+        addToast(nextSubscribed ? 'Subscribed' : 'Unsubscribed')
+        // Write-through to cache so tab switches don't flicker back
+        const key = cacheKeyFor('channel', searchQuery, channelQuery)
+        if (key) {
+          const cached = tabCache.get(key)
+          if (cached?.channel) {
+            tabCache.set(key, { ...cached, channel: { ...cached.channel, subscribed: nextSubscribed } })
+          }
+        }
+      }
+    } catch (e) {
+      setChannelInfo(ci => ci ? { ...ci, subscribed: !nextSubscribed } : ci)
+      addToast('Subscription failed')
+    } finally {
+      setSubBusy(false)
+    }
+  }
+
+  const fmtSubs = (n) => {
+    if (n == null) return ''
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 10_000_000 ? 0 : 1)}M subscribers`
+    if (n >= 1_000) return `${(n / 1_000).toFixed(n >= 10_000 ? 0 : 1)}K subscribers`
+    return `${n} subscribers`
+  }
+
   return (
     <>
+      {activeTab === 'channel' && channelInfo && (
+        <div className="channel-header">
+          {channelInfo.thumbnail && (
+            <img className="channel-avatar" src={channelInfo.thumbnail} alt="" />
+          )}
+          <div className="channel-info">
+            <div className="channel-name">{channelInfo.name || channelQuery?.name || 'Channel'}</div>
+            {channelInfo.subscriberCount != null && (
+              <div className="channel-subs">{fmtSubs(channelInfo.subscriberCount)}</div>
+            )}
+          </div>
+          <button
+            className={`channel-sub-btn${channelInfo.subscribed ? ' subscribed' : ''}`}
+            onClick={toggleSub}
+            disabled={subBusy || !channelInfo.id}
+          >
+            {channelInfo.subscribed ? 'Subscribed' : 'Subscribe'}
+          </button>
+        </div>
+      )}
       <div className="video-grid">
         {loading && <SkeletonCards />}
 
@@ -319,6 +389,7 @@ export default function VideoGrid() {
               nowPlayingUrl.includes(video.videoId)
             )}
             isActive={!nowPaused}
+            onHide={(id) => setVideos(vs => vs.filter(v => (v.videoId || v.id) !== id))}
           />
         ))}
       </div>
@@ -344,6 +415,7 @@ export default function VideoGrid() {
                 nowPlayingUrl === video.url ||
                 nowPlayingUrl.includes(video.videoId)
               )}
+              onHide={(id) => setVideos(vs => vs.filter(v => (v.videoId || v.id) !== id))}
             />
           ))}
         </div>

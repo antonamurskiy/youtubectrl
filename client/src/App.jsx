@@ -8,7 +8,7 @@ import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useVolumeButtons } from './hooks/useVolumeButtons'
-import { useLiveActivity } from './hooks/useLiveActivity'
+import { isNativeIOS, NativePlayer } from './native/player'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
 import { useSyncStore } from './stores/sync'
@@ -104,7 +104,16 @@ function App() {
   useNativeNowPlaying({ send })
   useClaudeNotification()
   useVolumeButtons()
-  useLiveActivity()
+
+  // One-shot: kill any in-flight Live Activity left over from older app
+  // versions that used to start them. We no longer use Live Activities —
+  // the lock-screen media widget (MPNowPlayingInfoCenter) covers what we
+  // need. Runs once on mount.
+  useEffect(() => {
+    if (!isNativeIOS) return
+    NativePlayer.endLiveActivity?.().catch(() => {})
+  }, [])
+
   const { activeTab, setTab, secretMenuOpen, toggleSecretMenu, refresh, refreshing } = useUIStore(
     useShallow(s => ({
       activeTab: s.activeTab,
@@ -251,6 +260,23 @@ function App() {
       >
         <header className="header">
           <div className="header-inner">
+            <button
+              className="logo-btn"
+              aria-label="Home"
+              onClick={() => {
+                hapticTick()
+                // Reset to recommended: clear search + channel, flip tab
+                useUIStore.setState({
+                  activeTab: 'rec',
+                  searchQuery: '',
+                  channelQuery: null,
+                })
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+                <polygon points="5 4 15 12 5 20 5 4" />
+              </svg>
+            </button>
             <SearchBar />
             <div className="tabs">
               {tabs.map(t => (

@@ -73,17 +73,9 @@ function syncLive(pb, video, phonePos, getPlayingDate, send, sync, behindLive) {
   store.setDrift(drift)
   send({ type: 'phone-state', drift: +drift.toFixed(2), behindLive: +behindLive.toFixed(0) })
 
-  if (behindLive > 5) return
-  const now = Date.now()
-  if (now - _lastRateSend < 1000) return
-  _lastRateSend = now
-
-  if (Math.abs(drift) > 0.1) {
-    const rate = Math.max(0.9, Math.min(1.1, 1.0 - drift * 0.1))
-    send({ type: 'vlc-rate', rate: +rate.toFixed(4) })
-  } else {
-    send({ type: 'vlc-rate', rate: 1.0 })
-  }
+  // Used to nudge VLC rate here; dropped with the VLC removal. mpv live
+  // ignores rate anyway (Safari HLS + iOS AVPlayer don't honor rate for
+  // live either), so drift-chasing was always aspirational.
 }
 
 function syncVod(pb, video, phonePos, send, sync) {
