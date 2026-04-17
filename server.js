@@ -4200,6 +4200,9 @@ wss.on("connection", (ws) => {
         _phoneSyncDebug = { ...data, ts: Date.now() };
         if (data.debug) console.log("  Phone DVR:", data.debug);
         if (data.mpvPos !== undefined) console.log(`  Sync: drift=${data.drift} mpv=${data.mpvPos} ph=${data.phonePos} el=${data.elapsed}`);
+        if (data.mpvPdt !== undefined || data.phonePdt !== undefined) {
+          console.log(`[drift] phone drift=${data.drift}s mpvPdt=${data.mpvPdt ? new Date(data.mpvPdt).toISOString().substring(11, 23) : '?'} phonePdt=${data.phonePdt ? new Date(data.phonePdt).toISOString().substring(11, 23) : '?'}`);
+        }
       } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
         mpvCommand(["set_property", "speed", data.speed]).catch(() => {});
       }
@@ -4375,6 +4378,10 @@ function startWsSync() {
               const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
               scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
             }
+            // Debug — remove after sync is stable.
+            const mode = onSubProxy ? 'sub' : (onLiveProxy ? 'live' : 'other');
+            const userPdtStr = userPdt ? new Date(userPdt).toISOString().substring(11, 23) : 'null';
+            console.log(`[drift] ${mode} pos=${timePos.toFixed(2)} dur=${reportedDur.toFixed(1)} userPdt=${userPdtStr}`);
           }
 
           // ── Phone PDT sync ───────────────────────────────────────

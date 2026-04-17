@@ -481,9 +481,18 @@ export default function PhonePlayer({ send }) {
             // demux enough to match Mac speaker output.
             const AUDIO_LEAD_MS = 0
             const seekTarget = mpvPdt + seekBiasRef.current + AUDIO_LEAD_MS
-            driftSamplesRef.current.push(drift)
-            if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
-            const smoothed = driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+            // Big-drift guard: if |drift| > 10s, don't pollute the EMA
+            // with outliers (stale currentDate from pre-seek AVPlayer
+            // state, new stream just started, etc.). We still fire the
+            // forced seek below using raw drift. EMA converges cleanly
+            // after a few normal-range samples.
+            if (Math.abs(drift) < 10) {
+              driftSamplesRef.current.push(drift)
+              if (driftSamplesRef.current.length > 5) driftSamplesRef.current.shift()
+            }
+            const smoothed = driftSamplesRef.current.length > 0
+              ? driftSamplesRef.current.reduce((a, b) => a + b, 0) / driftSamplesRef.current.length
+              : drift // no clean samples yet — fall back to raw so the seek still fires
             // UI: show "syncing…" while drift is huge (initial
             // calibration) or samples are unstable. Show actual value
             // once we're in the steady-state range (<10s drift).
