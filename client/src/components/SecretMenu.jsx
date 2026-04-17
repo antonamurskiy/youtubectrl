@@ -9,6 +9,43 @@ import { tick as hapticTick, thump as hapticThump, selection as hapticSelection,
 const MIN_SIZE = 9
 const MAX_SIZE = 20
 
+// Phone sync offset tuner — the MPV_DISPLAY_LAG we use to compute mpv's
+// displayed-frame PDT has a stream-dependent component (depends on
+// mpv's internal buffer behavior, which varies with bitrate and cache
+// settings). Auto-calibration is impossible from the signals we have:
+// phone's observed drift converges to 0 by construction (it seeks to
+// match whatever we report), so there's no error signal to learn from.
+// Manual nudge UI is the pragmatic fix — one tap shifts server-side
+// syncOffsetMs which is added to absoluteMs broadcasts.
+function SyncOffsetTuner({ addToast }) {
+  const [ms, setMs] = useState(null)
+  useEffect(() => {
+    fetch('/api/sync-offset').then(r => r.json()).then(d => setMs(d.ms || 0)).catch(() => {})
+  }, [])
+  const nudge = (delta) => {
+    const next = (ms || 0) + delta
+    setMs(next)
+    hapticTick()
+    fetch('/api/sync-offset', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ms: next }),
+    }).catch(() => {})
+  }
+  if (ms == null) return null
+  return (
+    <div className="secret-menu-row" style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+      <span style={{ flex: 1 }}>Sync offset</span>
+      <button className="secret-menu-item" style={{ width: 44, padding: '6px 0' }} onClick={() => nudge(-200)}>-</button>
+      <span style={{ minWidth: 64, textAlign: 'center', color: ms === 0 ? 'var(--text-dim)' : 'var(--text)' }}>
+        {ms > 0 ? '+' : ''}{ms}ms
+      </span>
+      <button className="secret-menu-item" style={{ width: 44, padding: '6px 0' }} onClick={() => nudge(200)}>+</button>
+      <button className="secret-menu-item" style={{ width: 56, padding: '6px 0' }} onClick={() => nudge(-ms)}>0</button>
+    </div>
+  )
+}
+
 function FontSizeScrubber({ value, onChange }) {
   const ref = useRef(null)
   const draggingRef = useRef(false)
@@ -330,6 +367,7 @@ export default function SecretMenu() {
           </button>
         )}
 
+        <SyncOffsetTuner addToast={addToast} />
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
