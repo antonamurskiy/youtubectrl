@@ -566,8 +566,24 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    drift converges to 0 by construction (phone seeks to match reported
    mpv_pdt), so there's no feedback signal for an auto-tuner. Attempted
    several ways; none work without external ground truth that we don't
-   have. Manual nudge UI in secret menu (`SyncOffsetTuner`) adds
-   `syncOffsetMs` on top. Dial per-stream if sync feels off.
+   have. Don't re-try this — it's the kind of problem that looks
+   solvable until you spend half a day on it and realize the math is
+   circular.
+
+10. **Manual sync-offset slider** (`SyncOffsetSlider` in
+    `SecretMenu.jsx`): native `<input type=range>` with range ±8000ms,
+    step 100ms. On drag, POSTs `/api/sync-offset`. Server adds the
+    value to broadcast `absoluteMs`. Persisted to `.sync-offset.json`
+    (gitignored) and restored on server boot — tune it once per stream
+    type, don't have to re-do after every restart.
+
+11. **Tuning direction**: if phone plays CONTENT *ahead of* what mpv
+    shows, lower the offset (slider left). If phone is *behind* mpv,
+    raise it. The value is added to reported `mpv_pdt`; higher value
+    → phone seeks further forward → phone closer to live. Typical
+    good values live in ±1-2s range; -3s to +3s is the sweet spot
+    for most streams. The ±8s headroom exists for bizarre edge cases
+    (extreme bitrate, weird encoder buffering).
 
 #### Data flow (native plugin, `NativePlayerPlugin.swift`)
 
