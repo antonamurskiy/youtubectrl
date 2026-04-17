@@ -3094,8 +3094,12 @@ app.post("/api/watch-on-phone", async (_req, res) => {
         if (hlsMatch) hlsUrl = hlsMatch[1];
       } catch {}
     }
-    // Fallback: check via yt-dlp
-    if (!hlsUrl) {
+    // Fallback: check via yt-dlp — only if mpv's file-format already
+    // suggested HLS. On a plain VOD (file-format="mov,mp4,..."),
+    // isLiveStream is definitively false and running a second yt-dlp
+    // call here just to confirm burns ~5-8s of user-visible latency
+    // before we even start resolving the VOD formats below.
+    if (isLiveStream && !hlsUrl) {
       try {
         const { stdout: ltest } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", "--get-url", "-f", "best", nowPlaying], { timeout: 15000 });
         const lines = ltest.trim().split("\n");
