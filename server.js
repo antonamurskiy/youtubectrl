@@ -2078,6 +2078,15 @@ app.post("/api/seek", async (req, res) => {
       // never shift under mpv's cache.
       const fromSeq = await resolveBehindToFromSeq(Math.ceil(behindLive) + 10);
       const subUrl = `http://localhost:3000/api/hls-sub.m3u8?from_seq=${fromSeq}`;
+      // Capture the content PDT the user intends to land at — derived
+      // from current live edge once, at seek time. After this, the
+      // scrubber's userPdt advances purely from mpv's own time-pos
+      // progress (not re-derived from liveEdge each WS tick, which
+      // jitters ~1s on manifest refresh and made phone sync chase).
+      const liveEdgeAtSeek = lastManifestEdgeEpochMs
+        ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt)
+        : Date.now();
+      const userPdtAtSeek = liveEdgeAtSeek - behindLive * 1000;
       await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
       // Reset speed in case syncVod left it off-1.0 before this scrub.
       await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
@@ -2100,6 +2109,7 @@ app.post("/api/seek", async (req, res) => {
                 wallMs: Date.now(),
                 mpvPosAtAnchor: p.data,
                 behindLive: intendedBehindLive,
+                userPdtAtAnchor: userPdtAtSeek,
               };
               return;
             }
@@ -4345,19 +4355,18 @@ function startWsSync() {
             const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
             if (onLiveProxy && playbackAnchor) {
               userPdt = playbackAnchor.userPdtAtAnchor + (timePos - playbackAnchor.mpvPosAtAnchor) * 1000;
-            } else if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null && liveEdgeNow) {
-              // User scrubbed back; use the INTENDED behindLive from
-              // the seek, adjusted for wall-elapsed vs play-elapsed
-              // (pause widens it, 1x playback keeps it constant).
-              // NOTE: MPV_DISPLAY_LAG_MS doesn't apply here — that
-              // correction was for live-proxy's cache-end vs real
-              // live-edge offset, which doesn't exist on sub-proxy
-              // where mpv plays directly from a specific segment.
-              // Phone compensates separately via the syncOffsetMs UI.
-              const wallElapsed = (Date.now() - subProxyAnchor.wallMs) / 1000;
-              const playElapsed = timePos - subProxyAnchor.mpvPosAtAnchor;
-              const behindLive = Math.max(0, subProxyAnchor.behindLive + (wallElapsed - playElapsed));
-              userPdt = liveEdgeNow - behindLive * 1000;
+            } else if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null && subProxyAnchor.userPdtAtAnchor != null) {
+              // Sub-proxy: userPdt advances purely from mpv's own
+              // time-pos progress since anchor. Does NOT re-derive from
+              // liveEdgeNow (which jitters ~1s on each manifest
+              // refresh — phone sync was chasing every jump).
+              //
+              //   userPdt = userPdtAtAnchor + (mpv_pos_now - mpvPosAtAnchor) * 1000
+              //
+              // This is stable against manifest-refresh jitter. Pauses
+              // freeze userPdt (mpv_pos stops advancing). 1x playback
+              // makes userPdt advance at 1x. Phone tracks cleanly.
+              userPdt = subProxyAnchor.userPdtAtAnchor + (timePos - subProxyAnchor.mpvPosAtAnchor) * 1000;
             } else if (liveEdgeNow) {
               // Transient fallback before any anchor is established.
               userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - MPV_DISPLAY_LAG_MS;
@@ -4432,8 +4441,15 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
     const r = await mpvCommand(["get_property", "path"]);
     if (r?.data) {
       const url = r.data.startsWith("http") ? r.data : null;
-      // mpv might have a YouTube URL or a direct stream URL
-      if (url) {
+      // mpv might have a YouTube URL, a direct stream URL, or one of
+      // our own proxy URLs (if it was mid-DVR-scrub when server died).
+      // For proxy paths we can't recover the YouTube URL — bail out;
+      // user will /api/play fresh. Setting nowPlaying to the proxy URL
+      // breaks things downstream (yt-dlp tries to fetch the proxy).
+      if (url && (url.includes("/api/hls-live.m3u8") || url.includes("/api/hls-sub.m3u8") || url.includes("/api/hls-vod.m3u8"))) {
+        // Skip recovery; mpv will keep playing but our server state
+        // stays blank until user triggers a new /api/play.
+      } else if (url) {
         const m = url.match(/v=([\w-]+)/);
         nowPlaying = m ? `https://www.youtube.com/watch?v=${m[1]}` : url;
       } else {
