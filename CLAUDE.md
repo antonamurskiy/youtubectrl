@@ -556,11 +556,28 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    Monotonic at 1x, phone's drift converges cleanly instead of chasing
    cache-growth noise.
 
-8. **MPV_DISPLAY_LAG_MS (1500 default)** subtracts from userPdtAtAnchor
-   to correct for ffmpeg's HLS live-buffer offset — mpv's displayed
-   frame is actually ~N seconds behind its computed cache-end because
-   ffmpeg pulls from a few segments before the real live edge as a
-   safety buffer. N varies per-stream (bitrate, segment duration).
+8. **MPV_DISPLAY_LAG_MS = 3 × TARGETDURATION × 1000** subtracts from
+   userPdtAtAnchor to correct for ffmpeg's HLS live-buffer offset.
+   ffmpeg defaults to `live_start_index=-3` — mpv's cache-end is
+   always 3 segments behind real live edge as a safety margin. Three
+   segments in **time** varies per stream:
+   - lofi (5s segments) → 15 000 ms lag
+   - sl4m + many others (2s segments) → 6 000 ms lag
+
+   Parsed from `#EXT-X-TARGETDURATION` in
+   `updateManifestStatsFromText`, stored in `lastManifestTargetDur`.
+   Refreshes on every live-proxy fetch + the 10s periodic refresh.
+   Default 5s until first parse.
+
+   **Do NOT hardcode this value.** We did (1500ms) and phone sync
+   drifted wildly on streams whose segment length wasn't 0.5s. A
+   hard-coded live-buffer lag will always be wrong for most streams.
+
+   **Frame rate (30fps vs 60fps) does NOT matter for sync.** All math
+   is PDT / wall-clock seconds, not frame indices. mpv's `time-pos`
+   is seconds, phone's `AVPlayerItem.currentDate()` is a Date. The
+   seek-to-date path lands on a keyframe (GOP-dependent), not a
+   specific frame. fps only affects visual jitter during scrubs.
 
 9. **No auto-calibration of the offset.** Tempting to try, but phone's
    drift converges to 0 by construction (phone seeks to match reported
