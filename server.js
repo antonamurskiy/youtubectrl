@@ -2233,13 +2233,19 @@ function parseHlsManifest(manifest) {
 let lastManifestFullDuration = 0;      // total seconds of DVR window
 let lastManifestEdgeEpochMs = 0;       // PDT of the last segment (= live edge)
 let lastManifestFetchedAt = 0;         // Date.now() when we read it
+let lastManifestTargetDur = 5;         // #EXT-X-TARGETDURATION — segment length in seconds
 
 function updateManifestStatsFromText(manifest) {
   let total = 0;
   let lastPdt = null;
   let durSinceLastPdt = 0;
+  let targetDur = 0;
   const lines = manifest.split("\n");
   for (const line of lines) {
+    if (line.startsWith("#EXT-X-TARGETDURATION:")) {
+      targetDur = parseFloat(line.split(":")[1]) || 0;
+      continue;
+    }
     if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
       lastPdt = new Date(line.substring("#EXT-X-PROGRAM-DATE-TIME:".length).trim()).getTime();
       durSinceLastPdt = 0;
@@ -2252,6 +2258,7 @@ function updateManifestStatsFromText(manifest) {
     }
   }
   if (total > 60) lastManifestFullDuration = total;
+  if (targetDur > 0) lastManifestTargetDur = targetDur;
   if (lastPdt) {
     lastManifestEdgeEpochMs = lastPdt + durSinceLastPdt * 1000;
     lastManifestFetchedAt = Date.now();
@@ -4329,11 +4336,16 @@ function startWsSync() {
           //     math here — it'd put the user at live edge even though
           //     they just scrubbed 2h back.
           //
-          // MPV_DISPLAY_LAG_MS corrects for ffmpeg's internal buffer
-          // offset (mpv's cache-end is ~N seconds behind real live edge
-          // as a safety margin). N varies per stream. syncOffsetMs
-          // tunes further via the UI.
-          const MPV_DISPLAY_LAG_MS = 1500;
+          // MPV_DISPLAY_LAG_MS corrects for ffmpeg's internal live-HLS
+          // buffer offset: ffmpeg defaults to `live_start_index=-3`
+          // (3 segments behind the real live edge as a safety margin).
+          // So the lag is 3 × segment_duration, which varies per stream
+          // (YouTube's lofi uses 5s segments → 15s lag; other streams
+          // use 2s segments → 6s lag). Read from the manifest's
+          // TARGETDURATION tag via lastManifestTargetDur.
+          // syncOffsetMs (from the UI slider) tunes further for stream-
+          // specific fine adjustments.
+          const MPV_DISPLAY_LAG_MS = lastManifestTargetDur * 3 * 1000;
           if (isHls && onLiveProxy && lastManifestEdgeEpochMs && lastManifestFetchedAt
               && reportedDur > 5 && timePos > 1
               && (!playbackAnchor || playbackAnchor.path !== mpvPath?.data)) {
