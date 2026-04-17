@@ -4312,7 +4312,7 @@ function startWsSync() {
             // match physically, report mpv_pdt as EARLIER than the
             // cache-based calc (shift LEFT) so phone's backward-seek
             // lands on an older frame = where mpv actually is.
-            const MPV_DISPLAY_LAG_MS = 2000;
+            const MPV_DISPLAY_LAG_MS = 1500;
             playbackAnchor = {
               path: mpvPath.data,
               mpvPosAtAnchor: timePos,
