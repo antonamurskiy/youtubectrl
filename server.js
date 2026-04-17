@@ -2486,7 +2486,17 @@ app.get("/api/hls-seg", async (req, res) => {
 let mpvPdtEpochMs = 0;
 let mpvPdtRefreshInterval = null;
 let syncOffsetMs = 0; // tunable offset for drift calibration (milliseconds)
-app.post("/api/sync-offset", (req, res) => { syncOffsetMs = (req.body.ms || 0); console.log("  Sync offset:", syncOffsetMs, "ms"); res.json({ ok: true, ms: syncOffsetMs }); });
+const SYNC_OFFSET_FILE = ".sync-offset.json";
+try {
+  const v = JSON.parse(fs.readFileSync(SYNC_OFFSET_FILE, "utf8"));
+  if (typeof v.ms === "number") syncOffsetMs = v.ms;
+} catch {}
+app.post("/api/sync-offset", (req, res) => {
+  syncOffsetMs = (req.body.ms || 0);
+  console.log("  Sync offset:", syncOffsetMs, "ms");
+  try { fs.writeFileSync(SYNC_OFFSET_FILE, JSON.stringify({ ms: syncOffsetMs })); } catch {}
+  res.json({ ok: true, ms: syncOffsetMs });
+});
 app.get("/api/sync-offset", (_req, res) => { res.json({ ms: syncOffsetMs }); });
 
 // Parse first PTS from MPEG-TS segment buffer
