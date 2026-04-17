@@ -547,6 +547,28 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    `mpvPdtEpochMs` is still captured by `startMpvPdtTracking` for
    potential debugging use but nothing actively reads it for sync.
 
+7. **Stable anchor**: rather than computing `behindLiveSec` fresh each
+   WS tick (which bounces ~5s every time mpv fetches a new cache
+   chunk), capture `playbackAnchor = { mpvPosAtAnchor, userPdtAtAnchor }`
+   once per stream (as soon as mpv reaches steady state:
+   `reportedDur > 5 && timePos > 1`). Then
+   `user_pdt_now = userPdtAtAnchor + (mpv_pos_now - mpvPosAtAnchor) * 1000`.
+   Monotonic at 1x, phone's drift converges cleanly instead of chasing
+   cache-growth noise.
+
+8. **MPV_DISPLAY_LAG_MS (1500 default)** subtracts from userPdtAtAnchor
+   to correct for ffmpeg's HLS live-buffer offset — mpv's displayed
+   frame is actually ~N seconds behind its computed cache-end because
+   ffmpeg pulls from a few segments before the real live edge as a
+   safety buffer. N varies per-stream (bitrate, segment duration).
+
+9. **No auto-calibration of the offset.** Tempting to try, but phone's
+   drift converges to 0 by construction (phone seeks to match reported
+   mpv_pdt), so there's no feedback signal for an auto-tuner. Attempted
+   several ways; none work without external ground truth that we don't
+   have. Manual nudge UI in secret menu (`SyncOffsetTuner`) adds
+   `syncOffsetMs` on top. Dial per-stream if sync feels off.
+
 #### Data flow (native plugin, `NativePlayerPlugin.swift`)
 
 1. **`getLiveState()`** returns `currentDateMs` (from
