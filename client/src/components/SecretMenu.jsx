@@ -59,18 +59,40 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
 // they're doing. Does NOT close the secret menu — user often wants to
 // reopen, then hit another menu item (e.g. Toggle resolution for the
 // laptop screen).
+function formatAge(ms) {
+  if (ms == null || ms < 0) return '—'
+  const s = Math.floor(ms / 1000)
+  if (s < 60) return `${s}s ago`
+  const m = Math.floor(s / 60)
+  if (m < 60) return `${m}m ago`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h ago`
+  return `${Math.floor(h / 24)}d ago`
+}
+
 // Find My — primary button toggles open/close (app quits on close).
 // When running, a trailing ↻ refreshes location by hiding+reactivating
 // the app (cheap re-poll, no relaunch). Secret menu stays open.
+// Sub-row below shows Maria's nearest cross street via OCR on the
+// laptop display (Find My must be visible there — done by the open
+// action).
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
+  const [friend, setFriend] = useState(null)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
   }, [])
+  useEffect(() => {
+    if (!running) { setFriend(null); return }
+    const fetchFriend = () => fetch('/api/findmy-friend?name=mchimishkyan').then(r => r.json()).then(setFriend).catch(() => {})
+    fetchFriend()
+    const iv = setInterval(fetchFriend, 30000)
+    return () => clearInterval(iv)
+  }, [running])
   const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
   const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (
-    <div style={{ display: 'flex' }}>
+    <div style={{ display: 'flex', flexWrap: 'wrap' }}>
       <button
         className="secret-menu-item"
         style={{ color, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
@@ -105,6 +127,19 @@ function FindMyToggle({ addToast }) {
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
           </svg>
         </button>
+      )}
+      {friend?.ok && (
+        <div
+          className="secret-menu-item"
+          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', width: '100%', order: 99 }}
+        >
+          <div style={{ color: 'var(--text)' }}>
+            Maria: {friend.crossStreet || friend.address || '—'}
+          </div>
+          <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
+            {friend.timeFragment ? `Last ping: ${friend.timeFragment}` : (friend.ageMs != null ? `Last ping: ${formatAge(friend.ageMs)}` : '')}
+          </div>
+        </div>
       )}
     </div>
   )

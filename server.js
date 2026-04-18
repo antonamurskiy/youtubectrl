@@ -3956,6 +3956,157 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
+// Get a friend's last-known location from Find My via OCR.
+//
+// Find My's friend cache is E2E encrypted and Shortcuts doesn't expose
+// Get-Current-Location-of-Person on macOS — so we fall back to the
+// battle-tested approach: open Find My, screenshot the laptop display,
+// run Apple's Vision OCR on it, and parse the sidebar row that matches
+// the requested name for address + freshness.
+//
+// Requires:
+//   - Full Disk Access (already needed for other things)
+//   - Screen Recording (just granted; applies to the parent app that
+//     runs `screencapture`)
+//   - Find My must be open on the laptop display (workspace 8) with
+//     the People tab active — `/api/toggle-findmy` already sets that up
+const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
+const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
+let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
+app.get("/api/findmy-friend", async (req, res) => {
+  const name = (req.query.name || "").toLowerCase();
+  const force = req.query.force === "1";
+  if (!name) return res.status(400).json({ error: "Missing name" });
+  // Serve cached result if fresh (<20s)
+  if (!force && _lastFindmyFriend && _lastFindmyFriend.name === name && (Date.now() - _lastFindmyFriend.at) < 20000) {
+    return res.json(_lastFindmyFriend.result);
+  }
+  try {
+    // 1. Confirm Find My is running; bail if not
+    const { stdout: existsOut } = await execFileP("osascript", ["-e",
+      'tell application "System Events" to exists process "FindMy"']);
+    if (existsOut.trim() !== "true") {
+      return res.json({ ok: false, reason: "not-running", hint: "Open Find My first" });
+    }
+    // 2. Screenshot the laptop display (workspace 8 = Find My).
+    await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+    // 3. OCR
+    const { stdout: ocr } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
+    // 4. Parse OCR output — lines are "x,y,w,h\ttext"
+    const rows = ocr.split("\n").filter(Boolean).map(l => {
+      const [bbox, ...rest] = l.split("\t");
+      const [x, y, w, h] = bbox.split(",").map(Number);
+      return { x, y, w, h, text: rest.join("\t") };
+    });
+    // 5. Find the row whose text contains the requested name (case-insensitive).
+    // The sidebar header (first match by y) gives us Address + freshness.
+    // A second match on the MAP (x further right) gives us her pin — we
+    // use that to compute nearest cross street from surrounding street
+    // labels.
+    const matches = rows.filter(r => r.text.toLowerCase().includes(name)).sort((a, b) => a.y - b.y);
+    if (matches.length === 0) {
+      const result = { ok: false, reason: "not-found", hint: `No row containing "${name}"; check that Find My's People tab is visible` };
+      _lastFindmyFriend = { name, result, at: Date.now() };
+      return res.json(result);
+    }
+    const header = matches[0];
+    // Sidebar column is narrow (usually x < 500 on laptop). Anything
+    // farther right is the pin label on the map.
+    const pinLabel = matches.find(m => m.x > 500);
+    const crossStreet = pinLabel ? nearestCrossStreet(rows, {
+      cx: pinLabel.x + pinLabel.w / 2,
+      cy: pinLabel.y + pinLabel.h / 2,
+    }) : null;
+    // 6. Look for a detail row just below the header (within ~60px vertically,
+    // roughly same x column). Expect "Address · TimeFragment" format
+    // using "•" or "·" as separator.
+    const detail = rows.find(r =>
+      r.y > header.y &&
+      r.y < header.y + 80 &&
+      Math.abs(r.x - header.x) < 100 &&
+      /[•·]/.test(r.text),
+    );
+    let address = "", timeFragment = "", ageMs = null;
+    if (detail) {
+      const parts = detail.text.split(/\s*[•·]\s*/);
+      address = parts[0] || "";
+      timeFragment = parts.slice(1).join(" · ");
+      ageMs = parseAgeFragment(timeFragment);
+    } else {
+      // Fallback — maybe the next row below the header has just an
+      // address and the time is on a separate row.
+      const below = rows.filter(r => r.y > header.y && r.y < header.y + 80).sort((a, b) => a.y - b.y);
+      if (below[0]) address = below[0].text;
+    }
+    const result = {
+      ok: true,
+      name: header.text,
+      address,
+      timeFragment,
+      ageMs,
+      crossStreet, // "Spring St & Greene St" or null
+      ocrAt: Date.now(),
+    };
+    _lastFindmyFriend = { name, result, at: Date.now() };
+    res.json(result);
+  } catch (err) {
+    res.json({ ok: false, reason: "error", error: err.message });
+  }
+});
+
+// Pick the two closest different-named street labels to {cx, cy} and
+// join them as "A & B". Handles Apple Maps' all-caps "SPRING ST"
+// format plus common OCR mistakes ("1K ST" → skip).
+function nearestCrossStreet(rows, { cx, cy }) {
+  const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
+  const streets = [];
+  for (const r of rows) {
+    const t = r.text.trim();
+    const m = t.match(STREET_RE);
+    if (!m) continue;
+    // Skip obvious OCR garbage — street names are usually ≥3 letters
+    // and don't start with lone digits (e.g. "1K ST" is noise).
+    if (m[1].length < 2 || /^\d/.test(m[1])) continue;
+    const centerX = r.x + r.w / 2;
+    const centerY = r.y + r.h / 2;
+    const dist = Math.hypot(centerX - cx, centerY - cy);
+    streets.push({ name: toTitleCase(t), dist });
+  }
+  if (streets.length === 0) return null;
+  streets.sort((a, b) => a.dist - b.dist);
+  // Dedupe by name — keep the closest instance of each unique street
+  const seen = new Set();
+  const unique = [];
+  for (const s of streets) {
+    if (seen.has(s.name)) continue;
+    seen.add(s.name);
+    unique.push(s);
+    if (unique.length === 2) break;
+  }
+  if (unique.length < 2) return unique[0]?.name || null;
+  return `${unique[0].name} & ${unique[1].name}`;
+}
+
+function toTitleCase(s) {
+  return s.toLowerCase().replace(/\b([a-z])/g, m => m.toUpperCase())
+    .replace(/\bSt\b/g, "St")
+    .replace(/\bAve\b/g, "Ave");
+}
+
+// "Now" / "3 min ago" / "1h ago" / "2:45 PM" → ms since that time.
+// Returns null if unparseable (e.g. "2:45 PM" depends on today).
+function parseAgeFragment(s) {
+  if (!s) return null;
+  const t = s.trim().toLowerCase();
+  if (t === "now" || t === "just now") return 0;
+  let m;
+  m = t.match(/^(\d+)\s*(?:sec|s)(?:ond)?s?\s*ago$/); if (m) return +m[1] * 1000;
+  m = t.match(/^(\d+)\s*(?:min|m)(?:ute)?s?\s*ago$/); if (m) return +m[1] * 60 * 1000;
+  m = t.match(/^(\d+)\s*(?:hr|h)(?:our)?s?\s*ago$/); if (m) return +m[1] * 60 * 60 * 1000;
+  m = t.match(/^(\d+)\s*d(?:ay)?s?\s*ago$/); if (m) return +m[1] * 24 * 60 * 60 * 1000;
+  return null;
+}
+
 // Refresh Find My's location data without relaunching.
 // Hide → short wait → activate. Bringing Find My from background to
 // foreground re-polls device locations; this is the cheap refresh
