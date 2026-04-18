@@ -82,6 +82,16 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
   const [previewing, setPreviewing] = useState(false)
+  // `previewing` = card is in the center band / being hovered. We
+  // delay actual preview playback by 1s so the thumbnail is visible
+  // during quick scrolls — no flash of video starting and stopping
+  // as cards pass through the band.
+  const [previewActive, setPreviewActive] = useState(false)
+  useEffect(() => {
+    if (!previewing) { setPreviewActive(false); return }
+    const t = setTimeout(() => setPreviewActive(true), 1000)
+    return () => clearTimeout(t)
+  }, [previewing])
   const longPressTimer = useRef(null)
   const longPressTriggered = useRef(false)
   const cardRef = useRef(null)
@@ -346,7 +356,7 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
               ref={(el) => {
                 previewRef.current = el
                 if (!el) return
-                if (previewing) el.play().catch(() => {})
+                if (previewActive) el.play().catch(() => {})
                 else { try { el.pause() } catch {} }
               }}
               src={previewUrl}
@@ -358,8 +368,9 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
                 position: 'absolute', inset: 0, width: '100%', height: '100%',
                 objectFit: 'cover',
                 zIndex: 2,
-                opacity: previewing ? 1 : 0,
-                pointerEvents: previewing ? 'auto' : 'none',
+                opacity: previewActive ? 1 : 0,
+                pointerEvents: previewActive ? 'auto' : 'none',
+                transition: 'opacity 150ms ease-out',
               }}
             />
           )}
