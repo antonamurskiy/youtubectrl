@@ -4476,7 +4476,13 @@ function startWsSync() {
               userPdt = subProxyAnchor.userPdtAtAnchor + (timePos - subProxyAnchor.mpvPosAtAnchor) * 1000;
             } else if (liveEdgeNow) {
               // Transient fallback before any anchor is established.
-              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - MPV_DISPLAY_LAG_MS;
+              // Sub-proxy forces `live_start_index=0`, bypassing ffmpeg's
+              // default -3 safety margin, so MPV_DISPLAY_LAG_MS doesn't
+              // apply there — subtracting it would misreport behindLive
+              // by the lag amount (typically 6-15s) on reconnect, when
+              // no anchor is available yet.
+              const lagMs = onSubProxy ? 0 : MPV_DISPLAY_LAG_MS;
+              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - lagMs;
             }
             if (userPdt != null && liveEdgeNow) {
               const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
@@ -4672,6 +4678,39 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
                 );
                 currentLiveHlsUrl = stdout.trim();
                 startMpvPdtTracking(currentLiveHlsUrl);
+                // Prime manifest stats so the synth-anchor below has
+                // live-edge info to reference.
+                try {
+                  const m = await fetchManifest(currentLiveHlsUrl);
+                  updateManifestStatsFromText(m);
+                } catch {}
+                // If mpv is mid-DVR-scrub (on the sub-proxy), synthesize
+                // a subProxyAnchor from mpv's current cache state. Without
+                // this we'd rely on the no-anchor fallback for
+                // behindLive, which is fine steady-state but shows a
+                // wrong value for the first tick or two after reconnect
+                // (and can flicker if the cache hasn't fully settled).
+                const pathR = await mpvCommand(["get_property", "path"]).catch(() => null);
+                if (pathR?.data?.includes("/api/hls-sub.m3u8") && lastManifestEdgeEpochMs) {
+                  const [dur, pos] = await Promise.all([
+                    mpvCommand(["get_property", "duration"]).catch(() => null),
+                    mpvCommand(["get_property", "time-pos"]).catch(() => null),
+                  ]);
+                  const reportedDur = dur?.data || 0;
+                  const timePos = pos?.data || 0;
+                  if (reportedDur > 1 && timePos >= 0) {
+                    const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
+                    const behindLive = Math.max(0, reportedDur - timePos);
+                    const userPdtAtAnchor = liveEdgeNow - behindLive * 1000;
+                    subProxyAnchor = {
+                      wallMs: Date.now(),
+                      mpvPosAtAnchor: timePos,
+                      behindLive,
+                      userPdtAtAnchor,
+                    };
+                    console.log("  Synthesized subProxyAnchor on reconnect: behindLive=", behindLive.toFixed(1), "s");
+                  }
+                }
               } catch (e) { console.error("  reconnect PDT resolve failed:", e.message); }
             })();
           }
