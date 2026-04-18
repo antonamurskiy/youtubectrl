@@ -8,6 +8,7 @@ import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useVolumeButtons } from './hooks/useVolumeButtons'
+import { useMariaProximity } from './hooks/useMariaProximity'
 import { isNativeIOS, NativePlayer } from './native/player'
 import { useUIStore } from './stores/ui'
 import { usePlaybackStore } from './stores/playback'
@@ -104,6 +105,7 @@ function App() {
   useNativeNowPlaying({ send })
   useClaudeNotification()
   useVolumeButtons()
+  useMariaProximity()
 
   // One-shot: kill any in-flight Live Activity left over from older app
   // versions that used to start them. We no longer use Live Activities —

@@ -70,8 +70,23 @@ function VolumeOrMap({ volume, volAreaRef }) {
       setShowMap(v => !v)
       if (e.detail?.cropUrl) setCropUrl(e.detail.cropUrl)
     }
+    // On a refresh tick (↻), re-fetch so the displayed map crop
+    // updates even while it's currently showing. Without this the
+    // image was frozen to whatever URL we grabbed at first toggle.
+    const onRefresh = () => {
+      setTimeout(() => {
+        fetch('/api/findmy-friend?name=mchimishkyan&force=1')
+          .then(r => r.json())
+          .then(d => { if (d?.cropUrl) setCropUrl(d.cropUrl) })
+          .catch(() => {})
+      }, 1800)
+    }
     window.addEventListener('maria-map-toggle', onToggle)
-    return () => window.removeEventListener('maria-map-toggle', onToggle)
+    window.addEventListener('findmy-refresh', onRefresh)
+    return () => {
+      window.removeEventListener('maria-map-toggle', onToggle)
+      window.removeEventListener('findmy-refresh', onRefresh)
+    }
   }, [])
   if (showMap && cropUrl) {
     // Use background-image rather than <img> — an <img> has an
@@ -153,14 +168,6 @@ function FindMyToggle({ addToast }) {
     return () => clearInterval(iv)
   }, [running])
 
-  // Proximity alert: when Maria's distance drops below 1 mile, stain
-  // the whole app's background dark red so it's impossible to miss.
-  // Parses strings like "6 mi", "0.5 mi", "800 ft", "500 m", "1 km".
-  useEffect(() => {
-    const close = friend?.ok && parseDistanceMiles(friend.distance) < 1
-    document.body.classList.toggle('maria-proximity', !!close)
-    return () => document.body.classList.remove('maria-proximity')
-  }, [friend])
   const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
   const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (
