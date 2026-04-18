@@ -2163,6 +2163,29 @@ app.post("/api/seek", async (req, res) => {
       // Reset speed in case syncVod left it off-1.0 before this scrub.
       await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
       if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
+
+      // Refine the anchor once mpv reports a stable non-zero time-pos.
+      // The pre-seeded `mpvPosAtAnchor=0` handles the transient window
+      // (scrubber doesn't flash), but after `start=0,live_start_index=0`
+      // mpv's actual time-pos might settle at some small non-zero
+      // offset depending on segment PTS. When it does, shift the
+      // anchor so subsequent ticks' `(timePos - mpvPosAtAnchor)` delta
+      // starts from the right baseline. userPdtAtAnchor stays pinned
+      // to the user's intended PDT — we're only re-zeroing the mpv
+      // side of the correspondence.
+      (async () => {
+        for (let i = 0; i < 40; i++) {
+          await new Promise(r => setTimeout(r, 100));
+          const p = await mpvCommand(["get_property", "time-pos"]).catch(() => null);
+          if (p?.data != null && p.data > 0.1) {
+            if (subProxyAnchor) {
+              subProxyAnchor.mpvPosAtAnchor = p.data;
+              subProxyAnchor.wallMs = Date.now();
+            }
+            return;
+          }
+        }
+      })();
       return res.json({ ok: true });
     }
 
