@@ -74,17 +74,24 @@ function VolumeOrMap({ volume, volAreaRef }) {
     return () => window.removeEventListener('maria-map-toggle', onToggle)
   }, [])
   if (showMap && cropUrl) {
-    // Constrain to vol-area's exact dimensions so toggling doesn't
-    // change the menu's overall width or height — image fills the
-    // same 200px-tall box and overflow is cropped.
+    // Use background-image rather than <img> — an <img> has an
+    // intrinsic width (900px) that WebKit occasionally uses to
+    // calculate the shrink-to-fit width of the fixed-position menu,
+    // pushing past max-width on repeat toggles. A <div> with a
+    // background has no intrinsic size and always respects its
+    // container width.
     return (
-      <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0, height: 200, overflow: 'hidden' }}>
-        <img
-          src={cropUrl}
-          alt="Map crop around Maria's pin"
-          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-        />
-      </div>
+      <div
+        className="secret-menu-item"
+        style={{
+          padding: 0,
+          height: 200,
+          backgroundImage: `url(${cropUrl})`,
+          backgroundSize: 'cover',
+          backgroundPosition: 'center',
+          backgroundRepeat: 'no-repeat',
+        }}
+      />
     )
   }
   return (
