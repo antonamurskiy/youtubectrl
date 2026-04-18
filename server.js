@@ -4249,22 +4249,26 @@ function parseAgeFragment(s) {
   return null;
 }
 
-// Toggle stealth mode. When enabled, a currently-running Find My
-// window is immediately parked on aerospace workspace 9 (invisible).
-// Persist state for the next app restart.
+// Toggle stealth mode. When ON, Find My's process is hidden via
+// System Events (`set visible ... to false`). The window buffer
+// stays live so `screencapture -l <CGWindowID>` still grabs it — we
+// OCR from the offscreen bitmap. Turning OFF reactivates the app
+// back into workspace 8 fullscreen. State persists across restarts.
 app.post("/api/findmy-stealth", async (req, res) => {
   const on = !!req.body?.on;
   findmyStealth = on;
   try { fs.writeFileSync(FINDMY_STEALTH_FILE, JSON.stringify({ on })); } catch {}
-  // If FM is running, move its window to match the new mode.
   try {
-    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
-    const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-    const wid = line ? line.split("|")[0].trim() : "";
-    if (wid) {
-      if (on) {
-        await execFileP("aerospace", ["move-node-to-workspace", "9", "--window-id", wid]).catch(() => {});
-      } else {
+    if (on) {
+      await execFileP("osascript", ["-e",
+        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+    } else {
+      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
+      // re-place on workspace 8 in case stealth somehow dislodged it.
+      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+      const wid = line ? line.split("|")[0].trim() : "";
+      if (wid) {
         await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
         await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
         await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
@@ -4360,16 +4364,16 @@ app.post("/api/toggle-findmy", async (_req, res) => {
         await new Promise(r => setTimeout(r, 200));
       }
       if (wid) {
-        // Stealth: park on workspace 9 (not bound to any monitor in
-        // practice — user doesn't cycle through it). Don't focus, don't
-        // fullscreen — stays invisible until turned off.
-        // Normal: move to workspace 8 (laptop), focus, fullscreen.
-        const target = findmyStealth ? "9" : "8";
-        await execFileP("aerospace", ["move-node-to-workspace", target, "--window-id", wid]).catch(() => {});
-        if (!findmyStealth) {
-          await execFileP("aerospace", ["workspace", target]).catch(() => {});
-          await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-          await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        // Always place on workspace 8 (laptop) fullscreen. Stealth is
+        // applied separately via System Events visibility — the window
+        // stays on workspace 8 but invisible to the user.
+        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        if (findmyStealth) {
+          await execFileP("osascript", ["-e",
+            'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
         }
       }
     } catch {}
