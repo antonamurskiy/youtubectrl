@@ -139,6 +139,13 @@ body {
   opacity: 0.6;
 }
 
+/* Hidden on mobile — the logo's "reset to recommended" action is
+ * redundant with tapping the Rec tab. Reclaims horizontal space for
+ * the search bar on narrow screens. */
+@media (max-width: 767px) {
+  .logo-btn { display: none; }
+}
+
 .search-wrap {
   position: relative;
   flex: 1;
