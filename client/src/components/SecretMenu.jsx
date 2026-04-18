@@ -157,6 +157,7 @@ export default function SecretMenu() {
   const lastSentVol = useRef(null)
   const inFlightRef = useRef(false)
   const pendingVolRef = useRef(null)
+  const lastBlockedToastRef = useRef(0)
   const sendVolume = useCallback(() => {
     if (inFlightRef.current || pendingVolRef.current == null) return
     const vol = pendingVolRef.current
@@ -168,7 +169,15 @@ export default function SecretMenu() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ volume: vol }),
-    }).then(() => {
+    }).then(r => r.json()).then(d => {
+      if (d?.skipped) {
+        // Throttle so a slider drag doesn't spam toasts.
+        if (!lastBlockedToastRef.current || Date.now() - lastBlockedToastRef.current > 3000) {
+          addToast(`Blocked: output is ${d.output || 'protected'}`)
+          lastBlockedToastRef.current = Date.now()
+        }
+        return
+      }
       // Broadcast so the Live Activity widget stays in sync
       window.dispatchEvent(new CustomEvent('mac-volume', { detail: { volume: vol } }))
     }).catch(() => {}).finally(() => {
@@ -288,7 +297,10 @@ export default function SecretMenu() {
           }}
           onClick={() => {
             hapticThump()
-            fetch('/api/mute', { method: 'POST' }).then(r => r.json()).then(d => { setMuted(d.muted); addToast(d.muted ? 'Muted' : 'Unmuted') }).catch(() => addToast('Mute failed'))
+            fetch('/api/mute', { method: 'POST' }).then(r => r.json()).then(d => {
+              if (d.skipped) { addToast(`Blocked: output is ${d.output || 'protected'}`); return }
+              setMuted(d.muted); addToast(d.muted ? 'Muted' : 'Unmuted')
+            }).catch(() => addToast('Mute failed'))
           }}
         >
           {muted ? 'Muted ●' : 'Mute'}

@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
+import { useUIStore } from '../stores/ui'
 import { isNativeIOS, NativePlayer } from '../native/player'
 
 // Hardware volume button interception on native iOS.
@@ -27,6 +28,8 @@ export function useVolumeButtons() {
     }
   }, [phoneOnlyUrl, playing])
 
+  const lastBlockedToastRef = useRef(0)
+
   // Wire incoming volume events
   useEffect(() => {
     if (!isNativeIOS) return
@@ -36,6 +39,15 @@ export function useVolumeButtons() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delta }),
       }).then(r => r.json()).then(d => {
+        if (d?.skipped) {
+          // Throttle — user mashing volume buttons shouldn't queue up
+          // a stack of identical toasts.
+          if (Date.now() - lastBlockedToastRef.current > 3000) {
+            useUIStore.getState().addToast(`Blocked: output is ${d.output || 'protected'}`)
+            lastBlockedToastRef.current = Date.now()
+          }
+          return
+        }
         if (typeof d.volume === 'number') {
           window.dispatchEvent(new CustomEvent('mac-volume', { detail: { volume: d.volume } }))
         }
