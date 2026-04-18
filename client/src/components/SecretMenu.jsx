@@ -79,6 +79,7 @@ function formatAge(ms) {
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   const [friend, setFriend] = useState(null)
+  const [showCrop, setShowCrop] = useState(false)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
   }, [])
@@ -135,17 +136,34 @@ function FindMyToggle({ addToast }) {
         )}
       </div>
       {friend?.ok && (
-        <div
-          className="secret-menu-item"
-          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)' }}
-        >
-          <div style={{ color: 'var(--text)' }}>
-            Maria: {friend.crossStreet || friend.address || '—'}
+        <>
+          <div
+            className="secret-menu-item"
+            style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', cursor: friend.cropUrl ? 'pointer' : 'default' }}
+            onClick={() => {
+              if (!friend.cropUrl) return
+              hapticTick()
+              setShowCrop(v => !v)
+            }}
+          >
+            <div style={{ color: 'var(--text)' }}>
+              Maria: {friend.crossStreet || friend.address || '—'}
+              {friend.distance ? <span style={{ color: 'var(--text-dim)' }}>{' · '}{friend.distance}</span> : null}
+            </div>
+            <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
+              {friend.timeFragment ? `Last ping: ${friend.timeFragment}` : (friend.ageMs != null ? `Last ping: ${formatAge(friend.ageMs)}` : '')}
+            </div>
           </div>
-          <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
-            {friend.timeFragment ? `Last ping: ${friend.timeFragment}` : (friend.ageMs != null ? `Last ping: ${formatAge(friend.ageMs)}` : '')}
-          </div>
-        </div>
+          {showCrop && friend.cropUrl && (
+            <div className="secret-menu-item" style={{ padding: 8 }}>
+              <img
+                src={friend.cropUrl}
+                alt="Map crop around Maria's pin"
+                style={{ width: '100%', display: 'block', border: '1px solid var(--border)' }}
+              />
+            </div>
+          )}
+        </>
       )}
     </>
   )

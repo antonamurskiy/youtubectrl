@@ -3973,6 +3973,7 @@ app.post("/api/toggle-resolution", async (_req, res) => {
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
+let _lastPinBounds = null; // used by /api/findmy-crop.png
 app.get("/api/findmy-friend", async (req, res) => {
   const name = (req.query.name || "").toLowerCase();
   const force = req.query.force === "1";
@@ -4046,6 +4047,16 @@ app.get("/api/findmy-friend", async (req, res) => {
       cx: pinLabel.x + pinLabel.w / 2,
       cy: pinLabel.y + pinLabel.h / 2,
     }) : null;
+    // Distance — Find My renders e.g. "6 mi" on the same row as the
+    // friend header, to its right. Scan a small row band around
+    // header.y for a distance-looking token.
+    const DIST_RE = /^\d+(?:\.\d+)?\s*(mi|km|ft|m|yd)\b/i;
+    const distRow = rows.find(r =>
+      Math.abs(r.y - header.y) < 20 &&
+      r.x > header.x + header.w &&
+      DIST_RE.test(r.text)
+    );
+    const distance = distRow ? distRow.text.trim() : null;
     // 6. Look for a detail row just below the header (within ~60px vertically,
     // roughly same x column). Expect "Address · TimeFragment" format
     // using "•" or "·" as separator.
@@ -4074,8 +4085,16 @@ app.get("/api/findmy-friend", async (req, res) => {
       timeFragment,
       ageMs,
       crossStreet, // "Spring St & Greene St" or null
+      distance, // "6 mi" | "800 ft" | null
+      // Serves an image crop of the map around the pin. Query-string
+      // cache buster matches ocrAt so the client can invalidate the
+      // browser cache when we re-OCR.
+      cropUrl: pinLabel ? `/api/findmy-crop.png?t=${Date.now()}` : null,
       ocrAt: Date.now(),
     };
+    // Stash the pin bounds so /api/findmy-crop.png can crop against
+    // the same FINDMY_OCR_PNG without re-running OCR.
+    if (pinLabel) _lastPinBounds = { x: pinLabel.x, y: pinLabel.y, w: pinLabel.w, h: pinLabel.h };
     _lastFindmyFriend = { name, result, at: Date.now() };
     res.json(result);
   } catch (err) {
@@ -4097,6 +4116,38 @@ function parseDisplayplacerOrigin(stdout, needle) {
   }
   return { x: -1470, y: 124 };
 }
+
+// Serve a cropped image of the map around the last-known friend pin.
+// Uses macOS `sips` (pre-installed) to avoid adding a Node image lib.
+// CROP_W/H chosen to show a ~2 block radius on a Retina screenshot.
+const FINDMY_CROP_PNG = "/tmp/ytctl-findmy-crop.png";
+const CROP_W = 900, CROP_H = 700;
+app.get("/api/findmy-crop.png", async (_req, res) => {
+  try {
+    if (!_lastPinBounds) return res.status(404).send("no pin yet");
+    // Pin label center in source image pixels
+    const cx = _lastPinBounds.x + _lastPinBounds.w / 2;
+    const cy = _lastPinBounds.y + _lastPinBounds.h / 2;
+    // Probe source image size so we can clamp crop offset to stay
+    // inside bounds (sips errors out if offset + crop size > image).
+    const { stdout: dims } = await execFileP("sips", ["-g", "pixelWidth", "-g", "pixelHeight", FINDMY_OCR_PNG]);
+    const W = parseInt((dims.match(/pixelWidth:\s*(\d+)/) || [])[1] || "0");
+    const H = parseInt((dims.match(/pixelHeight:\s*(\d+)/) || [])[1] || "0");
+    if (!W || !H) return res.status(500).send("bad source dims");
+    const ox = Math.max(0, Math.min(W - CROP_W, Math.round(cx - CROP_W / 2)));
+    const oy = Math.max(0, Math.min(H - CROP_H, Math.round(cy - CROP_H / 2)));
+    await execFileP("sips", [
+      "-c", String(CROP_H), String(CROP_W),
+      "--cropOffset", String(ox), String(oy),
+      FINDMY_OCR_PNG, "--out", FINDMY_CROP_PNG,
+    ]);
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Cache-Control", "no-store");
+    res.sendFile(FINDMY_CROP_PNG);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+});
 
 // Pick the two closest different-named street labels to {cx, cy} and
 // join them as "A & B". Handles Apple Maps' all-caps "SPRING ST"
