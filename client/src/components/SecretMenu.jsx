@@ -121,6 +121,11 @@ function FindMyToggle({ addToast }) {
               fetch('/api/refresh-findmy', { method: 'POST' })
                 .then(() => addToast('Find My refreshed'))
                 .catch(() => addToast('Refresh failed'))
+              // Wait for Find My's re-poll + re-render, then re-OCR
+              // with force=1 to bypass the 20s server cache.
+              setTimeout(() => {
+                fetch('/api/findmy-friend?name=mchimishkyan&force=1').then(r => r.json()).then(setFriend).catch(() => {})
+              }, 1500)
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
