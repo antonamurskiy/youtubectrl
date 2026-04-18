@@ -1018,13 +1018,11 @@ body {
   background: #151515;
   border: 1px solid var(--border);
   z-index: 600;
-  min-width: 180px;
-  /* Big enough for "Audio: LG UltraFine Display Audio" without
-   * wrapping; small enough to prevent an inner image (Maria's 900px
-   * map crop) from blowing up the menu when it toggles in. The
-   * natural menu width should still land here, so the cap only
-   * kicks in as a safety floor when a wide child asks for more. */
-  max-width: 360px;
+  /* Wide enough to feel roomy on mobile without reaching the edge
+   * of the viewport. The map crop is locked to width: 100% / 200px
+   * tall, so bumping this up scales Maria's map bigger too. */
+  min-width: 340px;
+  max-width: 440px;
   max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
