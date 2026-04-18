@@ -4054,10 +4054,14 @@ app.get("/api/findmy-friend", async (req, res) => {
     // punctuation. Loosen the y-tolerance and regex, and consider
     // the full sidebar column (not just the header's right neighbor
     // — the token can drop a line while panned).
-    const SIDEBAR_X = 500;
+    // Distance sits on the sidebar row, RIGHT of the header label —
+    // Find My right-aligns it to the sidebar's right edge (~x 520
+    // when the sidebar is open at default width on this setup).
+    // Earlier fix used x < 500 which excluded "5 mi" at x=521.
+    // Accept anything in the left ~700px of the captured screen.
     const DIST_RE = /^(\d+(?:\.\d+)?)\s*(mi|km|ft|m|yd)\b\.?$/i;
     const near = rows
-      .filter(r => r.x < SIDEBAR_X && Math.abs(r.y - header.y) < 60)
+      .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
       .filter(r => DIST_RE.test(r.text.trim()));
     const distRow = near.sort((a, b) => Math.abs(a.y - header.y) - Math.abs(b.y - header.y))[0];
     const distance = distRow ? distRow.text.trim().replace(/\.$/, "") : null;
