@@ -638,8 +638,8 @@ body {
 }
 
 .np-thumb {
-  width: 44px;
-  height: 25px;
+  width: 64px;
+  height: 36px;
   background-size: cover;
   background-position: center;
   background-color: var(--surface);
