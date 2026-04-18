@@ -4047,16 +4047,20 @@ app.get("/api/findmy-friend", async (req, res) => {
       cx: pinLabel.x + pinLabel.w / 2,
       cy: pinLabel.y + pinLabel.h / 2,
     }) : null;
-    // Distance — Find My renders e.g. "6 mi" on the same row as the
-    // friend header, to its right. Scan a small row band around
-    // header.y for a distance-looking token.
-    const DIST_RE = /^\d+(?:\.\d+)?\s*(mi|km|ft|m|yd)\b/i;
-    const distRow = rows.find(r =>
-      Math.abs(r.y - header.y) < 20 &&
-      r.x > header.x + header.w &&
-      DIST_RE.test(r.text)
-    );
-    const distance = distRow ? distRow.text.trim() : null;
+    // Distance — Find My renders e.g. "6 mi" roughly on the header
+    // row, to the right. OCR is flaky here: sometimes the row is a
+    // few px above/below, sometimes the unit has a trailing period
+    // ("6 mi." / "1.2 km."), sometimes it merges with adjacent
+    // punctuation. Loosen the y-tolerance and regex, and consider
+    // the full sidebar column (not just the header's right neighbor
+    // — the token can drop a line while panned).
+    const SIDEBAR_X = 500;
+    const DIST_RE = /^(\d+(?:\.\d+)?)\s*(mi|km|ft|m|yd)\b\.?$/i;
+    const near = rows
+      .filter(r => r.x < SIDEBAR_X && Math.abs(r.y - header.y) < 60)
+      .filter(r => DIST_RE.test(r.text.trim()));
+    const distRow = near.sort((a, b) => Math.abs(a.y - header.y) - Math.abs(b.y - header.y))[0];
+    const distance = distRow ? distRow.text.trim().replace(/\.$/, "") : null;
     // 6. Look for a detail row just below the header (within ~60px vertically,
     // roughly same x column). Expect "Address · TimeFragment" format
     // using "•" or "·" as separator.
