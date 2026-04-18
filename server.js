@@ -3988,8 +3988,37 @@ app.get("/api/findmy-friend", async (req, res) => {
     if (existsOut.trim() !== "true") {
       return res.json({ ok: false, reason: "not-running", hint: "Open Find My first" });
     }
-    // 2. Screenshot the laptop display (workspace 8 = Find My).
+    // 2. Screenshot laptop display, OCR to find sidebar row, click it
+    // to center the map on the friend's pin, then re-screenshot.
+    // Clicking the row is how Find My reveals the pin label + streets
+    // near the friend — without this the map might be pointed
+    // elsewhere and we'd miss her entirely.
     await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+    try {
+      const { stdout: ocr0 } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
+      const rows0 = ocr0.split("\n").filter(Boolean).map(l => {
+        const [bbox, ...rest] = l.split("\t");
+        const [x, y, w, h] = bbox.split(",").map(Number);
+        return { x, y, w, h, text: rest.join("\t") };
+      });
+      const sidebar0 = rows0
+        .filter(r => r.text.toLowerCase().includes(name) && r.x < 500)
+        .sort((a, b) => a.y - b.y)[0];
+      if (sidebar0) {
+        // Laptop display's logical-coordinate origin. On this setup
+        // the laptop is at (-1470, 124); screencapture writes pixels
+        // at 2× density (Retina). Convert image pixel → logical screen.
+        const { stdout: dpOut } = await execFileP("displayplacer", ["list"]).catch(() => ({ stdout: "" }));
+        const origin = parseDisplayplacerOrigin(dpOut, "Built-in");
+        const cx = Math.round(origin.x + (sidebar0.x + sidebar0.w / 2) / 2);
+        const cy = Math.round(origin.y + (sidebar0.y + sidebar0.h / 2) / 2);
+        await execFileP("osascript", ["-e",
+          `tell application "System Events" to click at {${cx}, ${cy}}`]).catch(() => {});
+        // Wait for the map to pan + pin label to render.
+        await new Promise(r => setTimeout(r, 700));
+        await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+      }
+    } catch {}
     // 3. OCR
     const { stdout: ocr } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
     // 4. Parse OCR output — lines are "x,y,w,h\ttext"
@@ -4054,6 +4083,21 @@ app.get("/api/findmy-friend", async (req, res) => {
   }
 });
 
+// Read `displayplacer list` and return the origin {x, y} of the
+// first display whose description contains <needle>. Falls back to
+// the known Built-in laptop origin on this setup if parsing fails.
+function parseDisplayplacerOrigin(stdout, needle) {
+  if (!stdout) return { x: -1470, y: 124 };
+  const blocks = stdout.split(/\n\n+/);
+  for (const block of blocks) {
+    const hasType = new RegExp(`Type:\\s*[^\\n]*${needle}`, "i").test(block);
+    if (!hasType) continue;
+    const m = block.match(/Origin:\s*\(([-\d]+),([-\d]+)\)/);
+    if (m) return { x: +m[1], y: +m[2] };
+  }
+  return { x: -1470, y: 124 };
+}
+
 // Pick the two closest different-named street labels to {cx, cy} and
 // join them as "A & B". Handles Apple Maps' all-caps "SPRING ST"
 // format plus common OCR mistakes ("1K ST" → skip).
@@ -4097,7 +4141,9 @@ function toTitleCase(s) {
 // Returns null if unparseable (e.g. "2:45 PM" depends on today).
 function parseAgeFragment(s) {
   if (!s) return null;
-  const t = s.trim().toLowerCase();
+  // Strip trailing punctuation and normalize whitespace (Find My
+  // sometimes emits "2 min. ago" with a period after the unit).
+  const t = s.trim().toLowerCase().replace(/\./g, "").replace(/\s+/g, " ");
   if (t === "now" || t === "just now") return 0;
   let m;
   m = t.match(/^(\d+)\s*(?:sec|s)(?:ond)?s?\s*ago$/); if (m) return +m[1] * 1000;
