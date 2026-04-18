@@ -621,11 +621,20 @@ app.get("/api/channel-videos", async (req, res) => {
 const RUMBLE_CHANNELS = ["nickjfuentes", "TheAlexJonesShow"];
 
 async function scrapeRumbleChannel(channel) {
-  const resp = await fetch(`https://rumble.com/c/${channel}`, {
-    headers: { "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" },
+  // Rumble's channel pages sit behind Cloudflare's JS challenge as of
+  // 2026-04. Plain Node fetch / curl / yt-dlp default handlers all
+  // return 403 "Just a moment...". The only reliable bypass today is
+  // curl_cffi with TLS fingerprint impersonation — see
+  // scripts/cloudflare-fetch.py for the target list and rationale.
+  const helper = path.join(__dirname, "scripts", "cloudflare-fetch.py");
+  const pythonBin = path.join(process.env.HOME || "", "Library/Python/3.14/bin/python3");
+  // Prefer the user-install Python that has curl_cffi; fall back to
+  // system python3 (user may have installed curl_cffi there instead).
+  const bin = fs.existsSync(pythonBin) ? pythonBin : "python3";
+  const { stdout: html } = await execFileP(bin, [helper, `https://rumble.com/c/${channel}`], {
+    maxBuffer: 10 * 1024 * 1024,
+    timeout: 20000,
   });
-  if (!resp.ok) throw new Error(`${resp.status}`);
-  const html = await resp.text();
   const blocks = [...html.matchAll(/data-video-id="(\d+)"(.*?)(?=data-video-id|<\/ol>)/gs)];
   const seen = new Set();
   const videos = [];
