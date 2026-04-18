@@ -59,6 +59,39 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
 // they're doing. Does NOT close the secret menu — user often wants to
 // reopen, then hit another menu item (e.g. Toggle resolution for the
 // laptop screen).
+// Top slot: volume slider by default; flips to Maria's map crop when
+// the Maria sub-row is tapped. FindMyToggle dispatches a
+// `maria-map-toggle` window event to flip the state.
+function VolumeOrMap({ volume, volAreaRef }) {
+  const [showMap, setShowMap] = useState(false)
+  const [cropUrl, setCropUrl] = useState(null)
+  useEffect(() => {
+    const onToggle = (e) => {
+      setShowMap(v => !v)
+      if (e.detail?.cropUrl) setCropUrl(e.detail.cropUrl)
+    }
+    window.addEventListener('maria-map-toggle', onToggle)
+    return () => window.removeEventListener('maria-map-toggle', onToggle)
+  }, [])
+  if (showMap && cropUrl) {
+    return (
+      <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0 }}>
+        <img
+          src={cropUrl}
+          alt="Map crop around Maria's pin"
+          style={{ width: '100%', display: 'block' }}
+        />
+      </div>
+    )
+  }
+  return (
+    <div className="secret-menu-item vol-area" ref={volAreaRef}>
+      <div className="vol-fill" style={{ height: `${volume}%` }} />
+      <div className="vol-label">{volume}%</div>
+    </div>
+  )
+}
+
 function formatAge(ms) {
   if (ms == null || ms < 0) return '—'
   const s = Math.floor(ms / 1000)
@@ -68,31 +101,6 @@ function formatAge(ms) {
   const h = Math.floor(m / 60)
   if (h < 24) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
-}
-
-// Always-visible map crop of where Maria is (if Find My is running
-// and OCR finds her). Replaces the old vol-area at the top of the
-// secret menu. Fetches on mount and on FindMy refresh events.
-function MariaMap() {
-  const [friend, setFriend] = useState(null)
-  const fetchFriend = () => fetch('/api/findmy-friend?name=mchimishkyan').then(r => r.json()).then(setFriend).catch(() => {})
-  useEffect(() => {
-    fetchFriend()
-    const iv = setInterval(fetchFriend, 30000)
-    const onRefresh = () => setTimeout(fetchFriend, 1500)
-    window.addEventListener('findmy-refresh', onRefresh)
-    return () => { clearInterval(iv); window.removeEventListener('findmy-refresh', onRefresh) }
-  }, [])
-  if (!friend?.ok || !friend.cropUrl) return null
-  return (
-    <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0 }}>
-      <img
-        src={friend.cropUrl}
-        alt="Maria's location"
-        style={{ width: '100%', display: 'block' }}
-      />
-    </div>
-  )
 }
 
 // Find My — primary button toggles open/close (app quits on close).
@@ -163,7 +171,12 @@ function FindMyToggle({ addToast }) {
       {friend?.ok && (
         <div
           className="secret-menu-item"
-          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)' }}
+          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', cursor: friend.cropUrl ? 'pointer' : 'default' }}
+          onClick={() => {
+            if (!friend.cropUrl) return
+            hapticTick()
+            window.dispatchEvent(new CustomEvent('maria-map-toggle', { detail: { cropUrl: friend.cropUrl } }))
+          }}
         >
           <div style={{ color: 'var(--text)' }}>
             Maria: {friend.crossStreet || friend.address || '—'}
@@ -443,7 +456,7 @@ export default function SecretMenu() {
             </div>
           ))}
         </div>
-        <MariaMap />
+        <VolumeOrMap volume={volume} volAreaRef={volAreaRef} />
 
         <button
           className="secret-menu-item"
