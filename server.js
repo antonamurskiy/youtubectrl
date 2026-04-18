@@ -3974,6 +3974,24 @@ const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
+// Stealth mode: when true, Find My is parked on aerospace workspace 9
+// (never focused by either monitor), so it runs invisibly. OCR still
+// works because screencapture -l <CGWindowID> captures by window id
+// regardless of on-screen visibility.
+let findmyStealth = false;
+const FINDMY_STEALTH_FILE = path.join(__dirname, ".findmy-stealth.json");
+try {
+  const v = JSON.parse(fs.readFileSync(FINDMY_STEALTH_FILE, "utf8"));
+  findmyStealth = !!v.on;
+} catch {}
+const FINDMY_WINDOW_ID_SWIFT = path.join(__dirname, "scripts", "find-window-id.swift");
+async function findmyWindowId() {
+  try {
+    const { stdout } = await execFileP("swift", [FINDMY_WINDOW_ID_SWIFT, "find my"], { timeout: 5000 });
+    const id = parseInt(stdout.trim(), 10);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  } catch { return null; }
+}
 app.get("/api/findmy-friend", async (req, res) => {
   const name = (req.query.name || "").toLowerCase();
   const force = req.query.force === "1";
@@ -3989,12 +4007,20 @@ app.get("/api/findmy-friend", async (req, res) => {
     if (existsOut.trim() !== "true") {
       return res.json({ ok: false, reason: "not-running", hint: "Open Find My first" });
     }
-    // 2. Screenshot laptop display, OCR to find sidebar row, click it
-    // to center the map on the friend's pin, then re-screenshot.
-    // Clicking the row is how Find My reveals the pin label + streets
-    // near the friend — without this the map might be pointed
-    // elsewhere and we'd miss her entirely.
-    await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+    // 2. Screenshot Find My. In normal mode we grab laptop display 2
+    // (where FM lives). In stealth mode FM is parked on a non-visible
+    // aerospace workspace; capture by CGWindowID instead.
+    async function snapFindMy() {
+      if (findmyStealth) {
+        const wid = await findmyWindowId();
+        if (wid) {
+          await execFileP("screencapture", ["-l", String(wid), "-x", FINDMY_OCR_PNG]);
+          return;
+        }
+      }
+      await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+    }
+    await snapFindMy();
     try {
       const { stdout: ocr0 } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
       const rows0 = ocr0.split("\n").filter(Boolean).map(l => {
@@ -4005,10 +4031,13 @@ app.get("/api/findmy-friend", async (req, res) => {
       const sidebar0 = rows0
         .filter(r => r.text.toLowerCase().includes(name) && r.x < 500)
         .sort((a, b) => a.y - b.y)[0];
-      if (sidebar0) {
+      if (sidebar0 && !findmyStealth) {
         // Laptop display's logical-coordinate origin. On this setup
         // the laptop is at (-1470, 124); screencapture writes pixels
         // at 2× density (Retina). Convert image pixel → logical screen.
+        // In stealth mode the FM window is on an unfocused workspace,
+        // so screen-coordinate clicks wouldn't land on it — skip the
+        // click entirely and accept whatever pin the map already shows.
         const { stdout: dpOut } = await execFileP("displayplacer", ["list"]).catch(() => ({ stdout: "" }));
         const origin = parseDisplayplacerOrigin(dpOut, "Built-in");
         const cx = Math.round(origin.x + (sidebar0.x + sidebar0.w / 2) / 2);
@@ -4017,7 +4046,7 @@ app.get("/api/findmy-friend", async (req, res) => {
           `tell application "System Events" to click at {${cx}, ${cy}}`]).catch(() => {});
         // Wait for the map to pan + pin label to render.
         await new Promise(r => setTimeout(r, 700));
-        await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+        await snapFindMy();
       }
     } catch {}
     // 3. OCR
@@ -4220,6 +4249,34 @@ function parseAgeFragment(s) {
   return null;
 }
 
+// Toggle stealth mode. When enabled, a currently-running Find My
+// window is immediately parked on aerospace workspace 9 (invisible).
+// Persist state for the next app restart.
+app.post("/api/findmy-stealth", async (req, res) => {
+  const on = !!req.body?.on;
+  findmyStealth = on;
+  try { fs.writeFileSync(FINDMY_STEALTH_FILE, JSON.stringify({ on })); } catch {}
+  // If FM is running, move its window to match the new mode.
+  try {
+    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+    const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+    const wid = line ? line.split("|")[0].trim() : "";
+    if (wid) {
+      if (on) {
+        await execFileP("aerospace", ["move-node-to-workspace", "9", "--window-id", wid]).catch(() => {});
+      } else {
+        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+      }
+    }
+  } catch {}
+  res.json({ ok: true, on });
+});
+
+app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
+
 // Refresh Find My's location data without relaunching.
 // Hide → short wait → activate. Bringing Find My from background to
 // foreground re-polls device locations; this is the cheap refresh
@@ -4303,12 +4360,17 @@ app.post("/api/toggle-findmy", async (_req, res) => {
         await new Promise(r => setTimeout(r, 200));
       }
       if (wid) {
-        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
-        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-        // Native fullscreen (aerospace "maximize" = fullscreen with
-        // outer gaps removed, filling the whole monitor).
-        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        // Stealth: park on workspace 9 (not bound to any monitor in
+        // practice — user doesn't cycle through it). Don't focus, don't
+        // fullscreen — stays invisible until turned off.
+        // Normal: move to workspace 8 (laptop), focus, fullscreen.
+        const target = findmyStealth ? "9" : "8";
+        await execFileP("aerospace", ["move-node-to-workspace", target, "--window-id", wid]).catch(() => {});
+        if (!findmyStealth) {
+          await execFileP("aerospace", ["workspace", target]).catch(() => {});
+          await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+          await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        }
       }
     } catch {}
     res.json({ ok: true, running: true });

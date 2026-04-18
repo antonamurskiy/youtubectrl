@@ -140,8 +140,10 @@ function formatAge(ms) {
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   const [friend, setFriend] = useState(null)
+  const [stealth, setStealth] = useState(false)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
+    fetch('/api/findmy-stealth').then(r => r.json()).then(d => setStealth(!!d.on)).catch(() => {})
   }, [])
   useEffect(() => {
     if (!running) { setFriend(null); return }
@@ -181,6 +183,35 @@ function FindMyToggle({ addToast }) {
           </svg>
           {label}
         </button>
+        {running && (
+          <button
+            className="secret-menu-item"
+            style={{ color: stealth ? 'var(--text-dim)' : 'var(--green)', display: 'flex', alignItems: 'center', width: 'auto', paddingLeft: 12, paddingRight: 12, borderLeft: '1px solid var(--border)' }}
+            aria-label={stealth ? 'Show Find My on laptop screen' : 'Hide Find My off-screen (stealth)'}
+            onClick={() => {
+              hapticTick()
+              const next = !stealth
+              fetch('/api/findmy-stealth', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: next }) })
+                .then(() => { setStealth(next); addToast(next ? 'Find My stealth on' : 'Find My visible') })
+                .catch(() => addToast('Stealth toggle failed'))
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+              {stealth ? (
+                <>
+                  <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
+                  <path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+                  <line x1="1" y1="1" x2="23" y2="23" />
+                </>
+              ) : (
+                <>
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                  <circle cx="12" cy="12" r="3" />
+                </>
+              )}
+            </svg>
+          </button>
+        )}
         {running && (
           <button
             className="secret-menu-item"
