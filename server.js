@@ -2142,36 +2142,27 @@ app.post("/api/seek", async (req, res) => {
         ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt)
         : Date.now();
       const userPdtAtSeek = liveEdgeAtSeek - behindLive * 1000;
+      // Pre-seed subProxyAnchor with mpvPosAtAnchor=0 synchronously
+      // BEFORE loadfile. Since we pass `start=0,live_start_index=0`,
+      // mpv will start playback from position 0 in the sub-proxy window,
+      // so timePos=0 at anchor time is correct. The WS broadcast formula
+      // `userPdt = userPdtAtAnchor + (timePos - mpvPosAtAnchor) * 1000`
+      // immediately places the scrubber at the user's intended point,
+      // instead of showing a transient drift/zero while we poll for
+      // mpv's first real time-pos reading. Without this pre-seed, the
+      // thumb visibly snaps to the wrong edge for up to a full WS tick
+      // before the anchor is populated by the async poll.
+      subProxyAnchor = {
+        wallMs: Date.now(),
+        mpvPosAtAnchor: 0,
+        behindLive,
+        userPdtAtAnchor: userPdtAtSeek,
+      };
       await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
       setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
       // Reset speed in case syncVod left it off-1.0 before this scrub.
       await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
       if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
-      // Poll for mpv's time-pos in the new file; stop as soon as we see
-      // it has a value (mpv just started playing). Anchor wallMs and
-      // mpvPos are captured at the SAME instant so the drift-formula
-      // in the WS broadcast is accurate from the first tick.
-      subProxyAnchor = null;
-      const intendedBehindLive = behindLive;
-      (async () => {
-        // Can take up to ~3s for mpv to load the sub-manifest and report
-        // a valid time-pos. Poll until it does.
-        for (let i = 0; i < 40; i++) {
-          await new Promise(r => setTimeout(r, 100));
-          try {
-            const p = await mpvCommand(["get_property", "time-pos"]);
-            if (p?.data != null) {
-              subProxyAnchor = {
-                wallMs: Date.now(),
-                mpvPosAtAnchor: p.data,
-                behindLive: intendedBehindLive,
-                userPdtAtAnchor: userPdtAtSeek,
-              };
-              return;
-            }
-          } catch {}
-        }
-      })();
       return res.json({ ok: true });
     }
 
@@ -4435,7 +4426,15 @@ function startWsSync() {
           let scrubPos = timePos;
           let scrubDur = reportedDur > 0 ? reportedDur : histDur;
           let userPdt = null;
-          if (isHls && lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
+          // Gate the HLS scrubber block on proxy-URL presence alone, not
+          // on `isHls` (which reads mpv's file-format property — transiently
+          // empty during a `loadfile`, including between sub-proxy scrubs
+          // and sub→live swaps). When that happens we'd fall out of this
+          // block, `scrubPos` stays at raw `timePos` (= 0 just after
+          // loadfile) and `scrubDur` at `histDur` (= 0 for fresh live),
+          // and the client sees position=0 / duration=0 → scrubber thumb
+          // snaps to the left edge for a tick.
+          if (lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
             const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
             if (onLiveProxy && playbackAnchor) {
