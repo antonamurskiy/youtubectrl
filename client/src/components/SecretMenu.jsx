@@ -129,8 +129,7 @@ function FindMyToggle({ addToast }) {
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-              <polyline points="21 4 21 10 15 10" />
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+              <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
             </svg>
           </button>
         )}
