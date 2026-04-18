@@ -3983,66 +3983,6 @@ app.post("/api/refresh-findmy", async (_req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Read a specific Find My friend's location + last-ping age.
-// Data source: ~/Library/Caches/com.apple.findmy.fmipcore/Members.data
-// This file is protected by macOS TCC; the server parent (Terminal /
-// iTerm / Warp / Claude) needs "Full Disk Access" in
-// System Settings → Privacy & Security → Full Disk Access. Without it
-// the read returns ENOENT/EACCES and the endpoint reports that state
-// so the UI can render a hint.
-const FINDMY_MEMBERS_PATH = path.join(process.env.HOME || "", "Library/Caches/com.apple.findmy.fmipcore/Members.data");
-app.get("/api/findmy-friend", async (req, res) => {
-  const name = (req.query.name || "").toLowerCase();
-  if (!name) return res.status(400).json({ error: "Missing name" });
-  try {
-    const raw = fs.readFileSync(FINDMY_MEMBERS_PATH, "utf8");
-    const data = JSON.parse(raw);
-    // Members.data structure (as of macOS Sonoma): top-level is an
-    // array of member objects with fields like `firstName`, `lastName`,
-    // `fullName`, and `location: { latitude, longitude, timeStamp,
-    // horizontalAccuracy, address: { label, country, streetAddress,
-    // locality, ... } }`. Some versions nest under `.members`.
-    const members = Array.isArray(data) ? data : (data.members || []);
-    const match = members.find(m => {
-      const candidates = [m.firstName, m.fullName, m.name].filter(Boolean).map(s => String(s).toLowerCase());
-      return candidates.some(s => s.includes(name));
-    });
-    if (!match) return res.json({ ok: false, reason: "not-found" });
-    const loc = match.location;
-    if (!loc) return res.json({ ok: true, name: match.firstName || match.fullName, location: null });
-    const tsRaw = loc.timeStamp || loc.timestamp || 0;
-    // Apple timestamps here are usually milliseconds since epoch, but
-    // some (older) entries use seconds. Heuristic: <1e12 → seconds.
-    const tsMs = tsRaw > 1e12 ? tsRaw : tsRaw * 1000;
-    const address = loc.address || {};
-    res.json({
-      ok: true,
-      name: match.firstName || match.fullName,
-      location: {
-        lat: loc.latitude,
-        lon: loc.longitude,
-        accuracy: loc.horizontalAccuracy || null,
-        ts: tsMs,
-        ageMs: tsMs ? Date.now() - tsMs : null,
-        address: {
-          label: address.label || address.name || "",
-          locality: address.locality || address.city || "",
-          streetAddress: address.streetAddress || "",
-          country: address.country || "",
-        },
-      },
-    });
-  } catch (err) {
-    if (err.code === "EACCES" || err.code === "EPERM") {
-      return res.json({ ok: false, reason: "no-fda", hint: "Grant Full Disk Access to the terminal/app that launched the server." });
-    }
-    if (err.code === "ENOENT") {
-      return res.json({ ok: false, reason: "no-file", hint: "Find My hasn't created its cache yet — open the app once." });
-    }
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // Current Find My running state (for the secret menu to render a
 // "Show" vs "Close" label without the user having to guess).
 app.get("/api/findmy-status", async (_req, res) => {

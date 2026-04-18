@@ -59,49 +59,18 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
 // they're doing. Does NOT close the secret menu — user often wants to
 // reopen, then hit another menu item (e.g. Toggle resolution for the
 // laptop screen).
-// Format "N sec/min/hr ago" for a ms age value.
-function formatAge(ms) {
-  if (ms == null || ms < 0) return '—'
-  const s = Math.floor(ms / 1000)
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  if (h < 24) return `${h}h ago`
-  return `${Math.floor(h / 24)}d ago`
-}
-
 // Find My — primary button toggles open/close (app quits on close).
 // When running, a trailing ↻ refreshes location by hiding+reactivating
 // the app (cheap re-poll, no relaunch). Secret menu stays open.
-// Also polls Maria's location sub-row so we can show her last-known
-// address and how fresh the ping is right inside the menu.
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
-  const [friend, setFriend] = useState(null) // { name, location, error }
-  const fetchFriend = () => {
-    fetch('/api/findmy-friend?name=maria').then(r => r.json()).then(setFriend).catch(() => {})
-  }
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
-    fetchFriend()
-    // Refresh the age/label every 15s while the menu is open.
-    const iv = setInterval(fetchFriend, 15000)
-    return () => clearInterval(iv)
   }, [])
   const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
   const color = running ? 'var(--green)' : 'var(--text-dim)'
-
-  // Friend sub-row: address + age. Tappable to open Apple Maps.
-  const loc = friend?.ok && friend?.location
-  const addr = loc?.address
-  const where = addr ? (addr.label || [addr.streetAddress, addr.locality, addr.country].filter(Boolean).join(', ')) : ''
-  const age = loc ? formatAge(loc.ageMs) : ''
-  const ageColor = loc?.ageMs > 10 * 60 * 1000 ? 'var(--red)' : 'var(--text-dim)'
-
   return (
-    <div style={{ display: 'flex', flexDirection: 'column' }}>
-      <div style={{ display: 'flex' }}>
+    <div style={{ display: 'flex' }}>
       <button
         className="secret-menu-item"
         style={{ color, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
@@ -136,31 +105,6 @@ function FindMyToggle({ addToast }) {
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
           </svg>
         </button>
-      )}
-      </div>
-      {/* Maria sub-row — address + age. Shows the error reason if the
-          server can't read Members.data (usually a TCC/FDA issue). */}
-      {friend && (
-        <div
-          className="secret-menu-item"
-          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', cursor: loc ? 'pointer' : 'default' }}
-          onClick={() => {
-            if (!loc) return
-            hapticTick()
-            window.open(`https://maps.apple.com/?ll=${loc.lat},${loc.lon}&q=${encodeURIComponent(friend.name || 'Maria')}`, '_blank')
-          }}
-        >
-          {loc ? (
-            <>
-              <div style={{ color: 'var(--text)' }}>{friend.name}: {where || `${loc.lat.toFixed(4)}, ${loc.lon.toFixed(4)}`}</div>
-              <div style={{ color: ageColor }}>Last ping: {age}</div>
-            </>
-          ) : friend.ok === false ? (
-            <div style={{ color: 'var(--text-dim)' }}>
-              Maria: {friend.reason === 'no-fda' ? 'needs Full Disk Access' : friend.reason === 'not-found' ? 'not in Find My' : friend.reason === 'no-file' ? 'open Find My once' : 'unavailable'}
-            </div>
-          ) : null}
-        </div>
       )}
     </div>
   )
