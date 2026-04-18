@@ -1342,6 +1342,12 @@ body {
   white-space: nowrap;
   text-transform: uppercase;
   letter-spacing: 1px;
+  /* Tap-through + don't let finger drags over a toast trigger iOS's
+   * text-selection context menu. */
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .toast.show {
