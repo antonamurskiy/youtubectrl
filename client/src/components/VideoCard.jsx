@@ -5,16 +5,18 @@ import { usePlaybackStore } from '../stores/playback'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
-// Module-level dedup cache: videoId -> Promise<url|null>.
-// Multiple VideoCard instances for the same video share one fetch.
+// Module-level dedup cache: key -> Promise<url|null>. Key includes
+// isLive so live and VOD previews for the same id don't collide (live
+// format is HLS, VOD is progressive MP4).
 const previewUrlCache = new Map()
-function getPreviewUrl(videoId) {
-  if (previewUrlCache.has(videoId)) return previewUrlCache.get(videoId)
-  const p = fetch(`/api/preview-url?id=${videoId}`)
+function getPreviewUrl(videoId, isLive) {
+  const key = isLive ? `live:${videoId}` : videoId
+  if (previewUrlCache.has(key)) return previewUrlCache.get(key)
+  const p = fetch(`/api/preview-url?id=${videoId}${isLive ? '&live=1' : ''}`)
     .then(r => r.json())
     .then(d => d?.url || null)
-    .catch(() => { previewUrlCache.delete(videoId); return null })
-  previewUrlCache.set(videoId, p)
+    .catch(() => { previewUrlCache.delete(key); return null })
+  previewUrlCache.set(key, p)
   return p
 }
 
@@ -54,6 +56,7 @@ function timeAgo(dateStr) {
 
 export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const addToast = useUIStore(s => s.addToast)
+  const gridStyle = useUIStore(s => s.gridStyle)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
   const [previewing, setPreviewing] = useState(false)
@@ -71,33 +74,51 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
 
   const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
+  const isLiveVideo = !!(video.isLive || video.live)
+
   // Prefetch preview URL when card scrolls into view (mobile)
   const [inView, setInView] = useState(false)
   useEffect(() => {
-    if (!isMobile || !cardRef.current || !videoId || video.isLive || video.live) return
+    if (!isMobile || !cardRef.current || !videoId) return
     const observer = new IntersectionObserver(
       ([entry]) => { if (entry.isIntersecting) setInView(true) },
       { rootMargin: '200px 0px', threshold: 0 }
     )
     observer.observe(cardRef.current)
     return () => observer.disconnect()
-  }, [videoId, video.isLive, video.live, isMobile])
+  }, [videoId, isMobile])
+
+  // Wide mode auto-preview: when a card scrolls into the center band
+  // of the viewport, start playing its preview inline — matching the
+  // YouTube app's feed behavior. Narrow band (±20% of viewport height
+  // around center) so only the clearly-focused card plays at a time.
+  // Compact mode still requires hover (desktop) or long-press (mobile).
+  useEffect(() => {
+    if (gridStyle !== 'wide') return
+    if (!isMobile || !cardRef.current || !videoId) return
+    const observer = new IntersectionObserver(
+      ([entry]) => { setPreviewing(entry.isIntersecting) },
+      { rootMargin: '-40% 0px -40% 0px', threshold: 0 }
+    )
+    observer.observe(cardRef.current)
+    return () => { observer.disconnect(); setPreviewing(false) }
+  }, [gridStyle, isMobile, videoId])
 
   // Fetch preview URL when in view (prefetch) or previewing (desktop hover).
-  // Dedups across VideoCard instances sharing the same videoId.
+  // Dedups across VideoCard instances sharing the same videoId+liveness.
   useEffect(() => {
-    if ((!inView && !previewing) || terminalOpen || !videoId || previewUrl || video.isLive || video.live) return
+    if ((!inView && !previewing) || terminalOpen || !videoId || previewUrl) return
     let cancelled = false
-    getPreviewUrl(videoId).then((url) => {
+    getPreviewUrl(videoId, isLiveVideo).then((url) => {
       if (!cancelled && url) setPreviewUrl(url)
     })
     return () => { cancelled = true }
-  }, [inView, previewing, terminalOpen, videoId, previewUrl, video.isLive, video.live])
+  }, [inView, previewing, terminalOpen, videoId, previewUrl, isLiveVideo])
 
   // Mobile: preview on tap-hold; Desktop: hover
   const handleMouseEnter = useCallback(() => {
-    if (!isMobile && videoId && !video.isLive && !video.live) setPreviewing(true)
-  }, [isMobile, videoId, video.isLive, video.live])
+    if (!isMobile && videoId) setPreviewing(true)
+  }, [isMobile, videoId])
   const handleMouseLeave = useCallback(() => {
     if (!isMobile) setPreviewing(false)
   }, [isMobile])

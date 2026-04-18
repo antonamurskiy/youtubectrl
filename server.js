@@ -693,21 +693,27 @@ app.get("/api/rumble", async (req, res) => {
 const previewCache = new Map();
 app.get("/api/preview-url", async (req, res) => {
   const id = req.query.id;
+  const isLive = req.query.live === "1";
   if (!id) return res.json({ url: null });
-  if (previewCache.has(id)) return res.json({ url: previewCache.get(id) });
+  const cacheKey = isLive ? `live:${id}` : id;
+  if (previewCache.has(cacheKey)) return res.json({ url: previewCache.get(cacheKey), isLive });
   try {
+    // VOD: progressive 360p or small DASH video-only. Live: low-bitrate
+    // HLS variants (301/300=1080p60, down to 93=360p). iOS Safari plays
+    // HLS natively in a <video> tag — perfect for an inline preview.
+    const format = isLive ? "93/94/95/96/300/301" : "18/134/133/160";
     const { stdout } = await execFileP("yt-dlp", [
-      "--cookies", COOKIES_FILE, "-f", "18/134/133/160",
+      "--cookies", COOKIES_FILE, "-f", format,
       "--get-url", `https://www.youtube.com/watch?v=${id}`,
     ], { timeout: 10000 });
     const url = stdout.trim();
-    if (url) previewCache.set(id, url);
+    if (url) previewCache.set(cacheKey, url);
     // Cap cache at 50 entries
     if (previewCache.size > 50) {
       const first = previewCache.keys().next().value;
       previewCache.delete(first);
     }
-    res.json({ url: url || null });
+    res.json({ url: url || null, isLive });
   } catch {
     res.json({ url: null });
   }
