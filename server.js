@@ -3956,8 +3956,16 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
-// Current Find My visibility (for the secret menu to render a
-// "Show" vs "Hide" label without the user having to guess).
+// Close Find My (quit the app).
+app.post("/api/close-findmy", async (_req, res) => {
+  try {
+    await execFileP("osascript", ["-e", 'tell application "FindMy" to quit']).catch(() => {});
+    res.json({ ok: true, running: false });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Current Find My running state (for the secret menu to render a
+// "Show" vs "Reopen" label without the user having to guess).
 app.get("/api/findmy-status", async (_req, res) => {
   try {
     const { stdout: existsOut } = await execFileP("osascript", ["-e",
