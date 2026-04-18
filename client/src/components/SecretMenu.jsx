@@ -13,20 +13,42 @@ const MAX_SIZE = 20
 // "wide" (full-width thumbnail like the official YouTube app). Persists
 // via the uiStore → localStorage. Closes the menu on tap so the change
 // is immediately visible.
-function GridStyleToggle({ onAfter }) {
+function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
   const gridStyle = useUIStore(s => s.gridStyle)
   const setGridStyle = useUIStore(s => s.setGridStyle)
   const next = gridStyle === 'wide' ? 'compact' : 'wide'
+  const isWide = gridStyle === 'wide'
   return (
     <button
       className="secret-menu-item"
+      style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft }}
       onClick={() => {
         hapticTick()
         setGridStyle(next)
         onAfter?.()
       }}
     >
-      Grid: {gridStyle === 'wide' ? 'wide' : 'compact'} → {next}
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+        {isWide ? (
+          // Wide: three full-width stacked rectangles
+          <>
+            <rect x="4" y="4" width="16" height="4" />
+            <rect x="4" y="10" width="16" height="4" />
+            <rect x="4" y="16" width="16" height="4" />
+          </>
+        ) : (
+          // Compact: small thumb + info-row suggestion (left square + two lines)
+          <>
+            <rect x="4" y="6" width="6" height="5" />
+            <line x1="12" y1="7" x2="20" y2="7" />
+            <line x1="12" y1="10" x2="17" y2="10" />
+            <rect x="4" y="14" width="6" height="5" />
+            <line x1="12" y1="15" x2="20" y2="15" />
+            <line x1="12" y1="18" x2="17" y2="18" />
+          </>
+        )}
+      </svg>
+      Grid: {isWide ? 'wide' : 'compact'}
     </button>
   )
 }
@@ -446,7 +468,7 @@ export default function SecretMenu() {
                 {label === fontSel ? '● ' : '  '}{label}
               </button>
             ))}
-            <div style={{ paddingLeft: 24 }}><GridStyleToggle onAfter={toggleSecretMenu} /></div>
+            <GridStyleToggle onAfter={toggleSecretMenu} paddingLeft={24} />
             <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => {
               hapticTick()
               fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
