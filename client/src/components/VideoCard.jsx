@@ -5,6 +5,28 @@ import { usePlaybackStore } from '../stores/playback'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
+// Global single-preview coordinator. In wide mode, multiple cards can
+// intersect the center band during fast scrolls — we want only one
+// playing at a time. Each card registers a listener; when any card
+// claims the active slot, others release. Last-claim wins so the card
+// that MOST recently entered the band is the one that plays.
+let _activePreviewId = null
+const _previewListeners = new Set()
+function claimPreview(id) {
+  if (_activePreviewId === id) return
+  _activePreviewId = id
+  for (const fn of _previewListeners) fn(_activePreviewId)
+}
+function releasePreview(id) {
+  if (_activePreviewId !== id) return
+  _activePreviewId = null
+  for (const fn of _previewListeners) fn(_activePreviewId)
+}
+function subscribePreview(fn) {
+  _previewListeners.add(fn)
+  return () => _previewListeners.delete(fn)
+}
+
 // Module-level dedup cache: key -> Promise<url|null>. Key includes
 // isLive so live and VOD previews for the same id don't collide (live
 // format is HLS, VOD is progressive MP4).
@@ -89,19 +111,29 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   }, [videoId, isMobile])
 
   // Wide mode auto-preview: when a card scrolls into the center band
-  // of the viewport, start playing its preview inline — matching the
-  // YouTube app's feed behavior. Narrow band (±20% of viewport height
-  // around center) so only the clearly-focused card plays at a time.
-  // Compact mode still requires hover (desktop) or long-press (mobile).
+  // of the viewport, claim the single shared preview slot. Only one
+  // card previews at a time — claims and subscribes to the global
+  // coordinator so other cards stop when this one takes over.
   useEffect(() => {
     if (gridStyle !== 'wide') return
     if (!isMobile || !cardRef.current || !videoId) return
+    const unsub = subscribePreview((activeId) => {
+      setPreviewing(activeId === videoId)
+    })
     const observer = new IntersectionObserver(
-      ([entry]) => { setPreviewing(entry.isIntersecting) },
+      ([entry]) => {
+        if (entry.isIntersecting) claimPreview(videoId)
+        else releasePreview(videoId)
+      },
       { rootMargin: '-40% 0px -40% 0px', threshold: 0 }
     )
     observer.observe(cardRef.current)
-    return () => { observer.disconnect(); setPreviewing(false) }
+    return () => {
+      observer.disconnect()
+      unsub()
+      releasePreview(videoId)
+      setPreviewing(false)
+    }
   }, [gridStyle, isMobile, videoId])
 
   // Fetch preview URL when in view (prefetch) or previewing (desktop hover).
