@@ -1022,6 +1022,9 @@ body {
   max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .secret-menu-item {
@@ -1036,6 +1039,12 @@ body {
   font-size: var(--font-lg);
   text-align: left;
   cursor: pointer;
+  /* iOS: long-press on a button's text label was popping the native
+   * text-selection context menu ("Copy / Look Up / …"). Disable
+   * selection + the callout so the menu is tap-only. */
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .secret-menu-item:last-child { border-bottom: none; }
