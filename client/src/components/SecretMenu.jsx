@@ -59,9 +59,9 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
 // they're doing. Does NOT close the secret menu — user often wants to
 // reopen, then hit another menu item (e.g. Toggle resolution for the
 // laptop screen).
-// Find My toggle — single button that opens the app when closed and
-// quits it when running. Not hide/show (app fully exits on close).
-// Does NOT close the secret menu on tap.
+// Find My — primary button toggles open/close (app quits on close).
+// When running, a trailing ↻ refreshes location by hiding+reactivating
+// the app (cheap re-poll, no relaunch). Secret menu stays open.
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   useEffect(() => {
@@ -70,23 +70,43 @@ function FindMyToggle({ addToast }) {
   const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
   const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (
-    <button
-      className="secret-menu-item"
-      style={{ color, display: 'flex', alignItems: 'center', gap: 8 }}
-      onClick={() => {
-        hapticTick()
-        fetch('/api/toggle-findmy', { method: 'POST' })
-          .then(r => r.json())
-          .then(d => { setRunning(!!d.running); addToast(d.running ? 'Find My shown' : 'Find My closed') })
-          .catch(() => addToast('Find My failed'))
-      }}
-    >
-      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-        <path d="M12 22s-7-7.58-7-12a7 7 0 0 1 14 0c0 4.42-7 12-7 12z" />
-        <circle cx="12" cy="10" r="2.5" />
-      </svg>
-      {label}
-    </button>
+    <div style={{ display: 'flex' }}>
+      <button
+        className="secret-menu-item"
+        style={{ color, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
+        onClick={() => {
+          hapticTick()
+          fetch('/api/toggle-findmy', { method: 'POST' })
+            .then(r => r.json())
+            .then(d => { setRunning(!!d.running); addToast(d.running ? 'Find My shown' : 'Find My closed') })
+            .catch(() => addToast('Find My failed'))
+        }}
+      >
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+          <path d="M12 22s-7-7.58-7-12a7 7 0 0 1 14 0c0 4.42-7 12-7 12z" />
+          <circle cx="12" cy="10" r="2.5" />
+        </svg>
+        {label}
+      </button>
+      {running && (
+        <button
+          className="secret-menu-item"
+          style={{ color: 'var(--green)', display: 'flex', alignItems: 'center', width: 'auto', paddingLeft: 16, paddingRight: 16, borderLeft: '1px solid var(--border)' }}
+          aria-label="Refresh Find My locations"
+          onClick={() => {
+            hapticTick()
+            fetch('/api/refresh-findmy', { method: 'POST' })
+              .then(() => addToast('Find My refreshed'))
+              .catch(() => addToast('Refresh failed'))
+          }}
+        >
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <polyline points="21 4 21 10 15 10" />
+            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+          </svg>
+        </button>
+      )}
+    </div>
   )
 }
 

@@ -3956,6 +3956,33 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
+// Refresh Find My's location data without relaunching.
+// Hide → short wait → activate. Bringing Find My from background to
+// foreground re-polls device locations; this is the cheap refresh
+// compared to quit+relaunch (which forces the map/panels to re-render
+// from scratch).
+app.post("/api/refresh-findmy", async (_req, res) => {
+  try {
+    await execFileP("osascript", ["-e",
+      'tell application "System Events" to set visible of process "FindMy" to false']).catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
+    // Re-enforce window placement in case hide/show shuffled things.
+    try {
+      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+      const wid = line ? line.split("|")[0].trim() : "";
+      if (wid) {
+        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+      }
+    } catch {}
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Current Find My running state (for the secret menu to render a
 // "Show" vs "Close" label without the user having to guess).
 app.get("/api/findmy-status", async (_req, res) => {
