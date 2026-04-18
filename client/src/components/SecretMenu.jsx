@@ -59,55 +59,34 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
 // they're doing. Does NOT close the secret menu — user often wants to
 // reopen, then hit another menu item (e.g. Toggle resolution for the
 // laptop screen).
+// Find My toggle — single button that opens the app when closed and
+// quits it when running. Not hide/show (app fully exits on close).
+// Does NOT close the secret menu on tap.
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
   }, [])
-  const primaryLabel = running == null ? 'Find My…' : (running ? 'Reopen Find My' : 'Show Find My')
-  const primaryColor = running ? 'var(--green)' : 'var(--text-dim)'
-  const PinIcon = (
-    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-      <path d="M12 22s-7-7.58-7-12a7 7 0 0 1 14 0c0 4.42-7 12-7 12z" />
-      <circle cx="12" cy="10" r="2.5" />
-    </svg>
-  )
+  const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
+  const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (
-    <div style={{ display: 'flex' }}>
-      <button
-        className="secret-menu-item"
-        style={{ color: primaryColor, display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}
-        onClick={() => {
-          hapticTick()
-          fetch('/api/toggle-findmy', { method: 'POST' })
-            .then(r => r.json())
-            .then(d => { setRunning(!!d.running); addToast(running ? 'Find My reopened' : 'Find My shown') })
-            .catch(() => addToast('Find My failed'))
-        }}
-      >
-        {PinIcon}
-        {primaryLabel}
-      </button>
-      {running && (
-        <button
-          className="secret-menu-item"
-          style={{ color: 'var(--red)', display: 'flex', alignItems: 'center', gap: 8, width: 'auto', paddingLeft: 16, paddingRight: 16, borderLeft: '1px solid var(--border)' }}
-          aria-label="Close Find My"
-          onClick={() => {
-            hapticThump()
-            fetch('/api/close-findmy', { method: 'POST' })
-              .then(r => r.json())
-              .then(d => { setRunning(!!d.running); addToast('Find My closed') })
-              .catch(() => addToast('Close failed'))
-          }}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
-        </button>
-      )}
-    </div>
+    <button
+      className="secret-menu-item"
+      style={{ color, display: 'flex', alignItems: 'center', gap: 8 }}
+      onClick={() => {
+        hapticTick()
+        fetch('/api/toggle-findmy', { method: 'POST' })
+          .then(r => r.json())
+          .then(d => { setRunning(!!d.running); addToast(d.running ? 'Find My shown' : 'Find My closed') })
+          .catch(() => addToast('Find My failed'))
+      }}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+        <path d="M12 22s-7-7.58-7-12a7 7 0 0 1 14 0c0 4.42-7 12-7 12z" />
+        <circle cx="12" cy="10" r="2.5" />
+      </svg>
+      {label}
+    </button>
   )
 }
 

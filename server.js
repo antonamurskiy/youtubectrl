@@ -3956,16 +3956,8 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
-// Close Find My (quit the app).
-app.post("/api/close-findmy", async (_req, res) => {
-  try {
-    await execFileP("osascript", ["-e", 'tell application "FindMy" to quit']).catch(() => {});
-    res.json({ ok: true, running: false });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
 // Current Find My running state (for the secret menu to render a
-// "Show" vs "Reopen" label without the user having to guess).
+// "Show" vs "Close" label without the user having to guess).
 app.get("/api/findmy-status", async (_req, res) => {
   try {
     const { stdout: existsOut } = await execFileP("osascript", ["-e",
@@ -3977,32 +3969,28 @@ app.get("/api/findmy-status", async (_req, res) => {
   } catch { res.json({ visible: false, running: false }); }
 });
 
-// Reopen Find My on the MacBook Air built-in display.
-// Always closes any existing instance and opens fresh — Find My's
-// in-app UI state (zoom level, selected device, map position) doesn't
-// survive hide/show reliably, and the user wants a clean launch each
-// tap. If it wasn't running, just opens.
+// Toggle Find My on the MacBook Air built-in display.
+// If running: quit the app (window closes entirely).
+// If not running: launch, focus, move to workspace 8, fullscreen.
+// This is a true open/close toggle — not hide/show, not relaunch.
 app.post("/api/toggle-findmy", async (_req, res) => {
   try {
-    // Quit if running. `quit` (vs killall) is polite — Find My will
-    // persist any offline-location uploads and close cleanly.
+    // Is FindMy running?
+    let running = false;
     try {
-      const { stdout: existsOut } = await execFileP("osascript", ["-e",
+      const { stdout } = await execFileP("osascript", ["-e",
         'tell application "System Events" to exists process "FindMy"']);
-      if (existsOut.trim() === "true") {
-        await execFileP("osascript", ["-e", 'tell application "FindMy" to quit']).catch(() => {});
-        // Wait for process to actually exit so the subsequent open
-        // gets a fresh instance, not the same process being re-activated.
-        for (let i = 0; i < 20; i++) {
-          const { stdout } = await execFileP("osascript", ["-e",
-            'tell application "System Events" to exists process "FindMy"']).catch(() => ({ stdout: "true" }));
-          if (stdout.trim() !== "true") break;
-          await new Promise(r => setTimeout(r, 100));
-        }
-      }
+      running = stdout.trim() === "true";
     } catch {}
 
-    // Open fresh, focus, move to laptop workspace (= 8), fullscreen.
+    if (running) {
+      // Quit (polite — Find My flushes its caches). Window closes
+      // because the app exits.
+      await execFileP("osascript", ["-e", 'tell application "FindMy" to quit']).catch(() => {});
+      return res.json({ ok: true, running: false });
+    }
+
+    // Open: launch, focus, move to laptop workspace (= 8), fullscreen.
     await execFileP("open", ["-a", "FindMy"]).catch(() => {});
     // Give the app a moment to create its window before aerospace can move it.
     await new Promise(r => setTimeout(r, 400));
