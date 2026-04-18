@@ -1018,16 +1018,22 @@ body {
   background: #151515;
   border: 1px solid var(--border);
   z-index: 600;
-  min-width: 180px;
-  /* Lock max width so an inner image (e.g. Maria's map crop at 900px
-   * natural width) can't push the menu wider than intended. */
-  max-width: 320px;
+  /* Fixed width so swapping the top slot between volume slider and
+   * map crop never changes menu dimensions. 280px fits nicely on a
+   * phone without crowding edges. */
+  width: 280px;
   max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
   -webkit-user-select: none;
   user-select: none;
   -webkit-touch-callout: none;
+}
+/* Wrap long labels (e.g. "Audio: LG UltraFine Display Audio") inside
+ * fixed menu so they don't force the container wider. */
+.secret-menu-item {
+  word-break: break-word;
+  white-space: normal;
 }
 
 .secret-menu-item {
