@@ -5,22 +5,32 @@ import { usePlaybackStore } from '../stores/playback'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
-// Global single-preview coordinator. In wide mode, multiple cards can
-// intersect the center band during fast scrolls — we want only one
-// playing at a time. Each card registers a listener; when any card
-// claims the active slot, others release. Last-claim wins so the card
-// that MOST recently entered the band is the one that plays.
-let _activePreviewId = null
+// Global single-preview coordinator. Only one card previews at a time.
+// Each card reports its current top-y offset when intersecting the
+// trigger band; the coordinator picks whichever intersecting card is
+// CLOSEST TO THE TOP of the viewport (lowest y value) so previews
+// feel like they're "leading" the scroll rather than lagging behind.
+const _previewEntries = new Map() // id -> topY
 const _previewListeners = new Set()
-function claimPreview(id) {
-  if (_activePreviewId === id) return
-  _activePreviewId = id
+let _activePreviewId = null
+function _recomputeActive() {
+  let bestId = null
+  let bestY = Infinity
+  for (const [id, y] of _previewEntries) {
+    if (y < bestY) { bestY = y; bestId = id }
+  }
+  if (bestId === _activePreviewId) return
+  _activePreviewId = bestId
   for (const fn of _previewListeners) fn(_activePreviewId)
 }
+function claimPreview(id, topY) {
+  _previewEntries.set(id, topY)
+  _recomputeActive()
+}
 function releasePreview(id) {
-  if (_activePreviewId !== id) return
-  _activePreviewId = null
-  for (const fn of _previewListeners) fn(_activePreviewId)
+  if (!_previewEntries.has(id)) return
+  _previewEntries.delete(id)
+  _recomputeActive()
 }
 function subscribePreview(fn) {
   _previewListeners.add(fn)
@@ -82,14 +92,14 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const terminalOpen = useSyncStore(s => s.terminalOpen)
   const [contextMenu, setContextMenu] = useState(null)
   const [previewing, setPreviewing] = useState(false)
-  // `previewing` = card is in the center band / being hovered. We
-  // delay actual preview playback by 1s so the thumbnail is visible
-  // during quick scrolls — no flash of video starting and stopping
-  // as cards pass through the band.
+  // `previewing` = card is in the trigger band / being hovered. We
+  // delay actual preview playback by 600ms so the thumbnail is
+  // visible during quick scrolls — no flash of video starting and
+  // stopping as cards pass through.
   const [previewActive, setPreviewActive] = useState(false)
   useEffect(() => {
     if (!previewing) { setPreviewActive(false); return }
-    const t = setTimeout(() => setPreviewActive(true), 1000)
+    const t = setTimeout(() => setPreviewActive(true), 600)
     return () => clearTimeout(t)
   }, [previewing])
   const longPressTimer = useRef(null)
@@ -138,10 +148,13 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
     })
     const observer = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) claimPreview(videoId)
+        if (entry.isIntersecting) claimPreview(videoId, entry.boundingClientRect.top)
         else releasePreview(videoId)
       },
-      { rootMargin: '-40% 0px -40% 0px', threshold: 0 }
+      // Band is top-weighted: top of the card must reach the top third
+      // of the viewport to start triggering. Topmost card in the band
+      // wins, so previews feel like they're leading the scroll.
+      { rootMargin: '-10% 0px -60% 0px', threshold: 0 }
     )
     observer.observe(cardRef.current)
     return () => {
