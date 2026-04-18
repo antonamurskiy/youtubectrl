@@ -92,6 +92,8 @@ export default function VideoGrid() {
   const addToast = useUIStore(s => s.addToast)
   const setRefreshing = useUIStore(s => s.setRefreshing)
   const setFilteredVideos = useUIStore(s => s.setFilteredVideos)
+  const gridStyle = useUIStore(s => s.gridStyle)
+  const gridClass = `video-grid${gridStyle === 'wide' ? ' video-grid--wide' : ''}`
   const nowPlayingUrl = usePlaybackStore(s => s.url)
   const nowPaused = usePlaybackStore(s => s.paused)
 
@@ -371,7 +373,7 @@ export default function VideoGrid() {
           </button>
         </div>
       )}
-      <div className="video-grid">
+      <div className={gridClass}>
         {loading && <SkeletonCards />}
 
         {!loading && videos.length === 0 && (
@@ -406,7 +408,7 @@ export default function VideoGrid() {
       )}
 
       {videos.length > PAGE_SIZE && (
-        <div className="video-grid">
+        <div className={gridClass}>
           {videos.slice(PAGE_SIZE).map((video) => (
             <VideoCard
               key={video.videoId || video.id || video.url}

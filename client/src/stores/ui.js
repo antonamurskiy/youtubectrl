@@ -1,5 +1,18 @@
 import { create } from 'zustand'
 
+// Grid style: 'compact' (small thumb on the left, info on the right — like
+// mobile YouTube search results) or 'wide' (full-width thumbnail stacked
+// on top of title/channel/meta — like the official YouTube mobile app
+// home feed). Persisted to localStorage so the preference survives reloads.
+const GRID_STYLE_KEY = 'ytctl-grid-style'
+function loadGridStyle() {
+  try {
+    const v = localStorage.getItem(GRID_STYLE_KEY)
+    if (v === 'wide' || v === 'compact') return v
+  } catch {}
+  return 'compact'
+}
+
 export const useUIStore = create((set) => ({
   activeTab: 'rec',
   searchQuery: '',
@@ -14,6 +27,11 @@ export const useUIStore = create((set) => ({
   setCachedVolume: (v) => set({ cachedVolume: v }),
   filteredVideos: [], // ads filtered from recommended feed
   setFilteredVideos: (v) => set({ filteredVideos: v }),
+  gridStyle: loadGridStyle(),
+  setGridStyle: (style) => {
+    try { localStorage.setItem(GRID_STYLE_KEY, style) } catch {}
+    set({ gridStyle: style })
+  },
 
   setTab: (tab) => set({ activeTab: tab }),
   setSearch: (q) => set({ searchQuery: q }),

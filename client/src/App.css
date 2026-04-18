@@ -421,6 +421,40 @@ body {
   color: var(--text-dim);
 }
 
+/* ── Wide grid style (YouTube-style full-width thumbnails) ──
+ * Toggled via .video-grid--wide on the grid container. Thumbnail
+ * spans the container width and title/meta stack beneath it, mirroring
+ * the official YouTube app's home feed layout. Mobile-only; desktop
+ * already uses a card grid above 768px that achieves the same shape. */
+@media (max-width: 767px) {
+  .video-grid--wide {
+    gap: 16px;
+  }
+  .video-grid--wide .video-card {
+    flex-direction: column;
+    gap: 8px;
+    padding: 8px 0;
+  }
+  .video-grid--wide .video-card:active,
+  .video-grid--wide .video-card.playing {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .video-grid--wide .thumb-wrap {
+    width: 100%;
+    aspect-ratio: 16/9;
+  }
+  .video-grid--wide .video-info {
+    padding: 0 2px;
+  }
+  .video-grid--wide .video-title {
+    font-size: calc(var(--font-lg) + 1px);
+    -webkit-line-clamp: 2;
+  }
+}
+
 /* ── Shorts section ── */
 .shorts-section {
   padding: 8px 0;

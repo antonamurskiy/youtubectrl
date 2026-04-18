@@ -9,6 +9,28 @@ import { tick as hapticTick, thump as hapticThump, selection as hapticSelection,
 const MIN_SIZE = 9
 const MAX_SIZE = 20
 
+// Toggle the video grid between "compact" (small thumb + info row) and
+// "wide" (full-width thumbnail like the official YouTube app). Persists
+// via the uiStore → localStorage. Closes the menu on tap so the change
+// is immediately visible.
+function GridStyleToggle({ onAfter }) {
+  const gridStyle = useUIStore(s => s.gridStyle)
+  const setGridStyle = useUIStore(s => s.setGridStyle)
+  const next = gridStyle === 'wide' ? 'compact' : 'wide'
+  return (
+    <button
+      className="secret-menu-item"
+      onClick={() => {
+        hapticTick()
+        setGridStyle(next)
+        onAfter?.()
+      }}
+    >
+      Grid: {gridStyle === 'wide' ? 'wide' : 'compact'} → {next}
+    </button>
+  )
+}
+
 // Phone sync offset slider. Uses native <input type=range> for
 // bulletproof touch handling. Persisted server-side to
 // `.sync-offset.json`.
@@ -371,6 +393,7 @@ export default function SecretMenu() {
         )}
 
         <SyncOffsetSlider />
+        <GridStyleToggle onAfter={toggleSecretMenu} />
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
