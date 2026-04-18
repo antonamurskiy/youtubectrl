@@ -1828,7 +1828,10 @@ app.post("/api/play", async (req, res) => {
           } catch {}
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
-            if (t?.data) { history[0].title = t.data; saveHistory(); }
+            // Live streams playing our proxy report the URL basename
+            // ("hls-live.m3u8") as media-title; reject those or they
+            // poison history and blank out the lock-screen widget.
+            if (t?.data && !/\.m3u8($|\?)/.test(t.data)) { history[0].title = t.data; saveHistory(); }
           } catch {}
           markWatchedOnYouTube(url);
           startProgressTracking(url);
