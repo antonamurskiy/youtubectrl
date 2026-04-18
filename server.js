@@ -3956,6 +3956,19 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
+// Current Find My visibility (for the secret menu to render a
+// "Show" vs "Hide" label without the user having to guess).
+app.get("/api/findmy-status", async (_req, res) => {
+  try {
+    const { stdout: existsOut } = await execFileP("osascript", ["-e",
+      'tell application "System Events" to exists process "FindMy"']);
+    if (existsOut.trim() !== "true") return res.json({ visible: false, running: false });
+    const { stdout: visOut } = await execFileP("osascript", ["-e",
+      'tell application "System Events" to get visible of process "FindMy"']);
+    res.json({ visible: visOut.trim() === "true", running: true });
+  } catch { res.json({ visible: false, running: false }); }
+});
+
 // Show/hide Find My on the MacBook Air built-in display.
 // Detects current visibility via System Events; toggles accordingly.
 // When showing: launch if not running, move its window to workspace 8

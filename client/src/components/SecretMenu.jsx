@@ -31,6 +31,39 @@ function GridStyleToggle({ onAfter }) {
   )
 }
 
+// Find My (macOS app) show/hide with live state reflection.
+// Polls /api/findmy-status on mount so the label and color reflect
+// whatever the Mac is actually doing (not whatever we last poked).
+function FindMyToggle({ onAfter, addToast }) {
+  const [visible, setVisible] = useState(null)
+  useEffect(() => {
+    fetch('/api/findmy-status').then(r => r.json()).then(d => setVisible(!!d.visible)).catch(() => setVisible(false))
+  }, [])
+  const label = visible == null ? 'Find My…' : (visible ? 'Hide Find My' : 'Show Find My')
+  const color = visible ? 'var(--green)' : 'var(--text-dim)'
+  return (
+    <button
+      className="secret-menu-item"
+      style={{ color, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+      onClick={() => {
+        hapticTick()
+        fetch('/api/toggle-findmy', { method: 'POST' })
+          .then(r => r.json())
+          .then(d => { setVisible(!!d.visible); addToast(d.visible ? 'Find My shown' : 'Find My hidden') })
+          .catch(() => addToast('Find My toggle failed'))
+        onAfter?.()
+      }}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+        {/* Map pin with centered dot — Find My's iconography */}
+        <path d="M12 22s-7-7.58-7-12a7 7 0 0 1 14 0c0 4.42-7 12-7 12z" />
+        <circle cx="12" cy="10" r="2.5" />
+      </svg>
+      {label}
+    </button>
+  )
+}
+
 // Phone sync offset slider. Uses native <input type=range> for
 // bulletproof touch handling. Persisted server-side to
 // `.sync-offset.json`.
@@ -401,16 +434,7 @@ export default function SecretMenu() {
         }}>
           Toggle resolution
         </button>
-        <button className="secret-menu-item" onClick={() => {
-          hapticTick()
-          fetch('/api/toggle-findmy', { method: 'POST' })
-            .then(r => r.json())
-            .then(d => addToast(d.visible ? 'Find My shown' : 'Find My hidden'))
-            .catch(() => addToast('Find My toggle failed'))
-          toggleSecretMenu()
-        }}>
-          Toggle Find My
-        </button>
+        <FindMyToggle onAfter={toggleSecretMenu} addToast={addToast} />
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
           fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
