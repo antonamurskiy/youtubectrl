@@ -53,16 +53,19 @@ function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
   )
 }
 
-// Find My (macOS app) show/hide with live state reflection.
-// Polls /api/findmy-status on mount so the label and color reflect
-// whatever the Mac is actually doing (not whatever we last poked).
-function FindMyToggle({ onAfter, addToast }) {
-  const [visible, setVisible] = useState(null)
+// Find My (macOS app) reopen — quits and relaunches each tap so the
+// window comes back fresh (map reset, location panel re-fetched).
+// Label reflects whether it's currently running so the user knows what
+// they're doing. Does NOT close the secret menu — user often wants to
+// reopen, then hit another menu item (e.g. Toggle resolution for the
+// laptop screen).
+function FindMyToggle({ addToast }) {
+  const [running, setRunning] = useState(null)
   useEffect(() => {
-    fetch('/api/findmy-status').then(r => r.json()).then(d => setVisible(!!d.visible)).catch(() => setVisible(false))
+    fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
   }, [])
-  const label = visible == null ? 'Find My…' : (visible ? 'Hide Find My' : 'Show Find My')
-  const color = visible ? 'var(--green)' : 'var(--text-dim)'
+  const label = running == null ? 'Find My…' : (running ? 'Reopen Find My' : 'Show Find My')
+  const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (
     <button
       className="secret-menu-item"
@@ -71,9 +74,9 @@ function FindMyToggle({ onAfter, addToast }) {
         hapticTick()
         fetch('/api/toggle-findmy', { method: 'POST' })
           .then(r => r.json())
-          .then(d => { setVisible(!!d.visible); addToast(d.visible ? 'Find My shown' : 'Find My hidden') })
-          .catch(() => addToast('Find My toggle failed'))
-        onAfter?.()
+          .then(d => { setRunning(!!d.running); addToast(running ? 'Find My reopened' : 'Find My shown') })
+          .catch(() => addToast('Find My failed'))
+        // Don't close the menu — user may want to chain actions.
       }}
     >
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
@@ -445,7 +448,7 @@ export default function SecretMenu() {
         }}>
           Toggle resolution
         </button>
-        <FindMyToggle onAfter={toggleSecretMenu} addToast={addToast} />
+        <FindMyToggle addToast={addToast} />
 
         {/* Misc submenu — stuff that matters less often. Collapsed by default
             to keep the top-level menu scannable. */}

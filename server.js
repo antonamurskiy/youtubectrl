@@ -3969,33 +3969,32 @@ app.get("/api/findmy-status", async (_req, res) => {
   } catch { res.json({ visible: false, running: false }); }
 });
 
-// Show/hide Find My on the MacBook Air built-in display.
-// Detects current visibility via System Events; toggles accordingly.
-// When showing: launch if not running, move its window to workspace 8
-// (the laptop monitor in our aerospace layout), and focus it.
+// Reopen Find My on the MacBook Air built-in display.
+// Always closes any existing instance and opens fresh — Find My's
+// in-app UI state (zoom level, selected device, map position) doesn't
+// survive hide/show reliably, and the user wants a clean launch each
+// tap. If it wasn't running, just opens.
 app.post("/api/toggle-findmy", async (_req, res) => {
   try {
-    // Is FindMy running AND visible? Two-step to avoid AppleScript
-    // parser choking on inline-if inside tell blocks.
-    let visible = false;
+    // Quit if running. `quit` (vs killall) is polite — Find My will
+    // persist any offline-location uploads and close cleanly.
     try {
       const { stdout: existsOut } = await execFileP("osascript", ["-e",
         'tell application "System Events" to exists process "FindMy"']);
       if (existsOut.trim() === "true") {
-        const { stdout: visOut } = await execFileP("osascript", ["-e",
-          'tell application "System Events" to get visible of process "FindMy"']);
-        visible = visOut.trim() === "true";
+        await execFileP("osascript", ["-e", 'tell application "FindMy" to quit']).catch(() => {});
+        // Wait for process to actually exit so the subsequent open
+        // gets a fresh instance, not the same process being re-activated.
+        for (let i = 0; i < 20; i++) {
+          const { stdout } = await execFileP("osascript", ["-e",
+            'tell application "System Events" to exists process "FindMy"']).catch(() => ({ stdout: "true" }));
+          if (stdout.trim() !== "true") break;
+          await new Promise(r => setTimeout(r, 100));
+        }
       }
     } catch {}
 
-    if (visible) {
-      // Hide via System Events (process stays running, window hidden).
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to set visible of process "FindMy" to false']).catch(() => {});
-      return res.json({ ok: true, visible: false });
-    }
-
-    // Show: launch if needed, focus, move to laptop workspace (= 8).
+    // Open fresh, focus, move to laptop workspace (= 8), fullscreen.
     await execFileP("open", ["-a", "FindMy"]).catch(() => {});
     // Give the app a moment to create its window before aerospace can move it.
     await new Promise(r => setTimeout(r, 400));
@@ -4025,7 +4024,7 @@ app.post("/api/toggle-findmy", async (_req, res) => {
         await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
       }
     } catch {}
-    res.json({ ok: true, visible: true });
+    res.json({ ok: true, running: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
