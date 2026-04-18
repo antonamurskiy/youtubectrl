@@ -4300,21 +4300,31 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
     await execFileP("osascript", ["-e",
-      'tell application "System Events" to set visible of process "FindMy" to false']).catch(() => {});
+      'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
     await new Promise(r => setTimeout(r, 300));
     await execFileP("osascript", ["-e",
       'tell application "FindMy" to activate']).catch(() => {});
-    // Re-enforce window placement in case hide/show shuffled things.
+    // Re-enforce window placement + stealth visibility.
     try {
       const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
       const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
       const wid = line ? line.split("|")[0].trim() : "";
       if (wid) {
         await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        if (!findmyStealth) {
+          await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+          await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+        }
       }
     } catch {}
+    // If stealth is on, the activate we just did made the window
+    // visible — wait a beat for the location to re-poll, then hide
+    // again so the user never sees it flash back on screen.
+    if (findmyStealth) {
+      await new Promise(r => setTimeout(r, 500));
+      await execFileP("osascript", ["-e",
+        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+    }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
