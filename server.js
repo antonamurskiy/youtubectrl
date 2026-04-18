@@ -2491,9 +2491,20 @@ app.post("/api/go-live", async (_req, res) => {
     if (p?.data?.includes("/api/hls-live.m3u8")) {
       const d = await mpvCommand(["get_property", "duration"]);
       if (d?.data > 5) await mpvCommand(["seek", d.data - 3, "absolute"]);
+      // Seek within live proxy still invalidates the existing anchor's
+      // time-pos correspondence — drop it so WS recaptures at the new
+      // position.
+      playbackAnchor = null;
       return res.json({ ok: true, alreadyLive: true });
     }
     const wasPaused = await mpvCommand(["get_property", "pause"]);
+    // Clear both anchors. playbackAnchor is bucketed by proxy path,
+    // but going live → sub-proxy → live keeps the path the same, so
+    // the WS capture condition (`path !== mpvPath.data`) would never
+    // refire and the stale anchor would report the PREVIOUS
+    // behind-live value (whatever the user scrubbed to last).
+    playbackAnchor = null;
+    subProxyAnchor = null;
     await mpvCommand(["loadfile", "http://localhost:3000/api/hls-live.m3u8", "replace"]);
     setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
     await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
