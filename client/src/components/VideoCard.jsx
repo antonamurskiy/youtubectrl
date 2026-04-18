@@ -98,17 +98,23 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
 
   const isLiveVideo = !!(video.isLive || video.live)
 
-  // Prefetch preview URL when card scrolls into view (mobile)
+  // Prefetch preview URL + pre-buffer media when card is anywhere
+  // near the viewport. Wide mode widens the band (800px) because the
+  // cards are taller there and auto-preview triggers at center — we
+  // need more lead time for `preload="auto"` to actually pull bytes
+  // before the card becomes active. Compact mode keeps 200px (only
+  // URL fetch, preview still hover-triggered).
   const [inView, setInView] = useState(false)
   useEffect(() => {
     if (!isMobile || !cardRef.current || !videoId) return
+    const rootMargin = gridStyle === 'wide' ? '800px 0px' : '200px 0px'
     const observer = new IntersectionObserver(
-      ([entry]) => { if (entry.isIntersecting) setInView(true) },
-      { rootMargin: '200px 0px', threshold: 0 }
+      ([entry]) => { setInView(entry.isIntersecting) },
+      { rootMargin, threshold: 0 }
     )
     observer.observe(cardRef.current)
     return () => observer.disconnect()
-  }, [videoId, isMobile])
+  }, [videoId, isMobile, gridStyle])
 
   // Wide mode auto-preview: when a card scrolls into the center band
   // of the viewport, claim the single shared preview slot. Only one
@@ -329,15 +335,32 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
       >
         <div className="thumb-wrap">
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
-          {previewing && !terminalOpen && previewUrl && (
+          {/* Pre-mount video as soon as URL resolves + card is in the
+              prefetch band, regardless of whether we're previewing.
+              `preload="auto"` pulls bytes in the background so when the
+              card becomes active, .play() is instant — no "loading"
+              jank mid-scroll. Opacity 0 hides it; previewing flips on
+              the playback + visibility together. */}
+          {previewUrl && !terminalOpen && inView && (
             <video
-              ref={(el) => { previewRef.current = el; if (el) el.play().catch(() => {}) }}
+              ref={(el) => {
+                previewRef.current = el
+                if (!el) return
+                if (previewing) el.play().catch(() => {})
+                else { try { el.pause() } catch {} }
+              }}
               src={previewUrl}
               muted
               loop
               playsInline
               preload="auto"
-              style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', objectFit: 'cover', zIndex: 2 }}
+              style={{
+                position: 'absolute', inset: 0, width: '100%', height: '100%',
+                objectFit: 'cover',
+                zIndex: 2,
+                opacity: previewing ? 1 : 0,
+                pointerEvents: previewing ? 'auto' : 'none',
+              }}
             />
           )}
           {(video.isLive || video.live || video.duration === 'LIVE') && <span className="live-badge">LIVE</span>}
