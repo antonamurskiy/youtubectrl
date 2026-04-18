@@ -1590,6 +1590,27 @@ app.get("/api/trending", async (_req, res) => {
 
 let mpvProcess = null;
 let nowPlaying = null;
+// Persist nowPlaying so reconnects after a server restart can recover
+// the YouTube URL even when mpv is on a proxy path (live/DVR proxy's
+// mpv `path` property is our own http://.../api/hls-*.m3u8, not the
+// youtube.com URL — without persistence we'd have no way to look up
+// the title/channel/thumbnail in historyMap).
+const NOW_PLAYING_FILE = path.join(__dirname, ".now-playing.json");
+try {
+  const v = JSON.parse(fs.readFileSync(NOW_PLAYING_FILE, "utf8"));
+  if (v?.url) nowPlaying = v.url;
+} catch {}
+let _lastPersistedNowPlaying = nowPlaying;
+function persistNowPlaying() {
+  if (nowPlaying === _lastPersistedNowPlaying) return;
+  // Never persist a proxy URL — we're looking at that file to *recover*
+  // the YouTube URL after a restart, so persisting proxy would defeat
+  // the whole mechanism.
+  if (typeof nowPlaying === "string" && /\/api\/hls-(live|sub|vod)\.m3u8/.test(nowPlaying)) return;
+  _lastPersistedNowPlaying = nowPlaying;
+  try { fs.writeFileSync(NOW_PLAYING_FILE, JSON.stringify({ url: nowPlaying, ts: Date.now() })); } catch {}
+}
+setInterval(persistNowPlaying, 5000);
 let windowMode = null; // 'fullscreen' | 'maximize' | 'floating' | null
 let _lastPolledPaused = null; // track mpv pause state for auto-hide on external pause (AirPods etc)
 // Cache immutable-per-video mpv properties so the WS tick doesn't re-query them every second.
@@ -3125,9 +3146,17 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     // VOD — try DASH 1080p first (native AVPlayer composes video+audio),
     // fall back to progressive 22 (720p + AAC in one URL) for web and
     // for reliability with seeks.
+    // Prefer progressive format 22 — single URL that AVPlayer loads
+    // instantly via HTTP Range, no manifest probing or composition
+    // building. In sync mode mpv is the primary screen at full quality,
+    // so 720p on the phone is fine. The DASH 1080p composition path
+    // (137+140) takes ~8s to load because AVURLAsset has to probe both
+    // DASH manifests serially before AVPlayer can even start, and the
+    // quality gain isn't visible when mpv is what the user's actually
+    // watching.
     const { stdout } = await execFileP(
       "yt-dlp",
-      ["--cookies", COOKIES_FILE, "-f", "137+140/136+140/135+140/22/best[ext=mp4]", "--get-url", nowPlaying],
+      ["--cookies", COOKIES_FILE, "-f", "22/best[ext=mp4]/137+140/136+140/135+140", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
@@ -4486,8 +4515,20 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
       // user will /api/play fresh. Setting nowPlaying to the proxy URL
       // breaks things downstream (yt-dlp tries to fetch the proxy).
       if (url && (url.includes("/api/hls-live.m3u8") || url.includes("/api/hls-sub.m3u8") || url.includes("/api/hls-vod.m3u8"))) {
-        // Skip recovery; mpv will keep playing but our server state
-        // stays blank until user triggers a new /api/play.
+        // Proxy path — we need the YouTube URL separately. Preferred
+        // source: persisted .now-playing.json. Fallback: the most
+        // recent history entry (live streams are almost always the
+        // freshest entry, so history[0] is a decent guess when the
+        // persisted file is missing — e.g. first restart after this
+        // feature shipped).
+        if (nowPlaying && /youtube\.com\/watch\?v=/.test(nowPlaying)) {
+          // keep already-loaded value
+        } else if (history[0]?.url && /youtube\.com\/watch\?v=/.test(history[0].url)) {
+          nowPlaying = history[0].url;
+          console.log("  Recovered nowPlaying from history[0]:", nowPlaying);
+        } else {
+          nowPlaying = null;
+        }
       } else if (url) {
         const m = url.match(/v=([\w-]+)/);
         nowPlaying = m ? `https://www.youtube.com/watch?v=${m[1]}` : url;
@@ -4523,19 +4564,43 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           const onScreen = screens.find(s => wx >= s.x && wx < s.x + s.w);
           currentMonitor = (onScreen?.isLaptop) ? "laptop" : "lg";
         } catch {}
-        // Update title from mpv if missing in history — but only when
-        // the media-title is a real title, not one of our proxy
-        // pathnames. For live streams mpv's media-title is whatever
-        // URL segment comes through (e.g. "hls-live.m3u8") which
-        // would poison history.
+        // Update title if missing in history. Prefer mpv's media-title,
+        // but reject proxy pathnames (live stream playing our hls-live.m3u8
+        // or hls-sub.m3u8 proxy reports the URL segment as the title).
+        // When mpv's title is unusable, fetch the real one from YouTube
+        // by video id — that's what the user sees in the now-playing bar,
+        // and leaving it blank renders "Untitled" which is worse than
+        // being slightly slow to reconnect.
         try {
           const t = await mpvCommand(["get_property", "media-title"]);
-          const title = t?.data;
-          const looksLikeProxy = typeof title === "string" && /\.m3u8($|\?)/.test(title);
-          if (title && !looksLikeProxy) {
-            const entry = historyMap.get(nowPlaying);
-            if (entry && (!entry.title || entry.title === '')) { entry.title = title; saveHistory(); }
-            if (!entry) addToHistory(nowPlaying, title, "");
+          const mpvTitle = t?.data;
+          const looksLikeProxy = typeof mpvTitle === "string" && /\.m3u8($|\?)/.test(mpvTitle);
+          const entry = historyMap.get(nowPlaying);
+          const needsTitle = !entry || !entry.title;
+          if (mpvTitle && !looksLikeProxy) {
+            if (entry && needsTitle) { entry.title = mpvTitle; saveHistory(); }
+            if (!entry) addToHistory(nowPlaying, mpvTitle, "");
+          } else if (needsTitle) {
+            // Fetch real title async so reconnect isn't blocked on the network call
+            const idMatch = nowPlaying.match(/v=([\w-]+)/);
+            if (idMatch) {
+              (async () => {
+                try {
+                  const v = await YouTube.getVideo(`https://www.youtube.com/watch?v=${idMatch[1]}`);
+                  if (v?.title) {
+                    const cur = historyMap.get(nowPlaying);
+                    if (cur) {
+                      cur.title = v.title;
+                      if (v.channel?.name && !cur.channel) cur.channel = v.channel.name;
+                      if (v.thumbnail?.url && !cur.thumbnail) cur.thumbnail = v.thumbnail.url;
+                      saveHistory();
+                    } else {
+                      addToHistory(nowPlaying, v.title, v.channel?.name || "", v.thumbnail?.url || "");
+                    }
+                  }
+                } catch (e) { console.error("Reconnect title fetch failed:", e.message); }
+              })();
+            }
           }
         } catch {}
         console.log("  Reconnected to mpv:", nowPlaying.substring(0, 60), "mode:", windowMode, "monitor:", currentMonitor);
