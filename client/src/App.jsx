@@ -200,6 +200,7 @@ function App() {
   }, [])
 
   const tabs = ['rec', 'subs', 'live', 'ru', 'history']
+  const tabLabels = { rec: 'Rec', subs: 'Subs', live: 'Live', ru: 'Ru', history: 'Hist' }
 
   // Pull-to-refresh: pull down from top to refresh the current tab
   const doRefresh = useCallback(() => {
@@ -285,7 +286,7 @@ function App() {
                   className={`tab${activeTab === t ? ' active' : ''}`}
                   onClick={() => { if (activeTab !== t) hapticTick(); setTab(t) }}
                 >
-                  {t.charAt(0).toUpperCase() + t.slice(1)}
+                  {tabLabels[t] || (t.charAt(0).toUpperCase() + t.slice(1))}
                 </button>
               ))}
             </div>
