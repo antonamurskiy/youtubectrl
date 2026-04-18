@@ -1735,6 +1735,9 @@ app.post("/api/play", async (req, res) => {
           mpvCommand(["set_property", "vid", "auto"]).catch(() => {}),
           mpvCommand(["set_property", "speed", 1.0]).catch(() => {}),
         ]);
+        // Pin media-title to the real video title — prevents the proxy
+        // pathname leaking through any future media-title read site.
+        setMpvForceTitle(reqTitle || historyMap.get(url)?.title || "");
         // Unhide in background (don't await)
         execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true'], () => {});
         nowPlaying = url;
@@ -1855,6 +1858,9 @@ app.post("/api/play", async (req, res) => {
       geometry = "38%-12+38";
     }
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`];
+    // Pin media-title so live streams don't report "hls-live.m3u8" etc.
+    // See setMpvForceTitle for context.
+    if (reqTitle) mpvArgs.push(`--force-media-title=${reqTitle}`);
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(playUrl);
@@ -1919,7 +1925,9 @@ app.post("/api/play", async (req, res) => {
       }
       try {
         const t = await mpvCommand(["get_property", "media-title"]);
-        if (t?.data) { history[0].title = t.data; saveHistory(); }
+        // Reject proxy-pathname titles (live streams playing our
+        // hls-live.m3u8 proxy report that as media-title).
+        if (t?.data && !/\.m3u8($|\?)/.test(t.data)) { history[0].title = t.data; saveHistory(); }
       } catch {}
       markWatchedOnYouTube(url);
       startProgressTracking(url);
@@ -2036,6 +2044,17 @@ function mpvCommand(cmd) {
   });
 }
 
+// Override mpv's media-title so that get_property "media-title" always
+// returns the real video title, even when mpv is playing a proxy URL
+// whose basename would otherwise leak ("hls-live.m3u8"). Call after
+// every `loadfile` where we know the real title — reads downstream
+// (/api/playback, reconnect, any future code) see the real value.
+// Safely escapes nothing: mpv accepts arbitrary UTF-8 here.
+async function setMpvForceTitle(title) {
+  if (!title) return;
+  try { await mpvCommand(["set_property", "force-media-title", title]); } catch {}
+}
+
 // Get playback position
 app.get("/api/playback", async (_req, res) => {
   if (!mpvProcess || !nowPlaying) {
@@ -2124,6 +2143,7 @@ app.post("/api/seek", async (req, res) => {
         : Date.now();
       const userPdtAtSeek = liveEdgeAtSeek - behindLive * 1000;
       await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
+      setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
       // Reset speed in case syncVod left it off-1.0 before this scrub.
       await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
       if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
@@ -2425,6 +2445,7 @@ app.post("/api/enable-dvr", async (_req, res) => {
     if (p?.data?.includes("/api/hls-vod.m3u8")) return res.json({ ok: true, alreadyInDvr: true });
     const wasPaused = await mpvCommand(["get_property", "pause"]);
     await mpvCommand(["loadfile", "http://localhost:3000/api/hls-vod.m3u8", "replace"]);
+    setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
     // Poll for new duration, seek to near-live edge in the VOD frame.
     for (let i = 0; i < 20; i++) {
       await new Promise(r => setTimeout(r, 250));
@@ -2454,6 +2475,7 @@ app.post("/api/go-live", async (_req, res) => {
     }
     const wasPaused = await mpvCommand(["get_property", "pause"]);
     await mpvCommand(["loadfile", "http://localhost:3000/api/hls-live.m3u8", "replace"]);
+    setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
     await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
     if (!wasPaused?.data) await mpvCommand(["set_property", "pause", false]);
     res.json({ ok: true });
@@ -4580,6 +4602,12 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           const looksLikeProxy = typeof mpvTitle === "string" && /\.m3u8($|\?)/.test(mpvTitle);
           const entry = historyMap.get(nowPlaying);
           const needsTitle = !entry || !entry.title;
+          // If history already has a real title, pin mpv's media-title
+          // to it now so any future reads don't fall back to the proxy
+          // basename (hls-live.m3u8) for live streams.
+          if (entry?.title && !/\.m3u8($|\?)/.test(entry.title)) {
+            setMpvForceTitle(entry.title);
+          }
           if (mpvTitle && !looksLikeProxy) {
             if (entry && needsTitle) { entry.title = mpvTitle; saveHistory(); }
             if (!entry) addToHistory(nowPlaying, mpvTitle, "");
@@ -4600,6 +4628,7 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
                     } else {
                       addToHistory(nowPlaying, v.title, v.channel?.name || "", v.thumbnail?.url || "");
                     }
+                    setMpvForceTitle(v.title);
                   }
                 } catch (e) { console.error("Reconnect title fetch failed:", e.message); }
               })();
