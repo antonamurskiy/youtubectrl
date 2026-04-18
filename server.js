@@ -2979,6 +2979,29 @@ app.get("/api/live-status", async (req, res) => {
   }
 });
 
+// Safety interlock: never touch system volume when the active output
+// is a device we don't want the hardware-volume-button intercept or
+// phone slider to affect — i.e. MacBook speakers (shared with the
+// user's typing/typing-adjacent environment) or the LG display audio
+// (shared speaker that may be playing another Mac's audio via toslink
+// in this setup). Only KRK / headphones / AirPods should be mutable.
+let _cachedAudioOut = null;
+let _cachedAudioOutAt = 0;
+async function isProtectedAudioOutput() {
+  try {
+    const now = Date.now();
+    if (!_cachedAudioOut || (now - _cachedAudioOutAt) > 3000) {
+      _cachedAudioOut = (await execP("SwitchAudioSource -c -t output")).stdout.trim();
+      _cachedAudioOutAt = now;
+    }
+    const name = (_cachedAudioOut || "").toLowerCase();
+    return name.includes("macbook") || name.includes("lg ");
+  } catch {
+    // On any error, err on the safe side: block the change.
+    return true;
+  }
+}
+
 // Watch on phone — pause mpv, return YouTube URL at current timestamp
 // Volume control
 app.get("/api/volume", async (_req, res) => {
@@ -3000,6 +3023,9 @@ let _pendingVolumeTimer = null;
 app.post("/api/volume", async (req, res) => {
   const vol = parseInt(req.body.volume);
   if (isNaN(vol) || vol < 0 || vol > 100) return res.status(400).json({ error: "Invalid volume" });
+  if (await isProtectedAudioOutput()) {
+    return res.json({ ok: false, skipped: true, reason: "protected-output", output: _cachedAudioOut });
+  }
   try {
     await execP(`osascript -e 'set volume output volume ${vol}'`);
     _cachedVolume = vol;
@@ -3013,6 +3039,9 @@ app.post("/api/volume", async (req, res) => {
 app.post("/api/volume-bump", async (req, res) => {
   const delta = parseInt(req.body.delta);
   if (isNaN(delta)) return res.status(400).json({ error: "Invalid delta" });
+  if (await isProtectedAudioOutput()) {
+    return res.json({ ok: false, skipped: true, reason: "protected-output", output: _cachedAudioOut });
+  }
   try {
     if (_cachedVolume == null) {
       _cachedVolume = parseInt((await execP(`osascript -e 'output volume of (get volume settings)'`)).stdout.trim()) || 0;
@@ -3051,6 +3080,9 @@ app.get("/api/volume-status", async (_req, res) => {
 });
 
 app.post("/api/mute", async (_req, res) => {
+  if (await isProtectedAudioOutput()) {
+    return res.json({ ok: false, skipped: true, reason: "protected-output", output: _cachedAudioOut });
+  }
   try {
     const { stdout } = await execP(`osascript -e 'output muted of (get volume settings)'`);
     const isMuted = stdout.trim() === "true";
