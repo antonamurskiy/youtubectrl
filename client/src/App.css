@@ -359,6 +359,9 @@ body {
   left: 0;
   height: 4px;
   background: var(--red);
+  /* Sit above the inline preview <video> (z-index: 2) so resume
+   * progress stays visible even while the preview is playing. */
+  z-index: 3;
 }
 
 .live-badge {
