@@ -44,7 +44,7 @@ function FindMyToggle({ onAfter, addToast }) {
   return (
     <button
       className="secret-menu-item"
-      style={{ color, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+      style={{ color, display: 'flex', alignItems: 'center', gap: 8 }}
       onClick={() => {
         hapticTick()
         fetch('/api/toggle-findmy', { method: 'POST' })
