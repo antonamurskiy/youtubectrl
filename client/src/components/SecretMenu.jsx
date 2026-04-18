@@ -102,6 +102,24 @@ function VolumeOrMap({ volume, volAreaRef }) {
   )
 }
 
+// Parse "6 mi" / "800 ft" / "500 m" / "1.2 km" / "350 yd" → miles.
+// Returns Infinity for unparseable inputs so the caller's
+// < threshold comparison is safely false-y.
+function parseDistanceMiles(s) {
+  if (!s) return Infinity
+  const m = String(s).trim().match(/^([\d.]+)\s*(mi|km|ft|m|yd)\b/i)
+  if (!m) return Infinity
+  const n = parseFloat(m[1])
+  switch (m[2].toLowerCase()) {
+    case 'mi': return n
+    case 'km': return n * 0.621371
+    case 'ft': return n / 5280
+    case 'm':  return n / 1609.34
+    case 'yd': return n / 1760
+    default:   return Infinity
+  }
+}
+
 function formatAge(ms) {
   if (ms == null || ms < 0) return '—'
   const s = Math.floor(ms / 1000)
@@ -129,9 +147,18 @@ function FindMyToggle({ addToast }) {
     if (!running) { setFriend(null); return }
     const fetchFriend = () => fetch('/api/findmy-friend?name=mchimishkyan').then(r => r.json()).then(setFriend).catch(() => {})
     fetchFriend()
-    const iv = setInterval(fetchFriend, 30000)
+    const iv = setInterval(fetchFriend, 60000)
     return () => clearInterval(iv)
   }, [running])
+
+  // Proximity alert: when Maria's distance drops below 1 mile, stain
+  // the whole app's background dark red so it's impossible to miss.
+  // Parses strings like "6 mi", "0.5 mi", "800 ft", "500 m", "1 km".
+  useEffect(() => {
+    const close = friend?.ok && parseDistanceMiles(friend.distance) < 1
+    document.body.classList.toggle('maria-proximity', !!close)
+    return () => document.body.classList.remove('maria-proximity')
+  }, [friend])
   const label = running == null ? 'Find My…' : (running ? 'Close Find My' : 'Show Find My')
   const color = running ? 'var(--green)' : 'var(--text-dim)'
   return (

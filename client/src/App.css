@@ -50,7 +50,14 @@ body {
   -webkit-tap-highlight-color: transparent;
   font-size: var(--font-lg);
   line-height: 1.4;
+  transition: background-color 400ms ease;
 }
+
+/* Maria-proximity alert: whole-app dark-red wash when she's within
+ * 1 mile. Override --bg so every surface reading from it (cards,
+ * now-playing bar, header, etc.) picks up the alert tone together. */
+body.maria-proximity { --bg: #3a0a0a; }
+html:has(body.maria-proximity) { background: #3a0a0a; }
 
 /* ── App container ── */
 .app {
