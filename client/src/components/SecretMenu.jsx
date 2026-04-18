@@ -189,6 +189,7 @@ export default function SecretMenu() {
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
   const [showFonts, setShowFonts] = useState(false)
+  const [showMisc, setShowMisc] = useState(false)
   const [fontSel, setFontSel] = useState(currentFont())
   const [fontSize, setFontSize] = useState(currentFontSize())
   const volAreaRef = useRef(null)
@@ -400,21 +401,6 @@ export default function SecretMenu() {
           )
         })}
 
-        <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
-        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
-          Font: {fontSel}
-        </button>
-        {showFonts && FONTS.map(([label, family]) => (
-          <button
-            key={label}
-            className="secret-menu-item"
-            style={{ paddingLeft: 24, fontFamily: family, color: label === fontSel ? 'var(--green)' : 'var(--text)' }}
-            onClick={() => { hapticTick(); applyFont(label); setFontSel(label) }}
-          >
-            {label === fontSel ? '● ' : '  '}{label}
-          </button>
-        ))}
-
         {useUIStore.getState().filteredVideos.length > 0 && (
           <button className="secret-menu-item" onClick={() => {
             hapticTick()
@@ -426,7 +412,6 @@ export default function SecretMenu() {
         )}
 
         <SyncOffsetSlider />
-        <GridStyleToggle onAfter={toggleSecretMenu} />
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
@@ -435,13 +420,44 @@ export default function SecretMenu() {
           Toggle resolution
         </button>
         <FindMyToggle onAfter={toggleSecretMenu} addToast={addToast} />
-        <button className="secret-menu-item" onClick={() => {
-          hapticTick()
-          fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
-          toggleSecretMenu()
-        }}>
-          Refresh cookies
+
+        {/* Misc submenu — stuff that matters less often. Collapsed by default
+            to keep the top-level menu scannable. */}
+        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowMisc(!showMisc) }}>
+          Misc {showMisc ? '▾' : '▸'}
         </button>
+        {showMisc && (
+          <>
+            <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
+            <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
+              Font: {fontSel}
+            </button>
+            {showFonts && FONTS.map(([label, family]) => (
+              <button
+                key={label}
+                className="secret-menu-item"
+                style={{ paddingLeft: 40, fontFamily: family, color: label === fontSel ? 'var(--green)' : 'var(--text)' }}
+                onClick={() => { hapticTick(); applyFont(label); setFontSel(label) }}
+              >
+                {label === fontSel ? '● ' : '  '}{label}
+              </button>
+            ))}
+            <div style={{ paddingLeft: 24 }}><GridStyleToggle onAfter={toggleSecretMenu} /></div>
+            <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => {
+              hapticTick()
+              fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
+              toggleSecretMenu()
+            }}>
+              Refresh cookies
+            </button>
+            {isNativeIOS && (
+              <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
+                AirPlay...
+              </button>
+            )}
+          </>
+        )}
+
         <button className="secret-menu-item" onClick={() => {
           hapticThump()
           const wake = macStatus.screenOff
@@ -462,11 +478,6 @@ export default function SecretMenu() {
         }}>
           Keep awake {macStatus.keepAwake ? '✓' : ''}
         </button>
-        {isNativeIOS && (
-          <button className="secret-menu-item" onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
-            AirPlay...
-          </button>
-        )}
         <button className="secret-menu-item" onClick={() => { hapticTick(); toggleSecretMenu() }} style={{ color: 'var(--accent2)' }}>
           Close
         </button>
