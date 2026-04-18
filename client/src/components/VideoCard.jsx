@@ -206,7 +206,11 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
 
   const handleCardTouchStart = useCallback((e) => {
     longPressTriggered.current = false
-    if (isMobile && videoId && !video.isLive && !video.live) {
+    // In compact mode, touch = manual preview trigger. In wide mode
+    // the scroll-position observer handles preview automatically; tap
+    // should not ALSO start one (double-trigger, and the 600ms hold
+    // makes it feel laggy when the user meant to just play).
+    if (isMobile && videoId && !video.isLive && !video.live && gridStyle !== 'wide') {
       if (previewTimer.current) clearTimeout(previewTimer.current)
       setPreviewing(true)
     }
@@ -218,7 +222,7 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
       hapticThump()
       setContextMenu({ x: touchStartPos.current.x, y: touchStartPos.current.y })
     }, 500)
-  }, [isMobile, videoId, video.isLive, video.live])
+  }, [isMobile, videoId, video.isLive, video.live, gridStyle])
   const handleCardTouchMove = useCallback((e) => {
     if (!longPressTimer.current || !touchStartPos.current) return
     const touch = e.touches?.[0] || e
