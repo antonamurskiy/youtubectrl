@@ -4499,14 +4499,22 @@ function startWsSync() {
           // Phone's AVPlayerItem.currentDate() returns the same for the
           // frame it's showing. drift = mpv_pdt - phone_pdt.
           const mpvAbsoluteMs = userPdt != null ? userPdt + syncOffsetMs : null;
+          // isLive (and phoneSyncOk) need proxy-URL presence ORed in:
+          // mpv's file-format property is transiently empty right after
+          // a `loadfile` (sub-proxy scrub), briefly flipping isHls to
+          // false and making the UI show the raw position as a timecode
+          // instead of "-mm:ss" behind-live. If we're on one of our own
+          // proxy URLs, it's definitionally HLS regardless of what mpv
+          // has gotten around to reporting.
+          const effectiveIsLive = isHls || onLiveProxy || onSubProxy;
           state = {
             type: "playback",
-            playing: true, isLive: isHls, player: "mpv",
+            playing: true, isLive: effectiveIsLive, player: "mpv",
             dvrActive,
             position: scrubPos,
             duration: scrubDur,
             paused: pause?.data || false,
-            phoneSyncOk: !isHls || !!mpvAbsoluteMs,
+            phoneSyncOk: !effectiveIsLive || !!mpvAbsoluteMs,
             absoluteMs: mpvAbsoluteMs,
             url: nowPlaying, serverTs: Date.now(),
             title: (() => {
