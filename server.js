@@ -1662,9 +1662,20 @@ function startProgressTracking(url) {
 }
 
 let playLock = false;
+let playLockAt = 0;
+// Auto-release after 45s — guards against pathological hangs in the
+// async IIFE below that would otherwise leave the lock stuck and
+// silently reject future /api/play calls with { queued: true }.
+setInterval(() => {
+  if (playLock && Date.now() - playLockAt > 45000) {
+    console.warn("playLock auto-released after 45s");
+    playLock = false;
+  }
+}, 5000);
 app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
+  playLockAt = Date.now();
   const { url, isLive: clientIsLive, title: reqTitle, channel: reqChannel, thumbnail: reqThumb, watchPct } = req.body;
   if (!url || (!url.startsWith("https://www.youtube.com/") && !url.startsWith("https://rumble.com/"))) {
     playLock = false;
