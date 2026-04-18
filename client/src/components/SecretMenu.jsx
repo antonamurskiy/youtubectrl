@@ -74,12 +74,15 @@ function VolumeOrMap({ volume, volAreaRef }) {
     return () => window.removeEventListener('maria-map-toggle', onToggle)
   }, [])
   if (showMap && cropUrl) {
+    // Constrain to vol-area's exact dimensions so toggling doesn't
+    // change the menu's overall width or height — image fills the
+    // same 200px-tall box and overflow is cropped.
     return (
-      <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0 }}>
+      <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0, height: 200, overflow: 'hidden' }}>
         <img
           src={cropUrl}
           alt="Map crop around Maria's pin"
-          style={{ width: '100%', display: 'block' }}
+          style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
         />
       </div>
     )

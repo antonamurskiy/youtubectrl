@@ -4125,8 +4125,12 @@ const CROP_W = 900, CROP_H = 700;
 app.get("/api/findmy-crop.png", async (_req, res) => {
   try {
     if (!_lastPinBounds) return res.status(404).send("no pin yet");
-    // Pin label center in source image pixels
-    const cx = _lastPinBounds.x + _lastPinBounds.w / 2;
+    // The OCR bbox wraps Maria's row on the map: [circular avatar pin]
+    // [email label]. The avatar is a circle on the LEFT of the box,
+    // roughly h×h pixels wide. Centering on the bbox center puts the
+    // label at crop-center and the pin off to the left. Instead center
+    // on the avatar: x = left + h/2, y = vertical center.
+    const cx = _lastPinBounds.x + _lastPinBounds.h / 2;
     const cy = _lastPinBounds.y + _lastPinBounds.h / 2;
     // Probe source image size so we can clamp crop offset to stay
     // inside bounds (sips errors out if offset + crop size > image).

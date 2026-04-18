@@ -1019,6 +1019,9 @@ body {
   border: 1px solid var(--border);
   z-index: 600;
   min-width: 180px;
+  /* Lock max width so an inner image (e.g. Maria's map crop at 900px
+   * natural width) can't push the menu wider than intended. */
+  max-width: 320px;
   max-height: calc(100vh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 16px);
   overflow-y: auto;
   overscroll-behavior: contain;
