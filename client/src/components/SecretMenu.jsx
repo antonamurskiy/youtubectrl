@@ -70,6 +70,31 @@ function formatAge(ms) {
   return `${Math.floor(h / 24)}d ago`
 }
 
+// Always-visible map crop of where Maria is (if Find My is running
+// and OCR finds her). Replaces the old vol-area at the top of the
+// secret menu. Fetches on mount and on FindMy refresh events.
+function MariaMap() {
+  const [friend, setFriend] = useState(null)
+  const fetchFriend = () => fetch('/api/findmy-friend?name=mchimishkyan').then(r => r.json()).then(setFriend).catch(() => {})
+  useEffect(() => {
+    fetchFriend()
+    const iv = setInterval(fetchFriend, 30000)
+    const onRefresh = () => setTimeout(fetchFriend, 1500)
+    window.addEventListener('findmy-refresh', onRefresh)
+    return () => { clearInterval(iv); window.removeEventListener('findmy-refresh', onRefresh) }
+  }, [])
+  if (!friend?.ok || !friend.cropUrl) return null
+  return (
+    <div className="secret-menu-item" style={{ padding: 0, lineHeight: 0 }}>
+      <img
+        src={friend.cropUrl}
+        alt="Maria's location"
+        style={{ width: '100%', display: 'block' }}
+      />
+    </div>
+  )
+}
+
 // Find My — primary button toggles open/close (app quits on close).
 // When running, a trailing ↻ refreshes location by hiding+reactivating
 // the app (cheap re-poll, no relaunch). Secret menu stays open.
@@ -79,7 +104,6 @@ function formatAge(ms) {
 function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   const [friend, setFriend] = useState(null)
-  const [showCrop, setShowCrop] = useState(false)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
   }, [])
@@ -122,10 +146,11 @@ function FindMyToggle({ addToast }) {
               fetch('/api/refresh-findmy', { method: 'POST' })
                 .then(() => addToast('Find My refreshed'))
                 .catch(() => addToast('Refresh failed'))
-              // Wait for Find My's re-poll + re-render, then re-OCR
-              // with force=1 to bypass the 20s server cache.
+              // Signal both FindMyToggle's sub-row AND the top-of-menu
+              // MariaMap to re-fetch after Find My re-polls + renders.
               setTimeout(() => {
                 fetch('/api/findmy-friend?name=mchimishkyan&force=1').then(r => r.json()).then(setFriend).catch(() => {})
+                window.dispatchEvent(new Event('findmy-refresh'))
               }, 1500)
             }}
           >
@@ -136,34 +161,18 @@ function FindMyToggle({ addToast }) {
         )}
       </div>
       {friend?.ok && (
-        <>
-          <div
-            className="secret-menu-item"
-            style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', cursor: friend.cropUrl ? 'pointer' : 'default' }}
-            onClick={() => {
-              if (!friend.cropUrl) return
-              hapticTick()
-              setShowCrop(v => !v)
-            }}
-          >
-            <div style={{ color: 'var(--text)' }}>
-              Maria: {friend.crossStreet || friend.address || '—'}
-              {friend.distance ? <span style={{ color: 'var(--text-dim)' }}>{' · '}{friend.distance}</span> : null}
-            </div>
-            <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
-              {friend.timeFragment ? `Last ping: ${friend.timeFragment}` : (friend.ageMs != null ? `Last ping: ${formatAge(friend.ageMs)}` : '')}
-            </div>
+        <div
+          className="secret-menu-item"
+          style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)' }}
+        >
+          <div style={{ color: 'var(--text)' }}>
+            Maria: {friend.crossStreet || friend.address || '—'}
+            {friend.distance ? <span style={{ color: 'var(--text-dim)' }}>{' · '}{friend.distance}</span> : null}
           </div>
-          {showCrop && friend.cropUrl && (
-            <div className="secret-menu-item" style={{ padding: 8 }}>
-              <img
-                src={friend.cropUrl}
-                alt="Map crop around Maria's pin"
-                style={{ width: '100%', display: 'block', border: '1px solid var(--border)' }}
-              />
-            </div>
-          )}
-        </>
+          <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
+            {friend.timeFragment ? `Last ping: ${friend.timeFragment}` : (friend.ageMs != null ? `Last ping: ${formatAge(friend.ageMs)}` : '')}
+          </div>
+        </div>
       )}
     </>
   )
@@ -434,13 +443,7 @@ export default function SecretMenu() {
             </div>
           ))}
         </div>
-        <div
-          className="secret-menu-item vol-area"
-          ref={volAreaRef}
-        >
-          <div className="vol-fill" style={{ height: `${volume}%` }} />
-          <div className="vol-label">{volume}%</div>
-        </div>
+        <MariaMap />
 
         <button
           className="secret-menu-item"
