@@ -151,10 +151,10 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
         if (entry.isIntersecting) claimPreview(videoId, entry.boundingClientRect.top)
         else releasePreview(videoId)
       },
-      // Band is top-weighted: top of the card must reach the top third
-      // of the viewport to start triggering. Topmost card in the band
-      // wins, so previews feel like they're leading the scroll.
-      { rootMargin: '-10% 0px -60% 0px', threshold: 0 }
+      // Band = top 2/3 of viewport. Topmost card in the band wins
+      // (via the coordinator), so previews feel like they're leading
+      // the scroll rather than trailing.
+      { rootMargin: '0px 0px -33% 0px', threshold: 0 }
     )
     observer.observe(cardRef.current)
     return () => {
