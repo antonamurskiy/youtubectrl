@@ -2979,12 +2979,13 @@ app.get("/api/live-status", async (req, res) => {
   }
 });
 
-// Safety interlock: never touch system volume when the active output
-// is a device we don't want the hardware-volume-button intercept or
-// phone slider to affect — i.e. MacBook speakers (shared with the
-// user's typing/typing-adjacent environment) or the LG display audio
-// (shared speaker that may be playing another Mac's audio via toslink
-// in this setup). Only KRK / headphones / AirPods should be mutable.
+// Safety interlock: only the iPhone hardware volume button intercept
+// is gated — not the slider or mute toggle. The hardware-button path
+// is what misbehaves when the active output is MacBook speakers or
+// LG display audio (some interaction with the KVO observer vs the
+// system's own handling for those outputs creates feedback loops).
+// The phone slider and secret-menu mute are explicit user actions
+// and should always work.
 let _cachedAudioOut = null;
 let _cachedAudioOutAt = 0;
 async function isProtectedAudioOutput() {
@@ -3023,9 +3024,6 @@ let _pendingVolumeTimer = null;
 app.post("/api/volume", async (req, res) => {
   const vol = parseInt(req.body.volume);
   if (isNaN(vol) || vol < 0 || vol > 100) return res.status(400).json({ error: "Invalid volume" });
-  if (await isProtectedAudioOutput()) {
-    return res.json({ ok: false, skipped: true, reason: "protected-output", output: _cachedAudioOut });
-  }
   try {
     await execP(`osascript -e 'set volume output volume ${vol}'`);
     _cachedVolume = vol;
@@ -3080,9 +3078,6 @@ app.get("/api/volume-status", async (_req, res) => {
 });
 
 app.post("/api/mute", async (_req, res) => {
-  if (await isProtectedAudioOutput()) {
-    return res.json({ ok: false, skipped: true, reason: "protected-output", output: _cachedAudioOut });
-  }
   try {
     const { stdout } = await execP(`osascript -e 'output muted of (get volume settings)'`);
     const isMuted = stdout.trim() === "true";
