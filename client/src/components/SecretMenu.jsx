@@ -403,6 +403,16 @@ export default function SecretMenu() {
         </button>
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
+          fetch('/api/toggle-findmy', { method: 'POST' })
+            .then(r => r.json())
+            .then(d => addToast(d.visible ? 'Find My shown' : 'Find My hidden'))
+            .catch(() => addToast('Find My toggle failed'))
+          toggleSecretMenu()
+        }}>
+          Toggle Find My
+        </button>
+        <button className="secret-menu-item" onClick={() => {
+          hapticTick()
           fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
           toggleSecretMenu()
         }}>

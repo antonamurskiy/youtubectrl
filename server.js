@@ -3956,6 +3956,68 @@ app.post("/api/toggle-resolution", async (_req, res) => {
   }
 });
 
+// Show/hide Find My on the MacBook Air built-in display.
+// Detects current visibility via System Events; toggles accordingly.
+// When showing: launch if not running, move its window to workspace 8
+// (the laptop monitor in our aerospace layout), and focus it.
+app.post("/api/toggle-findmy", async (_req, res) => {
+  try {
+    // Is FindMy running AND visible? Two-step to avoid AppleScript
+    // parser choking on inline-if inside tell blocks.
+    let visible = false;
+    try {
+      const { stdout: existsOut } = await execFileP("osascript", ["-e",
+        'tell application "System Events" to exists process "FindMy"']);
+      if (existsOut.trim() === "true") {
+        const { stdout: visOut } = await execFileP("osascript", ["-e",
+          'tell application "System Events" to get visible of process "FindMy"']);
+        visible = visOut.trim() === "true";
+      }
+    } catch {}
+
+    if (visible) {
+      // Hide via System Events (process stays running, window hidden).
+      await execFileP("osascript", ["-e",
+        'tell application "System Events" to set visible of process "FindMy" to false']).catch(() => {});
+      return res.json({ ok: true, visible: false });
+    }
+
+    // Show: launch if needed, focus, move to laptop workspace (= 8).
+    await execFileP("open", ["-a", "FindMy"]).catch(() => {});
+    // Give the app a moment to create its window before aerospace can move it.
+    await new Promise(r => setTimeout(r, 400));
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
+    // Move the newly-focused window to workspace 8 (laptop monitor).
+    // `move-node-to-workspace` on the focused window preserves its
+    // layout mode (floating/tiled) and follows-window so it gets
+    // focused on the target workspace.
+    try {
+      // aerospace sometimes takes a moment to enumerate a newly-opened
+      // window; poll up to ~3s for it to appear. Also match both
+      // "Find My" (app name with space) and "FindMy" (binary) forms.
+      let wid = "";
+      for (let i = 0; i < 15; i++) {
+        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+        if (line) { wid = line.split("|")[0].trim(); break; }
+        await new Promise(r => setTimeout(r, 200));
+      }
+      if (wid) {
+        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+        // Native fullscreen (aerospace "maximize" = fullscreen with
+        // outer gaps removed, filling the whole monitor).
+        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+      }
+    } catch {}
+    res.json({ ok: true, visible: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ── WebSocket server for phone sync ──
 const http = require("http");
 const WebSocket = require("ws");
