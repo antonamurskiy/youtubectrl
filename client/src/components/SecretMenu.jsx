@@ -181,7 +181,7 @@ function FindMyToggle({ addToast }) {
             fetch('/api/toggle-findmy', { method: 'POST' })
               .then(r => r.json())
               .then(d => { setRunning(!!d.running); addToast(d.running ? 'Find My shown' : 'Find My closed') })
-              .catch(() => addToast('Find My failed'))
+              .catch((e) => { console.error('Find My toggle error:', e); addToast(`Find My: ${e?.message || 'failed'}`) })
           }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
