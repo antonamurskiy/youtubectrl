@@ -4136,9 +4136,13 @@ app.get("/api/findmy-crop.png", async (_req, res) => {
     if (!W || !H) return res.status(500).send("bad source dims");
     const ox = Math.max(0, Math.min(W - CROP_W, Math.round(cx - CROP_W / 2)));
     const oy = Math.max(0, Math.min(H - CROP_H, Math.round(cy - CROP_H / 2)));
+    // sips --cropOffset takes Y first, THEN X. The man page calls
+    // them "offsetY offsetH" but the second arg is actually the X
+    // offset. Getting this wrong silently crops from a different
+    // region (sips doesn't error).
     await execFileP("sips", [
       "-c", String(CROP_H), String(CROP_W),
-      "--cropOffset", String(ox), String(oy),
+      "--cropOffset", String(oy), String(ox),
       FINDMY_OCR_PNG, "--out", FINDMY_CROP_PNG,
     ]);
     res.setHeader("Content-Type", "image/png");
