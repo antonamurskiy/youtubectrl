@@ -177,6 +177,7 @@ export default function SecretMenu() {
   const toggleSecretMenu = useUIStore(s => s.toggleSecretMenu)
   const addToast = useUIStore(s => s.addToast)
   const connected = useSyncStore(s => s.connected)
+  const phoneOpen = useSyncStore(s => s.phoneOpen)
   const macStatus = usePlaybackStore(s => s.macStatus) || {}
   const cachedVolume = useUIStore(s => s.cachedVolume)
   const setCachedVolume = useUIStore(s => s.setCachedVolume)
@@ -411,7 +412,10 @@ export default function SecretMenu() {
           </button>
         )}
 
-        <SyncOffsetSlider />
+        {/* The slider only matters when audio is actually being served to
+            the phone (sync mode or phone-only). Hide it otherwise to keep
+            the menu scannable. */}
+        {phoneOpen && <SyncOffsetSlider />}
         <button className="secret-menu-item" onClick={() => {
           hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
