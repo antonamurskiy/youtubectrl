@@ -1047,7 +1047,12 @@ body {
   -webkit-touch-callout: none;
 }
 
-.secret-menu-item:last-child { border-bottom: none; }
+/* Only remove the bottom border on the TRUE last row of the menu.
+ * The old `:last-child` rule applied to any item that was last
+ * child of its parent — which broke rows wrapped in a flex-row div
+ * (e.g. the Find My toggle's primary button, which is :last-child
+ * of its flex wrapper and was losing its divider). */
+.secret-menu > .secret-menu-item:last-child { border-bottom: none; }
 .secret-menu-item:active { background: var(--surface-hover); }
 
 /* ── Volume area in secret menu ── */
