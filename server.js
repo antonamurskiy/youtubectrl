@@ -4089,28 +4089,23 @@ app.get("/api/findmy-friend", async (req, res) => {
       const sidebar0 = rows0
         .filter(r => r.text.toLowerCase().includes(name) && r.x < 500)
         .sort((a, b) => a.y - b.y)[0];
-      if (sidebar0) {
-        // Screen-coordinate click needs a visible window. In stealth
-        // mode, briefly unhide → click → rehide so the map centers on
-        // Maria's pin. Brief flash on the laptop screen, but it's the
-        // only way to get her pin label + cross streets + map crop.
-        if (findmyStealth) {
-          await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
-          await new Promise(r => setTimeout(r, 150));
-        }
+      if (sidebar0 && !findmyStealth) {
+        // Screen-coord click needs a visible, frontmost window. In
+        // stealth mode we skip this entirely — the window stays off-
+        // screen (user's aerospace rules can't pull it back into view
+        // because we never activate it). Cost: map crop and
+        // cross-street are unavailable while stealth is on, because
+        // Find My's map isn't centered on Maria. Distance, address,
+        // and the proximity red wash all still work — those come from
+        // the sidebar which renders regardless of focus.
         const { stdout: dpOut } = await execFileP("displayplacer", ["list"]).catch(() => ({ stdout: "" }));
         const origin = parseDisplayplacerOrigin(dpOut, "Built-in");
         const cx = Math.round(origin.x + (sidebar0.x + sidebar0.w / 2) / 2);
         const cy = Math.round(origin.y + (sidebar0.y + sidebar0.h / 2) / 2);
         await execFileP("osascript", ["-e",
           `tell application "System Events" to click at {${cx}, ${cy}}`]).catch(() => {});
-        // Wait for the map to pan + pin label to render.
         await new Promise(r => setTimeout(r, 700));
         await snapFindMy();
-        if (findmyStealth) {
-          await execFileP("osascript", ["-e",
-            'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-        }
       }
     } catch {}
     // 3. OCR + parse. Wrapped so we can retry-with-fresh-screenshot
