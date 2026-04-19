@@ -583,7 +583,8 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.fab-refresh svg.spin {
+.fab-refresh svg.spin,
+.secret-menu-item svg.spin {
   animation: spin 1s linear infinite;
   transform-origin: 50% 50%;
   transform-box: fill-box;

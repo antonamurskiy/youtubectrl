@@ -167,6 +167,7 @@ function FindMyToggle({ addToast }) {
   const [running, setRunning] = useState(null)
   const [friend, setFriend] = useState(null)
   const [stealth, setStealth] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
   useEffect(() => {
     fetch('/api/findmy-status').then(r => r.json()).then(d => setRunning(!!d.running)).catch(() => setRunning(false))
     fetch('/api/findmy-stealth').then(r => r.json()).then(d => setStealth(!!d.on)).catch(() => {})
@@ -235,20 +236,25 @@ function FindMyToggle({ addToast }) {
             className="secret-menu-item"
             style={{ color: 'var(--green)', display: 'flex', alignItems: 'center', width: 'auto', paddingLeft: 16, paddingRight: 16, borderLeft: '1px solid var(--border)' }}
             aria-label="Refresh Find My locations"
+            disabled={refreshing}
             onClick={() => {
+              if (refreshing) return
               hapticTick()
-              fetch('/api/refresh-findmy', { method: 'POST' })
+              setRefreshing(true)
+              // Server work: hide + 300ms + activate + (stealth-aware re-hide).
+              // Then client re-fetches the friend payload for both the text row
+              // and the map crop. Spinner runs until all of it resolves.
+              const serverWork = fetch('/api/refresh-findmy', { method: 'POST' })
                 .then(() => addToast('Find My refreshed'))
                 .catch(() => addToast('Refresh failed'))
-              // Signal both FindMyToggle's sub-row AND the top-of-menu
-              // MariaMap to re-fetch after Find My re-polls + renders.
-              setTimeout(() => {
-                fetch('/api/findmy-friend?name=mchimishkyan&force=1').then(r => r.json()).then(setFriend).catch(() => {})
-                window.dispatchEvent(new Event('findmy-refresh'))
-              }, 1500)
+              const clientRefetch = new Promise(r => setTimeout(r, 1500))
+                .then(() => fetch('/api/findmy-friend?name=mchimishkyan&force=1')
+                  .then(rr => rr.json()).then(setFriend).catch(() => {}))
+                .then(() => window.dispatchEvent(new Event('findmy-refresh')))
+              Promise.all([serverWork, clientRefetch]).finally(() => setRefreshing(false))
             }}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter" className={refreshing ? 'spin' : undefined}>
               <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
             </svg>
           </button>
