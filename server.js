@@ -4329,8 +4329,13 @@ async function parkFindMyStealth(wid) {
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
+  // (2520, 1322) is what macOS clamps (5000, 3000) to on this setup
+  // — the max-offset that still keeps a ~40×120 sliver on the LG.
+  // Set it directly because a hidden window isn't subject to the
+  // clamp, so overshooting lands the window fully off-screen and
+  // AppKit stops maintaining the framebuffer (breaking OCR).
   await execFileP("osascript", ["-e",
-    'tell application "System Events" to tell process "FindMy" to set position of window 1 to {5000, 3000}']).catch(() => {});
+    'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2520, 1322}']).catch(() => {});
   // Belt-and-suspenders re-hide in case any of the aerospace calls
   // above transiently forced visibility.
   await execFileP("osascript", ["-e",
