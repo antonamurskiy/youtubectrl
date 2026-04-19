@@ -893,6 +893,9 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         notifyListeners("pipStarted", data: [:])
     }
     public func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        // Clear the user-started flag so the next auto-on-background
+        // PiP is still killed by onForeground.
+        self.userStartedPip = false
         notifyListeners("pipStopped", data: [:])
     }
 }

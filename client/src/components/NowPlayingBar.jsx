@@ -11,6 +11,38 @@ import { isNativeIOS, NativePlayer } from '../native/player'
 
 // Replaces the old cmux focus button in the now-playing bar. Shows the
 // current audio output's icon; tap opens a compact picker popover.
+// PiP toggle: tap to start, tap again to stop. Listens for the
+// plugin's pipStarted/pipStopped events so external dismissal (iOS
+// PiP window close button) also flips the state.
+function PipToggleButton() {
+  const [active, setActive] = useState(false)
+  useEffect(() => {
+    const hStart = NativePlayer.addListener('pipStarted', () => setActive(true))
+    const hStop = NativePlayer.addListener('pipStopped', () => setActive(false))
+    return () => {
+      Promise.resolve(hStart).then(h => h?.remove?.()).catch(() => {})
+      Promise.resolve(hStop).then(h => h?.remove?.()).catch(() => {})
+    }
+  }, [])
+  return (
+    <button
+      className="np-skip-btn"
+      style={{ color: active ? 'var(--green)' : 'var(--text-dim)', opacity: active ? 1 : 0.8 }}
+      aria-label={active ? 'Exit Picture in Picture' : 'Picture in Picture'}
+      onClick={() => {
+        hapticTick()
+        const fn = active ? NativePlayer.stopPip() : NativePlayer.startPip()
+        fn.catch((e) => useUIStore.getState().addToast(`PiP: ${e?.message || 'not ready'}`))
+      }}
+    >
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+        <rect x="2" y="4" width="20" height="16" rx="1" />
+        <rect x="13" y="11" width="7" height="7" />
+      </svg>
+    </button>
+  )
+}
+
 function AudioOutputButton() {
   const [outputs, setOutputs] = useState([])
   const [current, setCurrent] = useState('')
@@ -684,24 +716,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
           }
         </span>
         <AudioOutputButton />
-        {isNativeIOS && (
-          <button
-            className="np-skip-btn"
-            style={{ color: 'var(--text-dim)', opacity: 0.8 }}
-            aria-label="Picture in Picture"
-            onClick={() => {
-              hapticTick()
-              NativePlayer.startPip().catch((e) => {
-                useUIStore.getState().addToast(`PiP: ${e?.message || 'not ready'}`)
-              })
-            }}
-          >
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-              <rect x="2" y="4" width="20" height="16" rx="1" />
-              <rect x="13" y="11" width="7" height="7" />
-            </svg>
-          </button>
-        )}
+        {isNativeIOS && <PipToggleButton />}
 
         <span className="np-time">{pb.isLive ? '' : formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>
