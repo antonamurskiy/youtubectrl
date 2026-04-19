@@ -48,10 +48,10 @@ export function useMariaProximity() {
           return
         }
         const miles = parseDistanceMiles(friend.distance)
-        if (miles < 1) {
+        if (miles < 0.5) {
           stickyRef.current = true
           document.body.classList.add('maria-proximity')
-        } else if (Number.isFinite(miles) && miles >= 1) {
+        } else if (Number.isFinite(miles) && miles >= 0.5) {
           stickyRef.current = false
           document.body.classList.remove('maria-proximity')
         }

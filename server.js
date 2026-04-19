@@ -1893,8 +1893,10 @@ app.post("/api/play", async (req, res) => {
     }
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`];
     // Pin media-title so live streams don't report "hls-live.m3u8" etc.
-    // See setMpvForceTitle for context.
-    if (reqTitle) mpvArgs.push(`--force-media-title=${reqTitle}`);
+    // See setMpvForceTitle for context — sanitize to strip control
+    // chars that can crash mpv's arg parser on some builds.
+    const cleanTitle = sanitizeMpvTitle(reqTitle);
+    if (cleanTitle) mpvArgs.push(`--force-media-title=${cleanTitle}`);
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
     mpvArgs.push(playUrl);
@@ -1907,9 +1909,20 @@ app.post("/api/play", async (req, res) => {
     // Focus LG workspace so mpv spawns there
     try { execSync("aerospace workspace 1", { stdio: "ignore" }); } catch {}
 
+    // Capture stderr to a rolling buffer. Previously stdio:"ignore"
+    // dropped everything, making crash diagnostics impossible. On
+    // abnormal exit we dump the tail of this buffer.
     const child = spawn("mpv", mpvArgs, {
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     });
+    child._stderr = "";
+    if (child.stderr) {
+      child.stderr.on("data", (chunk) => {
+        child._stderr += chunk.toString();
+        // Cap at 32KB to avoid unbounded memory on long runs
+        if (child._stderr.length > 32 * 1024) child._stderr = child._stderr.slice(-16 * 1024);
+      });
+    }
 
     mpvProcess = child;
     activePlayer = "mpv";
@@ -1967,12 +1980,20 @@ app.post("/api/play", async (req, res) => {
       startProgressTracking(url);
     }, 5000);
 
-    child.on("exit", async (code) => {
+    child.on("exit", async (code, signal) => {
       progressGen++;
       if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
+      const elapsed = Date.now() - child._startTime;
+      const abnormal = (code && code !== 0) || signal;
+      if (abnormal) {
+        const tail = (child._stderr || "").slice(-2048);
+        console.error(`mpv exited abnormally: code=${code} signal=${signal} after ${Math.round(elapsed/1000)}s`);
+        if (tail) console.error(`mpv stderr tail:\n${tail}`);
+        // Persist the tail to a file for post-mortem debugging.
+        try { fs.writeFileSync("/tmp/ytctl-mpv-crash.log", `${new Date().toISOString()} code=${code} signal=${signal}\n${tail}\n`); } catch {}
+      }
       if (mpvProcess === child) {
         // If mpv exited within 5 seconds, it probably failed — remove from history
-        const elapsed = Date.now() - child._startTime;
         if (elapsed < 5000 && code !== 0) {
           history = history.filter(h => h.url !== url);
           saveHistory();
@@ -2083,10 +2104,18 @@ function mpvCommand(cmd) {
 // whose basename would otherwise leak ("hls-live.m3u8"). Call after
 // every `loadfile` where we know the real title — reads downstream
 // (/api/playback, reconnect, any future code) see the real value.
-// Safely escapes nothing: mpv accepts arbitrary UTF-8 here.
+// Strip control chars — mpv's property setter can choke on embedded
+// newlines / nulls in force-media-title, occasionally crashing the
+// process on certain builds.
+function sanitizeMpvTitle(t) {
+  if (!t) return "";
+  // Drop C0 controls except space, strip BOM, collapse whitespace.
+  return String(t).replace(/[\x00-\x1f\x7f\ufeff]/g, " ").replace(/\s+/g, " ").trim().slice(0, 512);
+}
 async function setMpvForceTitle(title) {
-  if (!title) return;
-  try { await mpvCommand(["set_property", "force-media-title", title]); } catch {}
+  const clean = sanitizeMpvTitle(title);
+  if (!clean) return;
+  try { await mpvCommand(["set_property", "force-media-title", clean]); } catch {}
 }
 
 // Get playback position
