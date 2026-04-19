@@ -4359,11 +4359,21 @@ async function parkFindMyStealth(wid) {
 
 async function parkFindMyVisible(wid) {
   if (!wid) return;
+  // Belt-and-suspenders: always activate first so the app is visible
+  // and frontmost before aerospace starts shuffling layout. Coming
+  // out of stealth the window was floating + hidden-ish + positioned
+  // off LG; aerospace can miss it if it's not the active AppKit
+  // window when we move it.
+  await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
+  await new Promise(r => setTimeout(r, 150));
   await execFileP("aerospace", ["layout", "tiling", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["move-node-to-workspace", "9", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["workspace", "9"]).catch(() => {});
   await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+  // Re-activate post-layout to guarantee frontmost — aerospace's
+  // workspace switch sometimes lands FM behind other apps.
+  await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
 }
 
 app.post("/api/findmy-stealth", async (req, res) => {
@@ -4378,7 +4388,6 @@ app.post("/api/findmy-stealth", async (req, res) => {
       await parkFindMyStealth(wid);
     } else {
       await parkFindMyVisible(wid);
-      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
     }
   } catch {}
   res.json({ ok: true, on });
