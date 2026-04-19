@@ -4318,17 +4318,17 @@ function parseAgeFragment(s) {
 async function parkFindMyStealth(wid) {
   if (!wid) return;
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
-  // Move to workspace 1 (LG main) as floating so the positioning
-  // coords below refer to LG-local space. Then push the window way
-  // past the bottom-right corner of the LG — macOS clamps the
-  // position to keep a small corner visible, but it ends up behind
-  // the dock / clock area where it's not noticeable.
   await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
-  // LG bounds: (0, 0) → (2560, 1440). Positioning well past the
-  // bottom-right corner asks macOS to clamp to the maximum allowed
-  // offset; the window ends up with only a ~40×120 sliver showing
-  // flush with the bottom-right edge.
+  // Full laptop-sized window so the sidebar renders Maria's row at
+  // normal dimensions. The window itself is physically 1470×923, but
+  // we push it way past the LG's bottom-right corner so macOS clamps
+  // to a ~40×120 sliver visible on screen. The rest extends into
+  // void (laptop is to the left of LG, nothing off to the right).
+  // screencapture -l still grabs the full off-screen AppKit buffer,
+  // so OCR sees the complete sidebar — that's the trick.
+  await execFileP("osascript", ["-e",
+    'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {5000, 3000}']).catch(() => {});
 }
