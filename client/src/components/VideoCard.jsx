@@ -127,7 +127,11 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const [inView, setInView] = useState(false)
   useEffect(() => {
     if (!isMobile || !cardRef.current || !videoId) return
-    const rootMargin = gridStyle === 'wide' ? '800px 0px' : '200px 0px'
+    // Narrow enough to keep ~2 cards pre-mounted concurrently, wide
+    // enough that preload has time to fill the buffer before the card
+    // hits the trigger band. Was 800px (wide) — too many concurrent
+    // <video>s caused decoder/memory pressure and visible jank.
+    const rootMargin = gridStyle === 'wide' ? '400px 0px' : '200px 0px'
     const observer = new IntersectionObserver(
       ([entry]) => { setInView(entry.isIntersecting) },
       { rootMargin, threshold: 0 }
@@ -373,20 +377,13 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
               ref={(el) => {
                 previewRef.current = el
                 if (!el) return
-                if (previewActive) {
-                  // Re-attach src if we released it earlier (inactive path).
-                  if (!el.src) { el.src = previewUrl; el.load() }
-                  el.play().catch(() => {})
-                } else {
-                  // Release src + decoder slot while inactive. iOS caps
-                  // concurrent <video>s at 4–16 per page; a feed of
-                  // cards in the prefetch band was eating those slots
-                  // and silently preventing later videos from playing.
-                  // Re-attach happens instantly when scrolled back
-                  // (preload kicks in again).
-                  try { el.pause() } catch {}
-                  if (el.src) { el.removeAttribute('src'); try { el.load() } catch {} }
-                }
+                // Keep src attached whenever the element is mounted —
+                // removing/re-adding caused visible jank on re-activation
+                // (re-buffer + first-frame flash). iOS media-slot
+                // pressure is better controlled by narrowing the inView
+                // band instead (see the IntersectionObserver above).
+                if (previewActive) el.play().catch(() => {})
+                else { try { el.pause() } catch {} }
               }}
               muted
               loop
