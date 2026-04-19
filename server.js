@@ -4143,6 +4143,18 @@ app.get("/api/findmy-friend", async (req, res) => {
     // Stash the pin bounds so /api/findmy-crop.png can crop against
     // the same FINDMY_OCR_PNG without re-running OCR.
     if (pinLabel) _lastPinBounds = { x: pinLabel.x, y: pinLabel.y, w: pinLabel.w, h: pinLabel.h };
+    // Merge into cache: prefer any non-null field from the PREVIOUS
+    // cached result over a newly-null one. Find My flickers its
+    // distance / crossStreet / cropUrl blank for a moment during its
+    // spinner state — without this, the null flicker poisons the
+    // 20s cache and the client sees "distance: null" for 20 seconds
+    // after every such blip.
+    if (_lastFindmyFriend && _lastFindmyFriend.name === name && _lastFindmyFriend.result?.ok) {
+      const prev = _lastFindmyFriend.result;
+      if (!result.distance && prev.distance) result.distance = prev.distance;
+      if (!result.crossStreet && prev.crossStreet) result.crossStreet = prev.crossStreet;
+      if (!result.cropUrl && prev.cropUrl) result.cropUrl = prev.cropUrl;
+    }
     _lastFindmyFriend = { name, result, at: Date.now() };
     res.json(result);
   } catch (err) {
