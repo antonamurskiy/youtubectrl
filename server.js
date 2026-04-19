@@ -4344,12 +4344,25 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
-    // In stealth mode, DON'T activate — any activate triggers user's
-    // aerospace rules that pull Find My back onto the laptop workspace,
-    // producing a visible flash. Find My's own background polling
-    // usually refreshes locations within a minute anyway; the fresh
-    // OCR capture we trigger separately is sufficient for most cases.
-    if (!findmyStealth) {
+    if (findmyStealth) {
+      // Stealth: quick activate → immediate re-hide to force Find My
+      // to re-poll Maria's location (sidebar otherwise shows stale
+      // "Paused"). Fire-and-forget the hide so it runs concurrent
+      // with activate instead of strictly after — minimizes the
+      // window-visible window (pun intended) that aerospace rules
+      // could catch.
+      await execFileP("osascript", ["-e",
+        'tell application "FindMy" to activate']).catch(() => {});
+      // Don't await — hide as fast as possible.
+      execFileP("osascript", ["-e",
+        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+      // Queue a second hide a tick later to catch aerospace rule
+      // rebounds that may have re-shown the window.
+      setTimeout(() => {
+        execFileP("osascript", ["-e",
+          'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+      }, 250);
+    } else {
       await execFileP("osascript", ["-e",
         'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
       await new Promise(r => setTimeout(r, 300));
