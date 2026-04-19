@@ -82,9 +82,16 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var playerContainer: UIView?
     private var pipController: AVPictureInPictureController?
     private var timeObserver: Any?
+    private var rateObserver: NSKeyValueObservation?
     private var currentArtworkUrl: String?
     private var currentArtwork: MPMediaItemArtwork?
     private var remoteCommandsInstalled = false
+    // Tracks what we (the app) last told AVPlayer to do. When KVO fires
+    // for a rate change and the new state matches `expectedPaused`, it
+    // came from our own play/pause call — ignore it. Otherwise the user
+    // flipped the state externally (PiP window's play/pause button,
+    // AirPods control) and we emit an event so JS can sync mpv.
+    private var expectedPaused: Bool = false
     private var hiddenRoutePicker: AVRoutePickerView?
 
     // Silent keep-alive player — runs in the background so the audio session
@@ -164,6 +171,24 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             layer.frame = container.bounds
             CATransaction.commit()
             call.resolve(["ok": true])
+        }
+    }
+
+    private func installRateObserver() {
+        guard let player = self.player else { return }
+        self.rateObserver?.invalidate()
+        self.rateObserver = player.observe(\.rate, options: [.old, .new]) { [weak self] p, change in
+            guard let self = self else { return }
+            let oldRate = change.oldValue ?? 0
+            let newRate = change.newValue ?? 0
+            let nowPaused = newRate == 0
+            // Ignore transitions that just reflect what we requested —
+            // those came from our own play()/pause() methods.
+            if nowPaused == self.expectedPaused { return }
+            // User toggled externally (PiP play/pause, AirPods, lock
+            // screen) — update expected so we don't loop, and notify JS.
+            self.expectedPaused = nowPaused
+            self.notifyListeners("playerStateChanged", data: ["paused": nowPaused])
         }
     }
 
@@ -326,6 +351,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                     self.ensureLayer()
                     if self.player == nil {
                         self.player = AVPlayer(playerItem: item)
+                        self.installRateObserver()
                     } else {
                         self.player?.replaceCurrentItem(with: item)
                     }
@@ -367,6 +393,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             }
             if self.player == nil {
                 self.player = AVPlayer(playerItem: item)
+                self.installRateObserver()
             } else {
                 self.player?.replaceCurrentItem(with: item)
             }
@@ -420,6 +447,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     @objc func play(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
+            self.expectedPaused = false
             self.player?.play()
             self.setIdleTimer(disabled: true)
             self.updateNowPlayingPlaybackState()
@@ -429,6 +457,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     @objc func pause(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
+            self.expectedPaused = true
             self.player?.pause()
             self.setIdleTimer(disabled: false)
             self.updateNowPlayingPlaybackState()

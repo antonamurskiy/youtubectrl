@@ -103,6 +103,19 @@ export function useNativeNowPlaying({ send }) {
     handlers.push(NativePlayer.addListener('remotePlay', togglePlayPause))
     handlers.push(NativePlayer.addListener('remotePause', togglePlayPause))
     handlers.push(NativePlayer.addListener('remoteTogglePlayPause', togglePlayPause))
+    // AVPlayer's state flipped externally (PiP window's play/pause
+    // button, AirPods tap while the Remote Command handlers don't
+    // catch it). If mpv's paused state doesn't match, toggle mpv so
+    // the two stay in sync. Without this, tapping play in the PiP
+    // window while the app's backgrounded did nothing lasting —
+    // our sync loop would re-pause AVPlayer on the next tick because
+    // pb.paused was still true.
+    handlers.push(NativePlayer.addListener('playerStateChanged', ({ paused }) => {
+      const pb = usePlaybackStore.getState()
+      if (pb.paused !== paused) {
+        fetch('/api/playpause', { method: 'POST' }).catch(() => {})
+      }
+    }))
     handlers.push(NativePlayer.addListener('remoteSkip', ({ delta }) => skip(delta || 0)))
     handlers.push(NativePlayer.addListener('remoteSeek', ({ position }) => {
       const ctrl = useSyncStore.getState().phoneVideoCtrl
