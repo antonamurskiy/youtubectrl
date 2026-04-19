@@ -4376,18 +4376,19 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
-    // In stealth: window is already parked as a tiny sliver in the
-    // laptop's corner (via parkFindMyStealth). Activate just brings it
-    // to front in that same spot — no workspace switch, no monitor
-    // flash. Triggers Find My's re-poll.
-    await execFileP("osascript", ["-e",
-      'tell application "FindMy" to activate']).catch(() => {});
-    // Re-enforce the stealth park in case activate nudged anything.
     if (findmyStealth) {
+      // In stealth, NEVER activate — even a 250ms re-hide window
+      // shows the FM window on the LG corner sliver. Instead, re-
+      // park to re-trigger any framebuffer refresh, and let Find
+      // My's own background polling keep locations fresh. The sub-
+      // row may show "Paused" longer, but no visual flash.
       const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
       const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
       const wid = line ? line.split("|")[0].trim() : "";
-      if (wid) parkFindMyStealth(wid);
+      if (wid) await parkFindMyStealth(wid);
+    } else {
+      await execFileP("osascript", ["-e",
+        'tell application "FindMy" to activate']).catch(() => {});
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
