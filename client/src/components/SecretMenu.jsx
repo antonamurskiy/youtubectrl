@@ -146,6 +146,45 @@ function Ico({ children }) {
 }
 const ICON_BTN_STYLE = { display: 'flex', alignItems: 'center', gap: 8 }
 
+// Audio icon that swaps shape with the connected device:
+//   AirPods / earbuds      — two vertical stems with ear tips
+//   Over-ear headphones    — band + L/R cups (BlackShark, Beats, etc.)
+//   Speaker (fallback)     — cone with sound wave (LG UltraFine, MacBook)
+// Name matching is substring, case-insensitive. Matching is intentionally
+// liberal so unknown earbuds still pick the right family.
+function AudioOutputIcon({ name }) {
+  const n = (name || '').toLowerCase()
+  const isEarbuds = /airpod|earbud|buds|pods/.test(n)
+  const isOverEar = /blackshark|beats|headphone|wh-|qc\d|razer|logitech|ath-|steelseries|hyperx|bose/.test(n)
+  return (
+    <Ico>
+      {isEarbuds ? (
+        // AirPods: rounded ear tip on top, long stem hanging below,
+        // slight flare at the bottom. Two of them, mirrored.
+        <>
+          <path d="M6 2 a3 3 0 0 1 3 3 v8 a2 2 0 0 1 -4 0 v-8 a3 3 0 0 1 1 -3 z" />
+          <circle cx="7" cy="19" r="1.5" />
+          <path d="M18 2 a3 3 0 0 0 -3 3 v8 a2 2 0 0 0 4 0 v-8 a3 3 0 0 0 -1 -3 z" />
+          <circle cx="17" cy="19" r="1.5" />
+        </>
+      ) : isOverEar ? (
+        // Over-ear: arc band + two cup rectangles
+        <>
+          <path d="M3 15 v-3 a9 9 0 0 1 18 0 v3" />
+          <rect x="2" y="14" width="5" height="7" rx="1" />
+          <rect x="17" y="14" width="5" height="7" rx="1" />
+        </>
+      ) : (
+        // Speaker cone + wave
+        <>
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+        </>
+      )}
+    </Ico>
+  )
+}
+
 function formatAge(ms) {
   if (ms == null || ms < 0) return '—'
   const s = Math.floor(ms / 1000)
@@ -581,10 +620,7 @@ export default function SecretMenu() {
         </button>
 
         <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => { hapticTick(); setShowOutputs(!showOutputs) }}>
-          <Ico>
-            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
-          </Ico>
+          <AudioOutputIcon name={currentOutput} />
           Audio: {currentOutput || '...'}
         </button>
         {showOutputs && audioOutputs.map(name => (
