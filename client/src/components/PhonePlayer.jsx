@@ -84,6 +84,7 @@ export default function PhonePlayer({ send }) {
   const loadedUrlRef = useRef(null) // last fetched phone-only URL, to detect video changes
 
   const phoneOpen = useSyncStore(s => s.phoneOpen)
+  const pipActive = useSyncStore(s => s.pipActive)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
   const addToast = useUIStore(s => s.addToast)
@@ -886,6 +887,10 @@ export default function PhonePlayer({ send }) {
   return (
     <div className="phone-player" style={{
       ...((!phoneOpen && !streamUrl) ? { display: 'none' } : {}),
+      // While native PiP is active, AVPlayer's layer is already in
+      // the PiP window. Hide the inline player so we don't render
+      // the video twice (inline + floating) side by side.
+      ...(pipActive ? { display: 'none' } : {}),
       ...(mini ? {
         position: 'fixed',
         ...(miniPos

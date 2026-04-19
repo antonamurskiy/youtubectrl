@@ -13,6 +13,9 @@ export const useSyncStore = create((set) => ({
   terminalSendKey: null, // function to send key to terminal pty
   commentsOpen: false,
   toggleComments: () => set((s) => ({ commentsOpen: !s.commentsOpen })),
+  // Native iOS PiP active state — set by PipToggleButton listeners.
+  pipActive: false,
+  setPipActive: (on) => set({ pipActive: !!on }),
 
   setDrift: (drift) => set({ drift }),
   nudgeOffset: (delta) => set((s) => ({ userOffset: +(s.userOffset + delta).toFixed(1) })),

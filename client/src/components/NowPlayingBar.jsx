@@ -17,11 +17,13 @@ import { isNativeIOS, NativePlayer } from '../native/player'
 function PipToggleButton() {
   const [active, setActive] = useState(false)
   useEffect(() => {
-    const hStart = NativePlayer.addListener('pipStarted', () => setActive(true))
-    const hStop = NativePlayer.addListener('pipStopped', () => setActive(false))
+    const setAll = (v) => { setActive(v); useSyncStore.getState().setPipActive(v) }
+    const hStart = NativePlayer.addListener('pipStarted', () => setAll(true))
+    const hStop = NativePlayer.addListener('pipStopped', () => setAll(false))
     return () => {
       Promise.resolve(hStart).then(h => h?.remove?.()).catch(() => {})
       Promise.resolve(hStop).then(h => h?.remove?.()).catch(() => {})
+      useSyncStore.getState().setPipActive(false)
     }
   }, [])
   return (
