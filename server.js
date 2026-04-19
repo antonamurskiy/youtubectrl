@@ -4317,23 +4317,22 @@ function parseAgeFragment(s) {
 // flashes a full-size window across the monitor.
 async function parkFindMyStealth(wid) {
   if (!wid) return;
-  // Hide first. System Events operations still apply to hidden
-  // processes, so we can resize + position without any visible flash.
+  // Hide first — all subsequent ops apply to the hidden window.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-  // Set floating layout WITHOUT moving workspaces — aerospace
-  // move-node-to-workspace on a currently-focused workspace was
-  // briefly un-hiding the window. Floating on its current workspace
-  // (the aerospace rule's workspace 7) is sufficient; position coords
-  // are absolute screen space so the LG corner position works
-  // regardless of which workspace the window lives on.
+  // Set floating BEFORE moving workspaces so aerospace doesn't try
+  // to fit it into the destination workspace's tiling grid (which
+  // would force-show the window).
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
+  // Move to workspace 1 (LG main — typically user's active
+  // workspace) so that when refresh activates the window later, it
+  // reappears on the workspace the user's already looking at (no
+  // workspace switch, no monitor-level flash). Only the corner
+  // sliver becomes briefly visible — an acceptable flash.
+  await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
-  // Directly use the clamp destination so the hidden window doesn't
-  // over-shoot and lose its framebuffer (AppKit stops rendering
-  // fully-off-screen hidden windows, breaking screencapture -l).
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2520, 1322}']).catch(() => {});
   await execFileP("osascript", ["-e",
@@ -4376,19 +4375,20 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
+    // Activate triggers Find My's location re-poll. In stealth, the
+    // window is already parked as a 40×120 corner sliver on the
+    // LG — activating just reappears the sliver briefly (no
+    // workspace switch, no full-screen flash). Re-park 300ms later
+    // to hide the sliver again.
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // In stealth, NEVER activate — even a 250ms re-hide window
-      // shows the FM window on the LG corner sliver. Instead, re-
-      // park to re-trigger any framebuffer refresh, and let Find
-      // My's own background polling keep locations fresh. The sub-
-      // row may show "Paused" longer, but no visual flash.
-      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
-      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-      const wid = line ? line.split("|")[0].trim() : "";
-      if (wid) await parkFindMyStealth(wid);
-    } else {
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
+      setTimeout(async () => {
+        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+        const wid = line ? line.split("|")[0].trim() : "";
+        if (wid) parkFindMyStealth(wid);
+      }, 300);
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
