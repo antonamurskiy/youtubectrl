@@ -159,13 +159,12 @@ function AudioOutputIcon({ name }) {
   return (
     <Ico>
       {isEarbuds ? (
-        // AirPods: rounded ear tip on top, long stem hanging below,
-        // slight flare at the bottom. Two of them, mirrored.
+        // AirPods: bulb (ear tip) + stem + flared mic at the bottom.
+        // Two of them, mirrored. Drawn as paths so the silhouette
+        // reads at 16px.
         <>
-          <path d="M6 2 a3 3 0 0 1 3 3 v8 a2 2 0 0 1 -4 0 v-8 a3 3 0 0 1 1 -3 z" />
-          <circle cx="7" cy="19" r="1.5" />
-          <path d="M18 2 a3 3 0 0 0 -3 3 v8 a2 2 0 0 0 4 0 v-8 a3 3 0 0 0 -1 -3 z" />
-          <circle cx="17" cy="19" r="1.5" />
+          <path d="M7 3 a3 3 0 0 1 3 3 c0 3 -1 4 -2 4.5 v8 a1.5 1.5 0 0 1 -3 0 v-8 c-1 -0.5 -2 -1.5 -2 -4.5 a3 3 0 0 1 2 -3 z" />
+          <path d="M17 3 a3 3 0 0 0 -3 3 c0 3 1 4 2 4.5 v8 a1.5 1.5 0 0 0 3 0 v-8 c1 -0.5 2 -1.5 2 -4.5 a3 3 0 0 0 -2 -3 z" />
         </>
       ) : isOverEar ? (
         // Over-ear: arc band + two cup rectangles
