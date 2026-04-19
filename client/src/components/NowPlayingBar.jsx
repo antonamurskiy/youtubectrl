@@ -17,12 +17,20 @@ function AudioOutputButton() {
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
   const addToast = useUIStore(s => s.addToast)
+  // Fetch current output on mount so the icon matches reality from
+  // first paint (not just after the user opens the popover). Also
+  // refresh when the popover is opened in case it changed while
+  // closed (e.g. user switched via System Settings or a physical
+  // headphone connect).
   useEffect(() => {
-    if (!open) return
-    fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+    let alive = true
+    const load = () => fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+      if (!alive) return
       setOutputs(d.outputs || [])
       setCurrent(d.current || '')
     }).catch(() => {})
+    load()
+    return () => { alive = false }
   }, [open])
   const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
   const pick = (name) => {
