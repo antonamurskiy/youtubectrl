@@ -7,6 +7,7 @@ import { useUIStore } from '../stores/ui'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump, selection as hapticSelection, selectionStart as hapticSelectionStart, selectionEnd as hapticSelectionEnd } from '../haptics'
 import { AudioOutputIcon } from './SecretMenu'
+import { isNativeIOS, NativePlayer } from '../native/player'
 
 // Replaces the old cmux focus button in the now-playing bar. Shows the
 // current audio output's icon; tap opens a compact picker popover.
@@ -683,6 +684,24 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
           }
         </span>
         <AudioOutputButton />
+        {isNativeIOS && (
+          <button
+            className="np-skip-btn"
+            style={{ color: 'var(--text-dim)', opacity: 0.8 }}
+            aria-label="Picture in Picture"
+            onClick={() => {
+              hapticTick()
+              NativePlayer.startPip().catch((e) => {
+                useUIStore.getState().addToast(`PiP: ${e?.message || 'not ready'}`)
+              })
+            }}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+              <rect x="2" y="4" width="20" height="16" rx="1" />
+              <rect x="13" y="11" width="7" height="7" />
+            </svg>
+          </button>
+        )}
 
         <span className="np-time">{pb.isLive ? '' : formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>

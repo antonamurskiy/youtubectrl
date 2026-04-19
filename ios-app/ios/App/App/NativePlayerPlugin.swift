@@ -41,11 +41,19 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     @objc private func onForeground() {
         DispatchQueue.main.async {
+            // Auto-stop only for BACKGROUND-triggered PiP. If the user
+            // explicitly started PiP while the app was in foreground
+            // (via the in-app button), keep it running — the whole
+            // point of foreground PiP is a floating mini-player next
+            // to something else (e.g. browsing the feed while the
+            // video stays up).
+            if self.userStartedPip { return }
             if let ctrl = self.pipController, ctrl.isPictureInPictureActive {
                 ctrl.stopPictureInPicture()
             }
         }
     }
+    private var userStartedPip = false
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "load", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
@@ -480,6 +488,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         DispatchQueue.main.async {
             guard let ctrl = self.pipController else { call.reject("pip not ready"); return }
             if ctrl.isPictureInPicturePossible {
+                self.userStartedPip = true
                 ctrl.startPictureInPicture()
                 call.resolve()
             } else {
@@ -490,6 +499,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
     @objc func stopPip(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
+            self.userStartedPip = false
             self.pipController?.stopPictureInPicture()
             call.resolve()
         }
