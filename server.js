@@ -4079,35 +4079,11 @@ app.get("/api/findmy-friend", async (req, res) => {
       await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
     }
     await snapFindMy();
-    try {
-      const { stdout: ocr0 } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 10000, maxBuffer: 4 * 1024 * 1024 });
-      const rows0 = ocr0.split("\n").filter(Boolean).map(l => {
-        const [bbox, ...rest] = l.split("\t");
-        const [x, y, w, h] = bbox.split(",").map(Number);
-        return { x, y, w, h, text: rest.join("\t") };
-      });
-      const sidebar0 = rows0
-        .filter(r => r.text.toLowerCase().includes(name) && r.x < 500)
-        .sort((a, b) => a.y - b.y)[0];
-      if (sidebar0 && !findmyStealth) {
-        // Screen-coord click needs a visible, frontmost window. In
-        // stealth mode we skip this entirely — the window stays off-
-        // screen (user's aerospace rules can't pull it back into view
-        // because we never activate it). Cost: map crop and
-        // cross-street are unavailable while stealth is on, because
-        // Find My's map isn't centered on Maria. Distance, address,
-        // and the proximity red wash all still work — those come from
-        // the sidebar which renders regardless of focus.
-        const { stdout: dpOut } = await execFileP("displayplacer", ["list"]).catch(() => ({ stdout: "" }));
-        const origin = parseDisplayplacerOrigin(dpOut, "Built-in");
-        const cx = Math.round(origin.x + (sidebar0.x + sidebar0.w / 2) / 2);
-        const cy = Math.round(origin.y + (sidebar0.y + sidebar0.h / 2) / 2);
-        await execFileP("osascript", ["-e",
-          `tell application "System Events" to click at {${cx}, ${cy}}`]).catch(() => {});
-        await new Promise(r => setTimeout(r, 700));
-        await snapFindMy();
-      }
-    } catch {}
+    // Find My auto-centers on the selected friend when the app
+    // gains focus, so an explicit click-to-center is only needed if
+    // the map isn't already focused on Maria. In stealth we never
+    // activate the window, so the map stays wherever it last was —
+    // cross-street and crop are best-effort.
     // 3. OCR + parse. Wrapped so we can retry-with-fresh-screenshot
     //    if the first pass doesn't find a distance (Find My briefly
     //    blanks it during its spinner state).
