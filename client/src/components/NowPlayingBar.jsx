@@ -18,12 +18,13 @@ function AudioOutputButton() {
   const [showBt, setShowBt] = useState(false)
   const addToast = useUIStore(s => s.addToast)
   const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
-  // Fetch current output on mount so the icon matches reality from
-  // first paint (not just after the user opens the popover). Also
-  // refresh when the popover is opened in case it changed while
-  // closed (e.g. user switched via System Settings or a physical
-  // headphone connect). Also fetch BT devices on mount so the battery
-  // readout next to the icon is populated from first paint.
+  // Keep current output + BT battery fresh across:
+  //   - mount (first paint accurate)
+  //   - popover open (catches switches made while app was backgrounded)
+  //   - tab becoming visible (user returning to the app after
+  //     switching audio via System Settings or a physical plug-in)
+  //   - a low-freq 30s interval (catches slow-moving changes while
+  //     the app stays in the foreground)
   useEffect(() => {
     let alive = true
     const load = () => {
@@ -37,10 +38,21 @@ function AudioOutputButton() {
     load()
     return () => { alive = false }
   }, [open])
-  // Refresh BT battery periodically so the readout stays current.
   useEffect(() => {
-    const iv = setInterval(loadBt, 60000)
-    return () => clearInterval(iv)
+    const load = () => {
+      fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+        setOutputs(d.outputs || [])
+        setCurrent(d.current || '')
+      }).catch(() => {})
+      loadBt()
+    }
+    const onVisible = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', onVisible)
+    const iv = setInterval(() => { if (!document.hidden) load() }, 30000)
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible)
+      clearInterval(iv)
+    }
   }, [])
   // Best-effort match: current output name and BT device name rarely
   // match exactly (macOS appends/strips things like "Stereo", "Hands-Free").
