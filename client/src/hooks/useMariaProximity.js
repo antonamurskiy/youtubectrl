@@ -28,12 +28,8 @@ export function useMariaProximity() {
   const stickyRef = useRef(false)
   useEffect(() => {
     let alive = true
-    let ival
     const tick = async () => {
       if (!alive) return
-      // Skip while tab isn't visible — the OCR pipeline is expensive
-      // (screenshot + Swift Vision + up to 2 retries). Polling when
-      // the app's backgrounded is pure waste.
       if (typeof document !== 'undefined' && document.hidden) return
       try {
         const status = await fetch('/api/findmy-status').then(r => r.json())
@@ -43,7 +39,14 @@ export function useMariaProximity() {
           return
         }
         const friend = await fetch('/api/findmy-friend?name=mchimishkyan').then(r => r.json())
-        if (!friend?.ok) return
+        if (!friend?.ok) {
+          // Not-running / not-found / error — treat like Find My is
+          // down and clear the wash. Better than leaving the tint on
+          // after Maria quits sharing or FM crashes.
+          document.body.classList.remove('maria-proximity')
+          stickyRef.current = false
+          return
+        }
         const miles = parseDistanceMiles(friend.distance)
         if (miles < 1) {
           stickyRef.current = true
@@ -56,10 +59,18 @@ export function useMariaProximity() {
       } catch {}
     }
     tick()
-    ival = setInterval(tick, 60000)
+    const ival = setInterval(tick, 60000)
+    // Re-run the tick on external state-change signals (Find My
+    // toggled, refreshed, stealth flipped) so the red wash reacts
+    // immediately instead of waiting for the next 60s poll.
+    const onState = () => tick()
+    window.addEventListener('findmy-refresh', onState)
+    window.addEventListener('findmy-state-changed', onState)
     return () => {
       alive = false
       clearInterval(ival)
+      window.removeEventListener('findmy-refresh', onState)
+      window.removeEventListener('findmy-state-changed', onState)
       document.body.classList.remove('maria-proximity')
     }
   }, [])

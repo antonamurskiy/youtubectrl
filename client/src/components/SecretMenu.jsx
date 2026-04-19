@@ -230,7 +230,14 @@ function FindMyToggle({ addToast }) {
             hapticTick()
             fetch('/api/toggle-findmy', { method: 'POST' })
               .then(r => r.json())
-              .then(d => { setRunning(!!d.running); addToast(d.running ? 'Find My shown' : 'Find My closed') })
+              .then(d => {
+                setRunning(!!d.running)
+                addToast(d.running ? 'Find My shown' : 'Find My closed')
+                // Notify useMariaProximity so it re-checks state
+                // immediately instead of waiting for the 60s poll —
+                // red wash should clear the moment Find My closes.
+                window.dispatchEvent(new Event('findmy-state-changed'))
+              })
               .catch((e) => { console.error('Find My toggle error:', e); addToast(`Find My: ${e?.message || 'failed'}`) })
           }}
         >
