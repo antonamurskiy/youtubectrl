@@ -4143,7 +4143,6 @@ app.get("/api/findmy-friend", async (req, res) => {
       await snapFindMy();
       const next = await ocrPass();
       if (next.notFound) break;
-      // Prefer any non-null field from the newer pass.
       pass = {
         ...pass,
         ...next,
@@ -4151,6 +4150,32 @@ app.get("/api/findmy-friend", async (req, res) => {
         crossStreet: next.crossStreet || pass.crossStreet,
         pinLabel: next.pinLabel || pass.pinLabel,
       };
+    }
+    // If Find My shows "Paused", Maria's location data isn't being
+    // refreshed by the app. Force a re-poll: activate (triggers FM's
+    // background location refresh) then re-park + re-OCR. One-shot —
+    // no loop even if "Paused" persists, to keep response time
+    // bounded.
+    if (/paused/i.test(pass.timeFragment || "")) {
+      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
+      await new Promise(r => setTimeout(r, 1500));
+      if (findmyStealth) {
+        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+        const wid = line ? line.split("|")[0].trim() : "";
+        if (wid) await parkFindMyStealth(wid);
+      }
+      await snapFindMy();
+      const next = await ocrPass();
+      if (!next.notFound) {
+        pass = {
+          ...pass,
+          ...next,
+          distance: next.distance || pass.distance,
+          crossStreet: next.crossStreet || pass.crossStreet,
+          pinLabel: next.pinLabel || pass.pinLabel,
+        };
+      }
     }
     const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance } = pass;
     const result = {
