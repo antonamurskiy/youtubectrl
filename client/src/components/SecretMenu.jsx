@@ -135,6 +135,17 @@ function parseDistanceMiles(s) {
   }
 }
 
+// Consistent 16×16 stroke-based icon. Children are the SVG inner
+// paths/shapes. Matches the style used elsewhere in the app.
+function Ico({ children }) {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
+      {children}
+    </svg>
+  )
+}
+const ICON_BTN_STYLE = { display: 'flex', alignItems: 'center', gap: 8 }
+
 function formatAge(ms) {
   if (ms == null || ms < 0) return '—'
   const s = Math.floor(ms / 1000)
@@ -536,6 +547,7 @@ export default function SecretMenu() {
         <button
           className="secret-menu-item"
           style={{
+            ...ICON_BTN_STYLE,
             color: muted ? 'var(--red)' : 'var(--text)',
             background: muted ? 'rgba(255,50,50,0.1)' : 'none',
           }}
@@ -544,10 +556,29 @@ export default function SecretMenu() {
             fetch('/api/mute', { method: 'POST' }).then(r => r.json()).then(d => { setMuted(d.muted); addToast(d.muted ? 'Muted' : 'Unmuted') }).catch(() => addToast('Mute failed'))
           }}
         >
-          {muted ? 'Muted ●' : 'Mute'}
+          <Ico>
+            {muted ? (
+              <>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <line x1="23" y1="9" x2="17" y2="15" />
+                <line x1="17" y1="9" x2="23" y2="15" />
+              </>
+            ) : (
+              <>
+                <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+              </>
+            )}
+          </Ico>
+          {muted ? 'Muted' : 'Mute'}
         </button>
 
-        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowOutputs(!showOutputs) }}>
+        <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => { hapticTick(); setShowOutputs(!showOutputs) }}>
+          <Ico>
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+          </Ico>
           Audio: {currentOutput || '...'}
         </button>
         {showOutputs && audioOutputs.map(name => (
@@ -561,13 +592,16 @@ export default function SecretMenu() {
           </button>
         ))}
 
-        <button className="secret-menu-item" onClick={() => {
+        <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => {
           hapticTick()
           if (!showBt) {
             fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
           }
           setShowBt(!showBt)
         }}>
+          <Ico>
+            <polyline points="6 7 18 17 12 22 12 2 18 7 6 17" />
+          </Ico>
           Bluetooth
         </button>
         {showBt && btDevices.map(d => {
@@ -599,11 +633,14 @@ export default function SecretMenu() {
         })}
 
         {useUIStore.getState().filteredVideos.length > 0 && (
-          <button className="secret-menu-item" onClick={() => {
+          <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => {
             hapticTick()
             useUIStore.getState().setTab('filtered')
             toggleSecretMenu()
           }}>
+            <Ico>
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </Ico>
             Filtered ({useUIStore.getState().filteredVideos.length})
           </button>
         )}
@@ -612,24 +649,39 @@ export default function SecretMenu() {
             the phone (sync mode or phone-only). Hide it otherwise to keep
             the menu scannable. */}
         {phoneOpen && <SyncOffsetSlider />}
-        <button className="secret-menu-item" onClick={() => {
+        <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => {
           hapticTick()
           fetch('/api/toggle-resolution', { method: 'POST' }).then(() => addToast('Resolution toggled')).catch(() => addToast('Toggle failed'))
           toggleSecretMenu()
         }}>
+          <Ico>
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <line x1="8" y1="21" x2="16" y2="21" />
+            <line x1="12" y1="17" x2="12" y2="21" />
+          </Ico>
           Toggle resolution
         </button>
         <FindMyToggle addToast={addToast} />
 
         {/* Misc submenu — stuff that matters less often. Collapsed by default
             to keep the top-level menu scannable. */}
-        <button className="secret-menu-item" onClick={() => { hapticTick(); setShowMisc(!showMisc) }}>
-          Misc {showMisc ? '▾' : '▸'}
+        <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => { hapticTick(); setShowMisc(!showMisc) }}>
+          <Ico>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </Ico>
+          <span style={{ flex: 1 }}>Misc</span>
+          <span style={{ color: 'var(--text-dim)' }}>{showMisc ? '▾' : '▸'}</span>
         </button>
         {showMisc && (
           <>
             <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
-            <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
+            <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
+              <Ico>
+                <polyline points="4 7 4 4 20 4 20 7" />
+                <line x1="9" y1="20" x2="15" y2="20" />
+                <line x1="12" y1="4" x2="12" y2="20" />
+              </Ico>
               Font: {fontSel}
             </button>
             {showFonts && FONTS.map(([label, family]) => (
@@ -643,22 +695,29 @@ export default function SecretMenu() {
               </button>
             ))}
             <GridStyleToggle onAfter={toggleSecretMenu} paddingLeft={24} />
-            <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => {
+            <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => {
               hapticTick()
               fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
               toggleSecretMenu()
             }}>
+              <Ico>
+                <path d="M21 2v6h-6M3 12a9 9 0 0 1 15-6.7L21 8M3 22v-6h6M21 12a9 9 0 0 1-15 6.7L3 16" />
+              </Ico>
               Refresh cookies
             </button>
             {isNativeIOS && (
-              <button className="secret-menu-item" style={{ paddingLeft: 24 }} onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
+              <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
+                <Ico>
+                  <path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1" />
+                  <polygon points="12 15 17 21 7 21 12 15" />
+                </Ico>
                 AirPlay...
               </button>
             )}
           </>
         )}
 
-        <button className="secret-menu-item" onClick={() => {
+        <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => {
           hapticThump()
           const wake = macStatus.screenOff
           const endpoint = wake ? '/api/wake-mac' : '/api/lock-mac'
@@ -667,18 +726,51 @@ export default function SecretMenu() {
           fetch(endpoint, { method: 'POST' }).then(() => addToast(okMsg)).catch(() => addToast(failMsg))
           toggleSecretMenu()
         }}>
+          <Ico>
+            {macStatus.screenOff ? (
+              <>
+                <circle cx="12" cy="12" r="5" />
+                <line x1="12" y1="1" x2="12" y2="3" />
+                <line x1="12" y1="21" x2="12" y2="23" />
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                <line x1="1" y1="12" x2="3" y2="12" />
+                <line x1="21" y1="12" x2="23" y2="12" />
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+              </>
+            ) : (
+              <>
+                <rect x="3" y="11" width="18" height="11" rx="2" />
+                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+              </>
+            )}
+          </Ico>
           {macStatus.screenOff ? 'Wake Mac' : 'Lock Mac'}
         </button>
-        <button className="secret-menu-item" style={{ color: macStatus.keepAwake ? 'var(--green)' : undefined }} onClick={() => {
+        <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, color: macStatus.keepAwake ? 'var(--green)' : undefined }} onClick={() => {
           hapticThump()
           const next = !macStatus.keepAwake
           fetch('/api/keep-awake', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enable: next }) })
             .then(() => addToast(next ? 'Keep awake on' : 'Keep awake off'))
             .catch(() => addToast('Keep awake failed'))
         }}>
-          Keep awake {macStatus.keepAwake ? '✓' : ''}
+          <Ico>
+            {/* Coffee cup — classic "stay awake" signal */}
+            <path d="M18 8h1a4 4 0 0 1 0 8h-1" />
+            <path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4z" />
+            <line x1="6" y1="1" x2="6" y2="4" />
+            <line x1="10" y1="1" x2="10" y2="4" />
+            <line x1="14" y1="1" x2="14" y2="4" />
+          </Ico>
+          <span style={{ flex: 1 }}>Keep awake</span>
+          {macStatus.keepAwake && <span>✓</span>}
         </button>
-        <button className="secret-menu-item" onClick={() => { hapticTick(); toggleSecretMenu() }} style={{ color: 'var(--accent2)' }}>
+        <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, color: 'var(--accent2)' }} onClick={() => { hapticTick(); toggleSecretMenu() }}>
+          <Ico>
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </Ico>
           Close
         </button>
       </div>
