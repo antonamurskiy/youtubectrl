@@ -14,19 +14,32 @@ function AudioOutputButton() {
   const [outputs, setOutputs] = useState([])
   const [current, setCurrent] = useState('')
   const [open, setOpen] = useState(false)
+  const [btDevices, setBtDevices] = useState([])
+  const [showBt, setShowBt] = useState(false)
   const addToast = useUIStore(s => s.addToast)
   useEffect(() => {
+    if (!open) return
     fetch('/api/audio-outputs').then(r => r.json()).then(d => {
       setOutputs(d.outputs || [])
       setCurrent(d.current || '')
     }).catch(() => {})
   }, [open])
+  const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
   const pick = (name) => {
     hapticTick()
     fetch('/api/audio-output', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
       .then(() => { setCurrent(name); addToast(`→ ${name}`) })
       .catch(() => addToast('Switch failed'))
     setOpen(false)
+  }
+  const toggleBtDevice = (d) => {
+    hapticThump()
+    const action = d.connected ? 'disconnect' : 'connect'
+    fetch(`/api/bluetooth-${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address: d.address }) })
+      .then(r => r.json()).then(res => {
+        addToast(res.ok ? `${action === 'connect' ? 'Connected' : 'Disconnected'} ${d.name}` : 'Failed')
+        loadBt()
+      }).catch(() => addToast('Failed'))
   }
   return (
     <>
@@ -45,7 +58,7 @@ function AudioOutputButton() {
             position: 'fixed', right: 12, zIndex: 701,
             bottom: `calc(var(--np-height, 100px) + var(--safe-bottom) + 8px)`,
             background: '#151515', border: '1px solid var(--border)',
-            minWidth: 220, maxWidth: 320,
+            minWidth: 240, maxWidth: 360, maxHeight: '60vh', overflowY: 'auto',
             userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
           }}>
             {outputs.length === 0 && (
@@ -63,6 +76,42 @@ function AudioOutputButton() {
                 {name === current && <span>●</span>}
               </button>
             ))}
+            {/* Bluetooth section — same connect/disconnect pattern as the
+                secret menu. Collapsed by default. */}
+            <button
+              className="secret-menu-item"
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={() => {
+                hapticTick()
+                if (!showBt) loadBt()
+                setShowBt(v => !v)
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter" style={{ flexShrink: 0 }}>
+                <polyline points="6 7 18 17 12 22 12 2 18 7 6 17" />
+              </svg>
+              <span style={{ flex: 1 }}>Bluetooth</span>
+              <span style={{ color: 'var(--text-dim)' }}>{showBt ? '▾' : '▸'}</span>
+            </button>
+            {showBt && btDevices.map(d => {
+              const hasSplit = d.batteryLeft != null && d.batteryRight != null
+              const batText = hasSplit
+                ? `L${d.batteryLeft} R${d.batteryRight}${d.batteryCase != null ? ` C${d.batteryCase}` : ''}`
+                : (d.battery != null ? `${d.battery}%` : '')
+              const lowest = hasSplit ? Math.min(d.batteryLeft, d.batteryRight) : d.battery
+              const batColor = lowest != null && lowest <= 20 ? 'var(--red)' : 'var(--text-dim)'
+              return (
+                <button
+                  key={d.address}
+                  className="secret-menu-item"
+                  style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  onClick={() => toggleBtDevice(d)}
+                >
+                  <span>{d.connected ? '● ' : '  '}{d.name}</span>
+                  {batText && <span style={{ fontSize: 'var(--font-sm)', color: batColor }}>{batText}</span>}
+                </button>
+              )
+            })}
           </div>
         </>,
         document.body
