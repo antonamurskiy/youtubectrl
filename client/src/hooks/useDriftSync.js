@@ -97,12 +97,19 @@ function syncVod(pb, video, phonePos, send, sync) {
   useSyncStore.getState().setDrift(drift)
   send({ type: 'phone-state', drift: +drift.toFixed(2), mpv: +mpvNow.toFixed(1), phone: +phonePos.toFixed(1) })
 
-  // Pause/resume
+  // Pause/resume. Drive NativePlayer (AVPlayer) from mpv's paused
+  // state — the older assumption that NowPlayingBar handles this is
+  // only true when user uses the in-app play/pause. If mpv pauses via
+  // any other path (keyboard, AirPods tap, AirPlay remote, another
+  // video switch), AVPlayer was continuing to play. Pull from the
+  // cached native position timestamp so we don't spam the bridge on
+  // every tick.
   if (isNativeIOS) {
-    // Native AVPlayer already respects its paused state. Use NativePlayer
-    // instead of HTML video's paused.
-    // Note: we don't fight for pause sync here because the NowPlayingBar
-    // play/pause already drives both mpv + AVPlayer through phoneVideoCtrl.
+    NativePlayer.getState().then(s => {
+      if (!s) return
+      if (pb.paused && !s.paused) NativePlayer.pause().catch(() => {})
+      else if (!pb.paused && s.paused) NativePlayer.play().catch(() => {})
+    }).catch(() => {})
   } else if (video) {
     if (pb.paused && !video.paused) video.pause()
     else if (!pb.paused && video.paused) video.play().catch(() => {})
