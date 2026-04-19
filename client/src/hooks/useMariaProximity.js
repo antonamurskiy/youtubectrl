@@ -60,17 +60,21 @@ export function useMariaProximity() {
     }
     tick()
     const ival = setInterval(tick, 60000)
-    // Re-run the tick on external state-change signals (Find My
-    // toggled, refreshed, stealth flipped) so the red wash reacts
-    // immediately instead of waiting for the next 60s poll.
+    // Re-run the tick on external state-change signals + whenever
+    // the app returns to the foreground. Without the visibility hook
+    // the red wash could stay un-applied for up to a minute after
+    // returning to the app — even though the server has fresh data.
     const onState = () => tick()
+    const onVisible = () => { if (!document.hidden) tick() }
     window.addEventListener('findmy-refresh', onState)
     window.addEventListener('findmy-state-changed', onState)
+    document.addEventListener('visibilitychange', onVisible)
     return () => {
       alive = false
       clearInterval(ival)
       window.removeEventListener('findmy-refresh', onState)
       window.removeEventListener('findmy-state-changed', onState)
+      document.removeEventListener('visibilitychange', onVisible)
       document.body.classList.remove('maria-proximity')
     }
   }, [])
