@@ -152,7 +152,7 @@ const ICON_BTN_STYLE = { display: 'flex', alignItems: 'center', gap: 8 }
 //   Speaker (fallback)     — cone with sound wave (LG UltraFine, MacBook)
 // Name matching is substring, case-insensitive. Matching is intentionally
 // liberal so unknown earbuds still pick the right family.
-function AudioOutputIcon({ name }) {
+export function AudioOutputIcon({ name }) {
   const n = (name || '').toLowerCase()
   const isEarbuds = /airpod|earbud|buds|pods/.test(n)
   const isOverEar = /blackshark|beats|headphone|wh-|qc\d|razer|logitech|ath-|steelseries|hyperx|bose/.test(n)
@@ -755,6 +755,24 @@ export default function SecretMenu() {
                 AirPlay...
               </button>
             )}
+            <button
+              className="secret-menu-item"
+              style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }}
+              onClick={() => {
+                hapticThump()
+                fetch('/api/focus-cmux', { method: 'POST' })
+                  .then(() => addToast('Focus cmux'))
+                  .catch(() => addToast('Focus failed'))
+                toggleSecretMenu()
+              }}
+            >
+              <Ico>
+                <rect x="2" y="3" width="20" height="18" rx="2" />
+                <polyline points="6 9 10 13 6 17" />
+                <line x1="14" y1="17" x2="18" y2="17" />
+              </Ico>
+              Focus cmux
+            </button>
           </>
         )}
 

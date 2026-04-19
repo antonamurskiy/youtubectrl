@@ -6,6 +6,70 @@ import { useSyncStore } from '../stores/sync'
 import { useUIStore } from '../stores/ui'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump, selection as hapticSelection, selectionStart as hapticSelectionStart, selectionEnd as hapticSelectionEnd } from '../haptics'
+import { AudioOutputIcon } from './SecretMenu'
+
+// Replaces the old cmux focus button in the now-playing bar. Shows the
+// current audio output's icon; tap opens a compact picker popover.
+function AudioOutputButton() {
+  const [outputs, setOutputs] = useState([])
+  const [current, setCurrent] = useState('')
+  const [open, setOpen] = useState(false)
+  const addToast = useUIStore(s => s.addToast)
+  useEffect(() => {
+    fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+      setOutputs(d.outputs || [])
+      setCurrent(d.current || '')
+    }).catch(() => {})
+  }, [open])
+  const pick = (name) => {
+    hapticTick()
+    fetch('/api/audio-output', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
+      .then(() => { setCurrent(name); addToast(`→ ${name}`) })
+      .catch(() => addToast('Switch failed'))
+    setOpen(false)
+  }
+  return (
+    <>
+      <button
+        className="np-skip-btn"
+        style={{ color: 'var(--text-dim)', opacity: 0.8 }}
+        aria-label={`Audio output: ${current || 'unknown'}`}
+        onClick={(e) => { e.stopPropagation(); hapticTick(); setOpen(v => !v) }}
+      >
+        <AudioOutputIcon name={current} />
+      </button>
+      {open && createPortal(
+        <>
+          <div style={{ position: 'fixed', inset: 0, zIndex: 700 }} onClick={() => setOpen(false)} />
+          <div style={{
+            position: 'fixed', right: 12, zIndex: 701,
+            bottom: `calc(var(--np-height, 100px) + var(--safe-bottom) + 8px)`,
+            background: '#151515', border: '1px solid var(--border)',
+            minWidth: 220, maxWidth: 320,
+            userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
+          }}>
+            {outputs.length === 0 && (
+              <div className="secret-menu-item" style={{ color: 'var(--text-dim)' }}>No outputs</div>
+            )}
+            {outputs.map(name => (
+              <button
+                key={name}
+                className="secret-menu-item"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, color: name === current ? 'var(--accent)' : 'var(--text)' }}
+                onClick={() => pick(name)}
+              >
+                <AudioOutputIcon name={name} />
+                <span style={{ flex: 1 }}>{name}</span>
+                {name === current && <span>●</span>}
+              </button>
+            ))}
+          </div>
+        </>,
+        document.body
+      )}
+    </>
+  )
+}
 
 function formatTime(s) {
   if (!s || s < 0) return '0:00'
@@ -514,15 +578,8 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             : ''
           }
         </span>
-        <button
-          className="np-skip-btn"
-          style={{ color: frontApp === 'cmux' ? 'var(--green)' : 'var(--text-dim)', opacity: 0.8 }}
-          onClick={() => { hapticThump(); fetch('/api/focus-cmux', { method: 'POST' }).then(() => { setTimeout(refreshStatus, 500) }).catch(() => {}) }}
-        >
-          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
-            <rect x="2" y="3" width="20" height="18" rx="2" /><polyline points="6 9 10 13 6 17" /><line x1="14" y1="17" x2="18" y2="17" />
-          </svg>
-        </button>
+        <AudioOutputButton />
+
         <span className="np-time">{pb.isLive ? '' : formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>
       </div>
