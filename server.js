@@ -4317,19 +4317,22 @@ function parseAgeFragment(s) {
 // flashes a full-size window across the monitor.
 async function parkFindMyStealth(wid) {
   if (!wid) return;
+  // Hide FIRST so the user doesn't see the intermediate aerospace
+  // mode changes + resize + reposition. All those ops still apply to
+  // a hidden process via System Events; once visibility flips back
+  // on (e.g. via refresh activate), the window reappears at the
+  // already-parked corner location.
+  await execFileP("osascript", ["-e",
+    'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
-  // Full laptop-sized window (1470×923) so the sidebar + map render
-  // at normal dimensions. Pushed past the LG's bottom-right corner
-  // so macOS clamps to a tiny sliver visible. Then System Events
-  // hides the process entirely — sliver disappears. screencapture -l
-  // still reads the window's AppKit framebuffer (populated by the
-  // positioning, not by visibility), so OCR gets the full sidebar.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {5000, 3000}']).catch(() => {});
+  // Belt-and-suspenders re-hide in case any of the aerospace calls
+  // above transiently forced visibility.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
 }
