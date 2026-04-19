@@ -373,10 +373,21 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
               ref={(el) => {
                 previewRef.current = el
                 if (!el) return
-                if (previewActive) el.play().catch(() => {})
-                else { try { el.pause() } catch {} }
+                if (previewActive) {
+                  // Re-attach src if we released it earlier (inactive path).
+                  if (!el.src) { el.src = previewUrl; el.load() }
+                  el.play().catch(() => {})
+                } else {
+                  // Release src + decoder slot while inactive. iOS caps
+                  // concurrent <video>s at 4–16 per page; a feed of
+                  // cards in the prefetch band was eating those slots
+                  // and silently preventing later videos from playing.
+                  // Re-attach happens instantly when scrolled back
+                  // (preload kicks in again).
+                  try { el.pause() } catch {}
+                  if (el.src) { el.removeAttribute('src'); try { el.load() } catch {} }
+                }
               }}
-              src={previewUrl}
               muted
               loop
               playsInline
