@@ -18,10 +18,16 @@ function nativePosNow() {
 export function useDriftSync(videoRef, getPlayingDate, send) {
   useEffect(() => {
     if (!isNativeIOS) return
-    // Poll AVPlayer position every 250ms so nativePosNow has fresh base
+    // Poll AVPlayer position every 250ms so nativePosNow has fresh base.
+    // Gate on phoneOpen — no reason to pound the Capacitor bridge 4x/sec
+    // while the user is just browsing the feed. When phoneOpen flips true
+    // the poll resumes; when false it sleeps at 2s cadence as a cheap
+    // cancellation check.
     let alive = true
     const tick = async () => {
       if (!alive) return
+      const phoneOpen = useSyncStore.getState().phoneOpen
+      if (!phoneOpen) { setTimeout(tick, 2000); return }
       try {
         const s = await NativePlayer.getState()
         if (s && typeof s.position === 'number') {

@@ -698,14 +698,22 @@ app.get("/api/rumble", async (req, res) => {
   }
 });
 
-// Video preview URL — low quality stream for thumbnail preview
+// Video preview URL — low quality stream for thumbnail preview.
+// YouTube's signed googlevideo URLs expire after ~6h; keep a 3h TTL
+// so we don't serve dead links that would make <video> hang mid-load
+// and (on iOS) hold a decoder slot forever.
 const previewCache = new Map();
+const PREVIEW_TTL_MS = 3 * 3600 * 1000;
 app.get("/api/preview-url", async (req, res) => {
   const id = req.query.id;
   const isLive = req.query.live === "1";
   if (!id) return res.json({ url: null });
   const cacheKey = isLive ? `live:${id}` : id;
-  if (previewCache.has(cacheKey)) return res.json({ url: previewCache.get(cacheKey), isLive });
+  const cached = previewCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < PREVIEW_TTL_MS) {
+    return res.json({ url: cached.url, isLive });
+  }
+  if (cached) previewCache.delete(cacheKey);
   try {
     // VOD: progressive 360p or small DASH video-only. Live: low-bitrate
     // HLS variants (301/300=1080p60, down to 93=360p). iOS Safari plays
@@ -716,7 +724,7 @@ app.get("/api/preview-url", async (req, res) => {
       "--get-url", `https://www.youtube.com/watch?v=${id}`,
     ], { timeout: 10000 });
     const url = stdout.trim();
-    if (url) previewCache.set(cacheKey, url);
+    if (url) previewCache.set(cacheKey, { url, at: Date.now() });
     // Cap cache at 50 entries
     if (previewCache.size > 50) {
       const first = previewCache.keys().next().value;
@@ -4003,20 +4011,30 @@ async function findmyWindowId() {
     return Number.isFinite(id) && id > 0 ? id : null;
   } catch { return null; }
 }
+// Concurrent callers share one in-flight OCR run. Without this, two
+// overlapping requests both screenshot to the same /tmp path and
+// corrupt each other's OCR results mid-write.
+let _findmyInFlight = null;
 app.get("/api/findmy-friend", async (req, res) => {
   const name = (req.query.name || "").toLowerCase();
   const force = req.query.force === "1";
   if (!name) return res.status(400).json({ error: "Missing name" });
-  // Serve cached result if fresh (<20s)
   if (!force && _lastFindmyFriend && _lastFindmyFriend.name === name && (Date.now() - _lastFindmyFriend.at) < 20000) {
     return res.json(_lastFindmyFriend.result);
   }
-  try {
+  if (_findmyInFlight) {
+    try { return res.json(await _findmyInFlight); }
+    catch { return res.json({ ok: false, reason: "error" }); }
+  }
+  _findmyInFlight = (async () => {
+    try {
     // 1. Confirm Find My is running; bail if not
     const { stdout: existsOut } = await execFileP("osascript", ["-e",
       'tell application "System Events" to exists process "FindMy"']);
     if (existsOut.trim() !== "true") {
-      return res.json({ ok: false, reason: "not-running", hint: "Open Find My first" });
+      const r = { ok: false, reason: "not-running", hint: "Open Find My first" };
+      if (!res.headersSent) res.json(r);
+      return r;
     }
     // 2. Screenshot Find My. In normal mode we grab laptop display 2
     // (where FM lives). In stealth mode FM is parked on a non-visible
@@ -4106,7 +4124,8 @@ app.get("/api/findmy-friend", async (req, res) => {
     if (pass.notFound) {
       const result = { ok: false, reason: "not-found", hint: `No row containing "${name}"; check that Find My's People tab is visible` };
       _lastFindmyFriend = { name, result, at: Date.now() };
-      return res.json(result);
+      if (!res.headersSent) res.json(result);
+      return result;
     }
     // Retry if distance missing — Find My's UI frequently blanks
     // the distance column during its spinner state. A fresh
@@ -4156,9 +4175,18 @@ app.get("/api/findmy-friend", async (req, res) => {
     }
     _lastFindmyFriend = { name, result, at: Date.now() };
     res.json(result);
-  } catch (err) {
-    res.json({ ok: false, reason: "error", error: err.message });
-  }
+    return result;
+    } catch (err) {
+      const errResult = { ok: false, reason: "error", error: err.message };
+      if (!res.headersSent) res.json(errResult);
+      return errResult;
+    } finally {
+      _findmyInFlight = null;
+    }
+  })();
+  // Wait for our own in-flight promise only so the error path above
+  // has a chance to respond — outer function still returns quickly.
+  try { await _findmyInFlight; } catch {}
 });
 
 // Read `displayplacer list` and return the origin {x, y} of the
@@ -4576,14 +4604,22 @@ let _tmuxSwitchTimer = null;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
 let tmuxWindows = [];
 
-function refreshTmuxWindows() {
+let _tmuxRefreshInFlight = false;
+async function refreshTmuxWindows() {
+  // Async + in-flight guard. Was `execSync` called inside the 1Hz WS
+  // broadcast — with tmux's occasional 100-1000ms hitches that blocked
+  // the Node event loop, killed all WS heartbeats, and caused the
+  // reconnect storm visible in server logs.
+  if (_tmuxRefreshInFlight) return;
+  _tmuxRefreshInFlight = true;
   try {
-    const out = execSync('tmux list-windows -t 0 -F "#{window_index}:#{window_name}:#{window_active}"', { encoding: "utf8", timeout: 2000 });
-    tmuxWindows = out.trim().split("\n").map(line => {
+    const { stdout } = await execFileP("tmux", ["list-windows", "-t", "0", "-F", "#{window_index}:#{window_name}:#{window_active}"], { timeout: 2000 });
+    tmuxWindows = stdout.trim().split("\n").map(line => {
       const [index, name, active] = line.split(":");
       return { index: +index, name, active: active === "1" };
     });
   } catch { tmuxWindows = []; }
+  finally { _tmuxRefreshInFlight = false; }
   const active = tmuxWindows.find(w => w.active);
   if (active && String(active.index) !== _lastActiveWindow) {
     _lastActiveWindow = String(active.index);
@@ -4592,6 +4628,8 @@ function refreshTmuxWindows() {
     claudeState = 'idle';
   }
 }
+// Refresh on its own 3s timer, not inside the broadcast loop.
+setInterval(() => { refreshTmuxWindows(); }, 3000);
 
 app.post("/api/tmux-send", (req, res) => {
   const { keys } = req.body;
@@ -4802,9 +4840,11 @@ wss.on("connection", (ws) => {
       } else if (data.type === "phone-state") {
         _phoneSyncDebug = { ...data, ts: Date.now() };
         if (data.debug) console.log("  Phone DVR:", data.debug);
-        if (data.mpvPos !== undefined) console.log(`  Sync: drift=${data.drift} mpv=${data.mpvPos} ph=${data.phonePos} el=${data.elapsed}`);
-        if (data.mpvPdt !== undefined || data.phonePdt !== undefined) {
-          console.log(`[drift] phone drift=${data.drift}s mpvPdt=${data.mpvPdt ? new Date(data.mpvPdt).toISOString().substring(11, 23) : '?'} phonePdt=${data.phonePdt ? new Date(data.phonePdt).toISOString().substring(11, 23) : '?'}`);
+        if (process.env.DEBUG_DRIFT) {
+          if (data.mpvPos !== undefined) console.log(`  Sync: drift=${data.drift} mpv=${data.mpvPos} ph=${data.phonePos} el=${data.elapsed}`);
+          if (data.mpvPdt !== undefined || data.phonePdt !== undefined) {
+            console.log(`[drift] phone drift=${data.drift}s mpvPdt=${data.mpvPdt ? new Date(data.mpvPdt).toISOString().substring(11, 23) : '?'} phonePdt=${data.phonePdt ? new Date(data.phonePdt).toISOString().substring(11, 23) : '?'}`);
+          }
         }
       } else if (data.type === "mpv-speed" && typeof data.speed === "number") {
         mpvCommand(["set_property", "speed", data.speed]).catch(() => {});
@@ -5000,10 +5040,14 @@ function startWsSync() {
               const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
               scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
             }
-            // Debug — remove after sync is stable.
-            const mode = onSubProxy ? 'sub' : (onLiveProxy ? 'live' : 'other');
-            const userPdtStr = userPdt ? new Date(userPdt).toISOString().substring(11, 23) : 'null';
-            console.log(`[drift] ${mode} pos=${timePos.toFixed(2)} dur=${reportedDur.toFixed(1)} userPdt=${userPdtStr}`);
+            // Drift debug log — opt-in via DEBUG_DRIFT=1. At 1Hz this
+            // was writing to stdout every tick forever, bloating logs
+            // and adding small but real event-loop jitter.
+            if (process.env.DEBUG_DRIFT) {
+              const mode = onSubProxy ? 'sub' : (onLiveProxy ? 'live' : 'other');
+              const userPdtStr = userPdt ? new Date(userPdt).toISOString().substring(11, 23) : 'null';
+              console.log(`[drift] ${mode} pos=${timePos.toFixed(2)} dur=${reportedDur.toFixed(1)} userPdt=${userPdtStr}`);
+            }
           }
 
           // ── Phone PDT sync ───────────────────────────────────────
@@ -5053,7 +5097,7 @@ function startWsSync() {
       state.claudeState = claudeState;
       if (claudeOptions.length) state.claudeOptions = claudeOptions;
       if (claudeQuestion) state.claudeQuestion = claudeQuestion;
-      refreshTmuxWindows();
+      // tmuxWindows updated on its own 3s timer — read from cache here.
       if (tmuxWindows.length > 1) state.tmuxWindows = tmuxWindows;
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });

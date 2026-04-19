@@ -31,6 +31,10 @@ export function useMariaProximity() {
     let ival
     const tick = async () => {
       if (!alive) return
+      // Skip while tab isn't visible — the OCR pipeline is expensive
+      // (screenshot + Swift Vision + up to 2 retries). Polling when
+      // the app's backgrounded is pure waste.
+      if (typeof document !== 'undefined' && document.hidden) return
       try {
         const status = await fetch('/api/findmy-status').then(r => r.json())
         if (!status?.running) {
