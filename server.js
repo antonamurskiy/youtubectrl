@@ -4320,17 +4320,18 @@ async function parkFindMyStealth(wid) {
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
-  // Full laptop-sized window so the sidebar renders Maria's row at
-  // normal dimensions. The window itself is physically 1470×923, but
-  // we push it way past the LG's bottom-right corner so macOS clamps
-  // to a ~40×120 sliver visible on screen. The rest extends into
-  // void (laptop is to the left of LG, nothing off to the right).
-  // screencapture -l still grabs the full off-screen AppKit buffer,
-  // so OCR sees the complete sidebar — that's the trick.
+  // Full laptop-sized window (1470×923) so the sidebar + map render
+  // at normal dimensions. Pushed past the LG's bottom-right corner
+  // so macOS clamps to a tiny sliver visible. Then System Events
+  // hides the process entirely — sliver disappears. screencapture -l
+  // still reads the window's AppKit framebuffer (populated by the
+  // positioning, not by visibility), so OCR gets the full sidebar.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {5000, 3000}']).catch(() => {});
+  await execFileP("osascript", ["-e",
+    'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
 }
 
 async function parkFindMyVisible(wid) {
