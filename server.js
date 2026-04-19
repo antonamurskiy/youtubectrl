@@ -4317,32 +4317,19 @@ function parseAgeFragment(s) {
 // flashes a full-size window across the monitor.
 async function parkFindMyStealth(wid) {
   if (!wid) return;
-  // Hide first — all subsequent ops apply to the hidden window.
-  await execFileP("osascript", ["-e",
-    'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-  // Set floating BEFORE moving workspaces so aerospace doesn't try
-  // to fit it into the destination workspace's tiling grid (which
-  // would force-show the window).
+  // Park the window floating on workspace 1 (LG) at the bottom-right
+  // corner, size 1470×923 so OCR gets the full sidebar. The position
+  // (2557, 1322) leaves only a 3×118 sliver actually on-screen; the
+  // rest extends into void to the right of LG. No System Events
+  // hide — the sliver stays visible. User accepts it in exchange
+  // for a reliable corner footprint + no refresh re-park dance.
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
-  // Move to workspace 1 (LG main — typically user's active
-  // workspace) so that when refresh activates the window later, it
-  // reappears on the workspace the user's already looking at (no
-  // workspace switch, no monitor-level flash). Only the corner
-  // sliver becomes briefly visible — an acceptable flash.
   await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
-  // LG bounds (0,0)-(2560,1440). Pushing x as close to 2560 as
-  // possible shrinks the visible sliver to ~3px wide. macOS hard-
-  // clamps Y at 1322 regardless of what we ask, so vertical sliver
-  // height is fixed at ~118px. 3×118 px visible in the bottom-right
-  // corner is the smallest sliver macOS allows without breaking
-  // the framebuffer.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2557, 1322}']).catch(() => {});
-  await execFileP("osascript", ["-e",
-    'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
 }
 
 async function parkFindMyVisible(wid) {
@@ -4381,21 +4368,17 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // No activate in stealth — every attempt at a corner-only
-      // flash either made the window un-re-park (size stuck at
-      // 500×310, OCR breaks) or produced a full-screen flash on
-      // re-fit. Instead, re-park the window (re-hide + re-resize
-      // + re-position) which nudges FM to refresh its internal
-      // state without becoming visible. 'Last ping: Paused' may
-      // linger a bit longer between refreshes — accepted trade.
-      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
-      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-      const wid = line ? line.split("|")[0].trim() : "";
-      if (wid) await parkFindMyStealth(wid);
-    } else {
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
+      // Activate re-fits the corner window to fit fully on LG;
+      // re-park 300ms later returns it to the corner sliver.
+      setTimeout(async () => {
+        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+        const wid = line ? line.split("|")[0].trim() : "";
+        if (wid) parkFindMyStealth(wid);
+      }, 300);
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
