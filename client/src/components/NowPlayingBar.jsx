@@ -17,22 +17,52 @@ function AudioOutputButton() {
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
   const addToast = useUIStore(s => s.addToast)
+  const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
   // Fetch current output on mount so the icon matches reality from
   // first paint (not just after the user opens the popover). Also
   // refresh when the popover is opened in case it changed while
   // closed (e.g. user switched via System Settings or a physical
-  // headphone connect).
+  // headphone connect). Also fetch BT devices on mount so the battery
+  // readout next to the icon is populated from first paint.
   useEffect(() => {
     let alive = true
-    const load = () => fetch('/api/audio-outputs').then(r => r.json()).then(d => {
-      if (!alive) return
-      setOutputs(d.outputs || [])
-      setCurrent(d.current || '')
-    }).catch(() => {})
+    const load = () => {
+      fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+        if (!alive) return
+        setOutputs(d.outputs || [])
+        setCurrent(d.current || '')
+      }).catch(() => {})
+      loadBt()
+    }
     load()
     return () => { alive = false }
   }, [open])
-  const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
+  // Refresh BT battery periodically so the readout stays current.
+  useEffect(() => {
+    const iv = setInterval(loadBt, 60000)
+    return () => clearInterval(iv)
+  }, [])
+  // Best-effort match: current output name and BT device name rarely
+  // match exactly (macOS appends/strips things like "Stereo", "Hands-Free").
+  // Compare core tokens (alphanumerics) case-insensitive.
+  const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+  const matchedBt = btDevices.find(d => d.connected && norm(d.name) && norm(current).includes(norm(d.name)))
+    || btDevices.find(d => d.connected && norm(d.name) && norm(d.name).includes(norm(current).slice(0, 6)))
+  // Render the battery token. AirPods expose left/right/case; others
+  // expose a single battery %. Red when any cell is ≤20%.
+  let batText = ''
+  let batColor = 'var(--text-dim)'
+  if (matchedBt) {
+    const hasSplit = matchedBt.batteryLeft != null && matchedBt.batteryRight != null
+    if (hasSplit) {
+      batText = `${matchedBt.batteryLeft} / ${matchedBt.batteryRight}`
+      if (matchedBt.batteryCase != null) batText += ` · ${matchedBt.batteryCase}`
+    } else if (matchedBt.battery != null) {
+      batText = `${matchedBt.battery}%`
+    }
+    const lowest = hasSplit ? Math.min(matchedBt.batteryLeft, matchedBt.batteryRight) : matchedBt.battery
+    if (lowest != null && lowest <= 20) batColor = 'var(--red)'
+  }
   const pick = (name) => {
     hapticTick()
     fetch('/api/audio-output', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name }) })
@@ -51,6 +81,11 @@ function AudioOutputButton() {
   }
   return (
     <>
+      {batText && (
+        <span style={{ fontSize: 'var(--font-sm)', color: batColor, marginRight: -4, whiteSpace: 'nowrap' }}>
+          {batText}
+        </span>
+      )}
       <button
         className="np-skip-btn"
         style={{ color: 'var(--text-dim)', opacity: 0.8 }}
