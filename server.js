@@ -4382,28 +4382,17 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
     if (findmyStealth) {
-      // Shrink BEFORE activate so the 'visible' window that macOS
-      // forces on-screen is only 500×310, not a full 1470×923.
-      // Activate triggers FM's location re-poll; 350ms later hide
-      // and resize back to the OCR-friendly laptop size. set-size
-      // on a hidden window DOES work (verified), so the grow-back
-      // is performed entirely while hidden.
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to tell process "FindMy" to set size of window 1 to {500, 310}']).catch(() => {});
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2060, 1130}']).catch(() => {});
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
-      setTimeout(async () => {
-        // Hide FIRST so the subsequent resize + reposition land
-        // on an invisible window — no extra visible transition.
-        await execFileP("osascript", ["-e",
-          'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-        await execFileP("osascript", ["-e",
-          'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
-        await execFileP("osascript", ["-e",
-          'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2557, 1322}']).catch(() => {});
-      }, 350);
+      // No activate in stealth — every attempt at a corner-only
+      // flash either made the window un-re-park (size stuck at
+      // 500×310, OCR breaks) or produced a full-screen flash on
+      // re-fit. Instead, re-park the window (re-hide + re-resize
+      // + re-position) which nudges FM to refresh its internal
+      // state without becoming visible. 'Last ping: Paused' may
+      // linger a bit longer between refreshes — accepted trade.
+      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+      const wid = line ? line.split("|")[0].trim() : "";
+      if (wid) await parkFindMyStealth(wid);
     } else {
       await execFileP("osascript", ["-e",
         'tell application "FindMy" to activate']).catch(() => {});
