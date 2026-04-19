@@ -4382,14 +4382,12 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
     if (findmyStealth) {
-      // Shrink to the 500×310 min AND position fully inside the LG
-      // corner (2060, 1130)-(2560, 1440) so activate doesn't trigger
-      // macOS's off-screen re-fit. User sees a 500×310 window at the
-      // corner for ~350ms. Then grow + reposition + hide for OCR —
-      // but we must do the resize while the window is still VISIBLE,
-      // because System Events' set-size silently fails on hidden
-      // windows. So: small-visible flash → grow-visible (clamp keeps
-      // it corner-ish) → hide.
+      // Shrink BEFORE activate so the 'visible' window that macOS
+      // forces on-screen is only 500×310, not a full 1470×923.
+      // Activate triggers FM's location re-poll; 350ms later hide
+      // and resize back to the OCR-friendly laptop size. set-size
+      // on a hidden window DOES work (verified), so the grow-back
+      // is performed entirely while hidden.
       await execFileP("osascript", ["-e",
         'tell application "System Events" to tell process "FindMy" to set size of window 1 to {500, 310}']).catch(() => {});
       await execFileP("osascript", ["-e",
@@ -4397,15 +4395,14 @@ app.post("/api/refresh-findmy", async (_req, res) => {
       await execFileP("osascript", ["-e",
         'tell application "FindMy" to activate']).catch(() => {});
       setTimeout(async () => {
-        // Grow while still visible so the resize sticks. macOS
-        // clamp will move the growing window to fit — acceptable
-        // for the brief moment before we hide.
+        // Hide FIRST so the subsequent resize + reposition land
+        // on an invisible window — no extra visible transition.
+        await execFileP("osascript", ["-e",
+          'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
         await execFileP("osascript", ["-e",
           'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
         await execFileP("osascript", ["-e",
           'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2557, 1322}']).catch(() => {});
-        await execFileP("osascript", ["-e",
-          'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
       }, 350);
     } else {
       await execFileP("osascript", ["-e",
