@@ -4333,8 +4333,14 @@ async function parkFindMyStealth(wid) {
   await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
+  // LG bounds (0,0)-(2560,1440). Pushing x as close to 2560 as
+  // possible shrinks the visible sliver to ~3px wide. macOS hard-
+  // clamps Y at 1322 regardless of what we ask, so vertical sliver
+  // height is fixed at ~118px. 3×118 px visible in the bottom-right
+  // corner is the smallest sliver macOS allows without breaking
+  // the framebuffer.
   await execFileP("osascript", ["-e",
-    'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2520, 1322}']).catch(() => {});
+    'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2557, 1322}']).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
 }
@@ -4375,30 +4381,18 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // macOS re-fits the window on-screen when activate un-hides
-      // it, which was dragging the full 1470×923 window back onto
-      // the LG and showing the full FindMy UI. Shrink to the 500×310
-      // min FIRST so the re-fit produces a 500×310 window — still
-      // visible but minimal. Re-park at laptop size 300ms later.
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to tell process "FindMy" to set size of window 1 to {500, 310}']).catch(() => {});
-      // Position in bottom-right corner of LG so the 500×310 window
-      // fits entirely within (2060, 1130)-(2560, 1440) — no re-fit
-      // needed on unhide.
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2060, 1130}']).catch(() => {});
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
+      // Activate re-fits the window onto LG (macOS keeps newly-
+      // visible windows fully on-screen). Re-park 300ms later to
+      // shrink back to the corner sliver.
       setTimeout(async () => {
         const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
         const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
         const wid = line ? line.split("|")[0].trim() : "";
         if (wid) parkFindMyStealth(wid);
       }, 300);
-    } else {
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
