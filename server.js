@@ -4317,27 +4317,25 @@ function parseAgeFragment(s) {
 // flashes a full-size window across the monitor.
 async function parkFindMyStealth(wid) {
   if (!wid) return;
-  // Hide FIRST so the user doesn't see the intermediate aerospace
-  // mode changes + resize + reposition. All those ops still apply to
-  // a hidden process via System Events; once visibility flips back
-  // on (e.g. via refresh activate), the window reappears at the
-  // already-parked corner location.
+  // Hide first. System Events operations still apply to hidden
+  // processes, so we can resize + position without any visible flash.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+  // Set floating layout WITHOUT moving workspaces — aerospace
+  // move-node-to-workspace on a currently-focused workspace was
+  // briefly un-hiding the window. Floating on its current workspace
+  // (the aerospace rule's workspace 7) is sufficient; position coords
+  // are absolute screen space so the LG corner position works
+  // regardless of which workspace the window lives on.
   await execFileP("aerospace", ["fullscreen", "off", "--window-id", wid]).catch(() => {});
-  await execFileP("aerospace", ["move-node-to-workspace", "1", "--window-id", wid]).catch(() => {});
   await execFileP("aerospace", ["layout", "floating", "--window-id", wid]).catch(() => {});
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set size of window 1 to {1470, 923}']).catch(() => {});
-  // (2520, 1322) is what macOS clamps (5000, 3000) to on this setup
-  // — the max-offset that still keeps a ~40×120 sliver on the LG.
-  // Set it directly because a hidden window isn't subject to the
-  // clamp, so overshooting lands the window fully off-screen and
-  // AppKit stops maintaining the framebuffer (breaking OCR).
+  // Directly use the clamp destination so the hidden window doesn't
+  // over-shoot and lose its framebuffer (AppKit stops rendering
+  // fully-off-screen hidden windows, breaking screencapture -l).
   await execFileP("osascript", ["-e",
     'tell application "System Events" to tell process "FindMy" to set position of window 1 to {2520, 1322}']).catch(() => {});
-  // Belt-and-suspenders re-hide in case any of the aerospace calls
-  // above transiently forced visibility.
   await execFileP("osascript", ["-e",
     'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
 }
