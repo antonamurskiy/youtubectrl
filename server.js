@@ -4060,83 +4060,82 @@ app.get("/api/findmy-friend", async (req, res) => {
         await snapFindMy();
       }
     } catch {}
-    // 3. OCR
-    const { stdout: ocr } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
-    // 4. Parse OCR output — lines are "x,y,w,h\ttext"
-    const rows = ocr.split("\n").filter(Boolean).map(l => {
-      const [bbox, ...rest] = l.split("\t");
-      const [x, y, w, h] = bbox.split(",").map(Number);
-      return { x, y, w, h, text: rest.join("\t") };
-    });
-    // 5. Find the row whose text contains the requested name (case-insensitive).
-    // The sidebar header (first match by y) gives us Address + freshness.
-    // A second match on the MAP (x further right) gives us her pin — we
-    // use that to compute nearest cross street from surrounding street
-    // labels.
-    const matches = rows.filter(r => r.text.toLowerCase().includes(name)).sort((a, b) => a.y - b.y);
-    if (matches.length === 0) {
+    // 3. OCR + parse. Wrapped so we can retry-with-fresh-screenshot
+    //    if the first pass doesn't find a distance (Find My briefly
+    //    blanks it during its spinner state).
+    const DIST_RE = /^(\d+(?:\.\d+)?)\s*(mi|km|ft|m|yd)\b\.?$/i;
+    async function ocrPass() {
+      const { stdout: ocr } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
+      const rows = ocr.split("\n").filter(Boolean).map(l => {
+        const [bbox, ...rest] = l.split("\t");
+        const [x, y, w, h] = bbox.split(",").map(Number);
+        return { x, y, w, h, text: rest.join("\t") };
+      });
+      const matches = rows.filter(r => r.text.toLowerCase().includes(name)).sort((a, b) => a.y - b.y);
+      if (matches.length === 0) return { notFound: true };
+      const header = matches[0];
+      const pinLabel = matches.find(m => m.x > 500);
+      const crossStreet = pinLabel ? nearestCrossStreet(rows, {
+        cx: pinLabel.x + pinLabel.w / 2,
+        cy: pinLabel.y + pinLabel.h / 2,
+      }) : null;
+      const near = rows
+        .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
+        .filter(r => DIST_RE.test(r.text.trim()));
+      const distRow = near.sort((a, b) => Math.abs(a.y - header.y) - Math.abs(b.y - header.y))[0];
+      const distance = distRow ? distRow.text.trim().replace(/\.$/, "") : null;
+      const detail = rows.find(r =>
+        r.y > header.y &&
+        r.y < header.y + 80 &&
+        Math.abs(r.x - header.x) < 100 &&
+        /[•·]/.test(r.text),
+      );
+      let address = "", timeFragment = "", ageMs = null;
+      if (detail) {
+        const parts = detail.text.split(/\s*[•·]\s*/);
+        address = parts[0] || "";
+        timeFragment = parts.slice(1).join(" · ");
+        ageMs = parseAgeFragment(timeFragment);
+      } else {
+        const below = rows.filter(r => r.y > header.y && r.y < header.y + 80).sort((a, b) => a.y - b.y);
+        if (below[0]) address = below[0].text;
+      }
+      return { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance };
+    }
+    let pass = await ocrPass();
+    if (pass.notFound) {
       const result = { ok: false, reason: "not-found", hint: `No row containing "${name}"; check that Find My's People tab is visible` };
       _lastFindmyFriend = { name, result, at: Date.now() };
       return res.json(result);
     }
-    const header = matches[0];
-    // Sidebar column is narrow (usually x < 500 on laptop). Anything
-    // farther right is the pin label on the map.
-    const pinLabel = matches.find(m => m.x > 500);
-    const crossStreet = pinLabel ? nearestCrossStreet(rows, {
-      cx: pinLabel.x + pinLabel.w / 2,
-      cy: pinLabel.y + pinLabel.h / 2,
-    }) : null;
-    // Distance — Find My renders e.g. "6 mi" roughly on the header
-    // row, to the right. OCR is flaky here: sometimes the row is a
-    // few px above/below, sometimes the unit has a trailing period
-    // ("6 mi." / "1.2 km."), sometimes it merges with adjacent
-    // punctuation. Loosen the y-tolerance and regex, and consider
-    // the full sidebar column (not just the header's right neighbor
-    // — the token can drop a line while panned).
-    // Distance sits on the sidebar row, RIGHT of the header label —
-    // Find My right-aligns it to the sidebar's right edge (~x 520
-    // when the sidebar is open at default width on this setup).
-    // Earlier fix used x < 500 which excluded "5 mi" at x=521.
-    // Accept anything in the left ~700px of the captured screen.
-    const DIST_RE = /^(\d+(?:\.\d+)?)\s*(mi|km|ft|m|yd)\b\.?$/i;
-    const near = rows
-      .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
-      .filter(r => DIST_RE.test(r.text.trim()));
-    const distRow = near.sort((a, b) => Math.abs(a.y - header.y) - Math.abs(b.y - header.y))[0];
-    const distance = distRow ? distRow.text.trim().replace(/\.$/, "") : null;
-    // 6. Look for a detail row just below the header (within ~60px vertically,
-    // roughly same x column). Expect "Address · TimeFragment" format
-    // using "•" or "·" as separator.
-    const detail = rows.find(r =>
-      r.y > header.y &&
-      r.y < header.y + 80 &&
-      Math.abs(r.x - header.x) < 100 &&
-      /[•·]/.test(r.text),
-    );
-    let address = "", timeFragment = "", ageMs = null;
-    if (detail) {
-      const parts = detail.text.split(/\s*[•·]\s*/);
-      address = parts[0] || "";
-      timeFragment = parts.slice(1).join(" · ");
-      ageMs = parseAgeFragment(timeFragment);
-    } else {
-      // Fallback — maybe the next row below the header has just an
-      // address and the time is on a separate row.
-      const below = rows.filter(r => r.y > header.y && r.y < header.y + 80).sort((a, b) => a.y - b.y);
-      if (below[0]) address = below[0].text;
+    // Retry if distance missing — Find My's UI frequently blanks
+    // the distance column during its spinner state. A fresh
+    // screenshot ~600ms later usually catches the rendered value.
+    // Cap at 2 additional attempts (1.2s total delay) so /api/findmy-friend
+    // stays responsive even in the pathological case.
+    for (let attempt = 0; attempt < 2 && !pass.distance; attempt++) {
+      await new Promise(r => setTimeout(r, 600));
+      await snapFindMy();
+      const next = await ocrPass();
+      if (next.notFound) break;
+      // Prefer any non-null field from the newer pass.
+      pass = {
+        ...pass,
+        ...next,
+        distance: next.distance || pass.distance,
+        crossStreet: next.crossStreet || pass.crossStreet,
+        pinLabel: next.pinLabel || pass.pinLabel,
+      };
     }
+    const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance } = pass;
     const result = {
       ok: true,
       name: header.text,
       address,
       timeFragment,
       ageMs,
-      crossStreet, // "Spring St & Greene St" or null
-      distance, // "6 mi" | "800 ft" | null
-      // Serves an image crop of the map around the pin. Query-string
-      // cache buster matches ocrAt so the client can invalidate the
-      // browser cache when we re-OCR.
+      crossStreet,
+      distance,
       cropUrl: pinLabel ? `/api/findmy-crop.png?t=${Date.now()}` : null,
       ocrAt: Date.now(),
     };
