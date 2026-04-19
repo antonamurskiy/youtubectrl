@@ -462,14 +462,24 @@ export default function PhonePlayer({ send }) {
         return // don't interfere during first 5s
       }
       if (!pb.playing || pb.paused) {
-        if (!isNativeIOS && !video.paused) video.pause()
+        if (isNativeIOS) {
+          // AVPlayer drives playback on native (including PiP). Check
+          // its state and bring into agreement. Without this, pausing
+          // in the app UI left the PiP window playing.
+          NativePlayer.getState().then(s => {
+            if (s && !s.paused) NativePlayer.pause().catch(() => {})
+          }).catch(() => {})
+        } else if (video && !video.paused) {
+          video.pause()
+        }
         return
       }
-      // Resume phone if mpv is playing but phone is paused. On native iOS
-      // the HTML <video> is an empty placeholder (AVPlayer drives real
-      // playback), so skip the video.paused check — otherwise the loop
-      // returns here forever and sync never runs.
-      if (!isNativeIOS && video.paused) {
+      // Resume phone if mpv is playing but phone is paused.
+      if (isNativeIOS) {
+        NativePlayer.getState().then(s => {
+          if (s && s.paused) NativePlayer.play().catch(() => {})
+        }).catch(() => {})
+      } else if (!isNativeIOS && video.paused) {
         if (pb.isLive) {
           // For live: resume and let sync loop correct position on next tick
         } else {
