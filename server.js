@@ -4368,31 +4368,27 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
-    await execFileP("osascript", ["-e",
-      'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-    await new Promise(r => setTimeout(r, 300));
-    await execFileP("osascript", ["-e",
-      'tell application "FindMy" to activate']).catch(() => {});
-    // Re-enforce window placement + stealth visibility.
-    try {
-      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
-      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-      const wid = line ? line.split("|")[0].trim() : "";
-      if (wid) {
-        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-        if (!findmyStealth) {
+    // In stealth mode, DON'T activate — any activate triggers user's
+    // aerospace rules that pull Find My back onto the laptop workspace,
+    // producing a visible flash. Find My's own background polling
+    // usually refreshes locations within a minute anyway; the fresh
+    // OCR capture we trigger separately is sufficient for most cases.
+    if (!findmyStealth) {
+      await execFileP("osascript", ["-e",
+        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+      await new Promise(r => setTimeout(r, 300));
+      await execFileP("osascript", ["-e",
+        'tell application "FindMy" to activate']).catch(() => {});
+      try {
+        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+        const wid = line ? line.split("|")[0].trim() : "";
+        if (wid) {
+          await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
           await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
           await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
         }
-      }
-    } catch {}
-    // If stealth is on, the activate we just did made the window
-    // visible — wait a beat for the location to re-poll, then hide
-    // again so the user never sees it flash back on screen.
-    if (findmyStealth) {
-      await new Promise(r => setTimeout(r, 500));
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+      } catch {}
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4432,20 +4428,19 @@ app.post("/api/toggle-findmy", async (_req, res) => {
       return res.json({ ok: true, running: false });
     }
 
-    // Open: launch, focus, move to laptop workspace (= 8), fullscreen.
-    await execFileP("open", ["-a", "FindMy"]).catch(() => {});
-    // Give the app a moment to create its window before aerospace can move it.
+    // Launch Find My. `-g` means don't bring to front / don't activate
+    // in stealth — otherwise opening from the dock order would briefly
+    // make the window visible, and user's aerospace rules would pull
+    // it onto the laptop workspace, producing a flash.
+    const openArgs = findmyStealth ? ["-g", "-a", "FindMy"] : ["-a", "FindMy"];
+    await execFileP("open", openArgs).catch(() => {});
     await new Promise(r => setTimeout(r, 400));
-    await execFileP("osascript", ["-e",
-      'tell application "FindMy" to activate']).catch(() => {});
-    // Move the newly-focused window to workspace 8 (laptop monitor).
-    // `move-node-to-workspace` on the focused window preserves its
-    // layout mode (floating/tiled) and follows-window so it gets
-    // focused on the target workspace.
+    if (!findmyStealth) {
+      // Only activate in non-stealth mode — same flash-avoidance reason.
+      await execFileP("osascript", ["-e",
+        'tell application "FindMy" to activate']).catch(() => {});
+    }
     try {
-      // aerospace sometimes takes a moment to enumerate a newly-opened
-      // window; poll up to ~3s for it to appear. Also match both
-      // "Find My" (app name with space) and "FindMy" (binary) forms.
       let wid = "";
       for (let i = 0; i < 15; i++) {
         const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
@@ -4454,16 +4449,18 @@ app.post("/api/toggle-findmy", async (_req, res) => {
         await new Promise(r => setTimeout(r, 200));
       }
       if (wid) {
-        // Always place on workspace 8 (laptop) fullscreen. Stealth is
-        // applied separately via System Events visibility — the window
-        // stays on workspace 8 but invisible to the user.
-        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
-        await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
         if (findmyStealth) {
+          // In stealth, hide via System Events ASAP — before aerospace
+          // auto-assignment rules (if any) get a chance to drag it to
+          // a visible workspace. Skip the explicit workspace/focus
+          // calls that would defeat stealth.
           await execFileP("osascript", ["-e",
             'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
+        } else {
+          await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
+          await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+          await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+          await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
         }
       }
     } catch {}
