@@ -4315,21 +4315,28 @@ app.post("/api/findmy-stealth", async (req, res) => {
   findmyStealth = on;
   try { fs.writeFileSync(FINDMY_STEALTH_FILE, JSON.stringify({ on })); } catch {}
   try {
+    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+    const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+    const wid = line ? line.split("|")[0].trim() : "";
     if (on) {
+      // Stealth home: workspace 7 (hidden — no monitor force-
+      // assignment, no keybind). aerospace rule in ~/.aerospace.toml
+      // already pins it there on window-detected, but in case the
+      // user is toggling while the window lives elsewhere, move it
+      // explicitly.
+      if (wid) await execFileP("aerospace", ["move-node-to-workspace", "7", "--window-id", wid]).catch(() => {});
       await execFileP("osascript", ["-e",
         'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
     } else {
-      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
-      // re-place on workspace 8 in case stealth somehow dislodged it.
-      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
-      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-      const wid = line ? line.split("|")[0].trim() : "";
+      // Visible home: workspace 9 (force-assigned to secondary/laptop
+      // display in aerospace config). Move there + focus + fullscreen.
       if (wid) {
-        await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-        await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+        await execFileP("aerospace", ["move-node-to-workspace", "9", "--window-id", wid]).catch(() => {});
+        await execFileP("aerospace", ["workspace", "9"]).catch(() => {});
         await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
         await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
       }
+      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
     }
   } catch {}
   res.json({ ok: true, on });
@@ -4344,40 +4351,22 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
+    // FM lives on workspace 7 (hidden, no monitor force-assignment).
+    // Activating in stealth briefly switches to it on whichever
+    // monitor workspace 7 is currently assigned to — but since the
+    // user never switches to workspace 7 in normal use, the flash
+    // is confined to at-most-a-frame on a monitor they're not
+    // looking at. Triggers Find My's re-poll.
+    await execFileP("osascript", ["-e",
+      'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // Stealth: quick activate → immediate re-hide to force Find My
-      // to re-poll Maria's location (sidebar otherwise shows stale
-      // "Paused"). Fire-and-forget the hide so it runs concurrent
-      // with activate instead of strictly after — minimizes the
-      // window-visible window (pun intended) that aerospace rules
-      // could catch.
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
-      // Don't await — hide as fast as possible.
+      // Fire-and-forget re-hide as fast as possible.
       execFileP("osascript", ["-e",
         'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-      // Queue a second hide a tick later to catch aerospace rule
-      // rebounds that may have re-shown the window.
       setTimeout(() => {
         execFileP("osascript", ["-e",
           'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
       }, 250);
-    } else {
-      await execFileP("osascript", ["-e",
-        'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
-      await new Promise(r => setTimeout(r, 300));
-      await execFileP("osascript", ["-e",
-        'tell application "FindMy" to activate']).catch(() => {});
-      try {
-        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
-        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-        const wid = line ? line.split("|")[0].trim() : "";
-        if (wid) {
-          await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-          await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-          await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
-        }
-      } catch {}
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -4439,15 +4428,16 @@ app.post("/api/toggle-findmy", async (_req, res) => {
       }
       if (wid) {
         if (findmyStealth) {
-          // In stealth, hide via System Events ASAP — before aerospace
-          // auto-assignment rules (if any) get a chance to drag it to
-          // a visible workspace. Skip the explicit workspace/focus
-          // calls that would defeat stealth.
+          // aerospace rule puts Find My on workspace 7 (hidden home).
+          // Belt-and-suspenders: move + hide via System Events in
+          // case the rule didn't fire (e.g. config not reloaded).
+          await execFileP("aerospace", ["move-node-to-workspace", "7", "--window-id", wid]).catch(() => {});
           await execFileP("osascript", ["-e",
             'tell application "System Events" to set visible of (first process whose name is "FindMy") to false']).catch(() => {});
         } else {
-          await execFileP("aerospace", ["move-node-to-workspace", "8", "--window-id", wid]).catch(() => {});
-          await execFileP("aerospace", ["workspace", "8"]).catch(() => {});
+          // Visible home: workspace 9 (force-assigned to laptop).
+          await execFileP("aerospace", ["move-node-to-workspace", "9", "--window-id", wid]).catch(() => {});
+          await execFileP("aerospace", ["workspace", "9"]).catch(() => {});
           await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
           await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
         }
