@@ -400,13 +400,49 @@ export default function PhonePlayer({ send }) {
         lastSeekRef.current = 0
         calibOffsetRef.current = null
         driftSamplesRef.current = []
-        // Re-fetch phone stream URL for new video
         fetch('/api/watch-on-phone', { method: 'POST' })
           .then(r => r.json())
           .then(data => {
-            if (data.streamUrl) {
-              const fullUrl = data.streamUrl.startsWith('/') ? `${location.origin}${data.streamUrl}` : data.streamUrl
-              if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
+            if (!data.streamUrl) return
+            const isLive = !!data.isLive
+            setIsLive(isLive)
+            // Native iOS: re-load AVPlayer with the new stream. The HTML
+            // <video> isn't the real player on native; AVPlayer is.
+            if (isNativeIOS && NativePlayer.available) {
+              const absUrl = data.streamUrl.startsWith('/') ? `${location.origin}${data.streamUrl}` : data.streamUrl
+              NativePlayer.load({
+                url: absUrl,
+                videoUrl: data.videoUrl || undefined,
+                audioUrl: data.audioUrl || undefined,
+                position: data.seconds || 0,
+                autoplay: true,
+                muted: !phoneOnlyRef.current,
+              }).then(() => {
+                readyRef.current = true
+                readyAtRef.current = Date.now()
+              }).catch(() => {})
+              return
+            }
+            // Web / non-native: reload HTML <video> or hls.js.
+            const useHls = isLive && Hls.isSupported()
+            const url = isLive
+              ? (useHls ? (data.proxyUrl || data.streamUrl) : `${data.proxyUrl || '/api/phone-hls'}?direct=1`)
+              : data.streamUrl
+            const fullUrl = url.startsWith('/') ? `${location.origin}${url}` : url
+            if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null }
+            if (useHls) {
+              const hls = new Hls({
+                liveSyncDurationCount: 4,
+                liveMaxLatencyDurationCount: 10,
+                maxLiveSyncPlaybackRate: 1.04,
+                lowLatencyMode: false,
+              })
+              hls.loadSource(fullUrl); hls.attachMedia(video)
+              hls.on(Hls.Events.MANIFEST_PARSED, () => {
+                video.play().then(() => { readyRef.current = true; readyAtRef.current = Date.now() }).catch(() => {})
+              })
+              hlsRef.current = hls
+            } else {
               video.src = fullUrl
               setTimeout(() => {
                 const newPb = usePlaybackStore.getState()
