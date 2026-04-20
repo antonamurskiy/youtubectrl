@@ -63,6 +63,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "setRate", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "startPip", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "stopPip", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setPipSafeArea", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setNowPlaying", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "clearNowPlaying", returnType: CAPPluginReturnPromise),
@@ -530,6 +531,22 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         DispatchQueue.main.async {
             self.userStartedPip = false
             self.pipController?.stopPictureInPicture()
+            call.resolve()
+        }
+    }
+
+    // Tell iOS that the bottom N points of the Capacitor view controller
+    // are covered by a fixed UI (the now-playing bar). iOS factors this
+    // into PiP's auto-resting positions so the floating window snaps
+    // ABOVE the bar instead of on top of it. Client pushes the live
+    // height via the NPB's ResizeObserver.
+    @objc func setPipSafeArea(_ call: CAPPluginCall) {
+        let bottom = CGFloat(call.getDouble("bottom") ?? 0)
+        DispatchQueue.main.async {
+            guard let vc = self.bridge?.viewController else { call.resolve(); return }
+            var insets = vc.additionalSafeAreaInsets
+            insets.bottom = max(0, bottom)
+            vc.additionalSafeAreaInsets = insets
             call.resolve()
         }
     }

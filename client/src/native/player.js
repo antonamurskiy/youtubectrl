@@ -26,6 +26,7 @@ export const NativePlayer = {
   async setRate(rate) { if (plugin) return plugin.setRate({ rate }) },
   async startPip() { if (plugin) return plugin.startPip() },
   async stopPip() { if (plugin) return plugin.stopPip() },
+  async setPipSafeArea({ bottom }) { if (plugin) return plugin.setPipSafeArea({ bottom }) },
   async getState() { if (plugin) return plugin.getState() },
   // PDT/live-sync hooks. `getLiveState` returns { currentDateMs, liveEdgeMs,
   // position, duration, rate, paused } where the *DateMs fields are

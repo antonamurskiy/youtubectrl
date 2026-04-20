@@ -453,13 +453,17 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     return () => { if (seekCleanupRef.current) seekCleanupRef.current() }
   }, [])
 
-  // Expose live now-playing height as a CSS var so other overlays can sit above it
+  // Expose live now-playing height as a CSS var so other overlays can
+  // sit above it; also push the height to the native plugin so iOS's
+  // PiP resting positions snap ABOVE the bar instead of covering it.
   const rootRef = useRef(null)
   useEffect(() => {
     const el = rootRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
     const update = () => {
-      document.documentElement.style.setProperty('--np-height', `${Math.ceil(el.getBoundingClientRect().height)}px`)
+      const h = Math.ceil(el.getBoundingClientRect().height)
+      document.documentElement.style.setProperty('--np-height', `${h}px`)
+      if (isNativeIOS) NativePlayer.setPipSafeArea({ bottom: h }).catch(() => {})
     }
     update()
     const ro = new ResizeObserver(update)
@@ -467,6 +471,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     return () => {
       ro.disconnect()
       document.documentElement.style.removeProperty('--np-height')
+      if (isNativeIOS) NativePlayer.setPipSafeArea({ bottom: 0 }).catch(() => {})
     }
   }, [])
 
