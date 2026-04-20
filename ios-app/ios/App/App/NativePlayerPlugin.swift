@@ -535,20 +535,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
     }
 
-    // Tell iOS that the bottom N points of the Capacitor view controller
-    // are covered by a fixed UI (the now-playing bar). iOS factors this
-    // into PiP's auto-resting positions so the floating window snaps
-    // ABOVE the bar instead of on top of it. Client pushes the live
-    // height via the NPB's ResizeObserver.
+    // Previously attempted to reserve a bottom safe area for PiP via
+    // additionalSafeAreaInsets. That also pushed the WebView's own
+    // content upward (double-padding the NPB). Left as a no-op so
+    // existing client callers don't error.
     @objc func setPipSafeArea(_ call: CAPPluginCall) {
-        let bottom = CGFloat(call.getDouble("bottom") ?? 0)
-        DispatchQueue.main.async {
-            guard let vc = self.bridge?.viewController else { call.resolve(); return }
-            var insets = vc.additionalSafeAreaInsets
-            insets.bottom = max(0, bottom)
-            vc.additionalSafeAreaInsets = insets
-            call.resolve()
-        }
+        call.resolve()
     }
 
     @objc func getState(_ call: CAPPluginCall) {
