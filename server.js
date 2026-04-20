@@ -1743,6 +1743,18 @@ app.post("/api/play", async (req, res) => {
     const pos = savedEntry?.position || 0;
     const dur = savedEntry?.duration || 0;
     const resumePos = pos > 0 && dur > 0 && pos < dur * 0.95 && pos < dur - 10 ? pos : 0;
+    // Verify mpvProcess actually points at a live process. If mpv
+    // died externally (user killed it, crash not caught by our exit
+    // handler), the stale reference makes /api/play take the
+    // "existing mpv" path which silently fails all IPC calls —
+    // response was ok:true but no actual playback started.
+    if (mpvProcess) {
+      try {
+        if (mpvProcess.pid) process.kill(mpvProcess.pid, 0); // throws if dead
+      } catch {
+        mpvProcess = null;
+      }
+    }
     // If mpv is already running, load new video in existing player
     if (mpvProcess) {
       try {
