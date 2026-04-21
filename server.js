@@ -5605,6 +5605,7 @@ function startWsSync() {
           state = {
             type: "playback",
             playing: true, isLive: effectiveIsLive, player: "mpv",
+            isPostLive: isPostLiveStream,
             dvrActive,
             position: scrubPos,
             duration: scrubDur,

@@ -893,7 +893,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
       <div className="np-sub-row">
         <button className="np-skip-btn" onClick={skipBack}>-10</button>
         <span className="np-time">
-          {pb.isLive
+          {pb.isLive && !pb.isPostLive
             ? (liveTimeBehind < 5 ? 'LIVE' : `-${formatTime(liveTimeBehind)}`)
             : formatTime(position)
           }
@@ -915,22 +915,24 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
           style={{
             flex: 1,
             textAlign: 'center',
-            cursor: pb.isLive ? 'pointer' : 'default',
+            cursor: pb.isLive && !pb.isPostLive ? 'pointer' : 'default',
             // Red = actually at live edge. Dim = scrubbed back; tapping
-            // this jumps you forward to live.
-            color: pb.isLive
+            // this jumps you forward to live. post_live has no live edge
+            // to jump to — it's a finished broadcast being played from
+            // the DVR recording, so we hide the badge entirely.
+            color: pb.isLive && !pb.isPostLive
               ? (liveTimeBehind < 5 ? 'var(--red)' : 'var(--text-dim)')
               : undefined,
           }}
           onClick={() => {
-            if (!pb.isLive) return
+            if (!pb.isLive || pb.isPostLive) return
             hapticTick()
             const ctrl = phoneCtrl()
             if (ctrl) { ctrl.seek(Math.max(0, pb.duration - 5)) }
             else { fetch('/api/go-live', { method: 'POST' }).catch(() => {}) }
           }}
         >
-          {pb.isLive
+          {pb.isLive && !pb.isPostLive
             ? (liveTimeBehind < 5 ? 'LIVE' : 'GO LIVE')
             : ''
           }
@@ -938,7 +940,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
         <AudioOutputButton />
         {isNativeIOS && <PipToggleButton />}
 
-        <span className="np-time">{pb.isLive ? '' : formatTime(duration)}</span>
+        <span className="np-time">{pb.isLive && !pb.isPostLive ? '' : formatTime(duration)}</span>
         <button className="np-skip-btn" onClick={skipForward}>+10</button>
       </div>
 
