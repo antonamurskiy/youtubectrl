@@ -4,6 +4,7 @@ import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 import { copyText } from '../clipboard'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
+import { playVideo } from '../playVideo'
 
 // Global single-preview coordinator. Only one card previews at a time.
 // Each card reports its current top-y offset when intersecting the
@@ -193,20 +194,15 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
   const handlePlay = useCallback(() => {
     if (longPressTriggered.current) return
     hapticTick()
-
-    fetch('/api/play', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        url: videoUrl,
-        title: video.title,
-        channel: video.channel,
-        thumbnail: video.thumbnail || '',
-        isLive: video.isLive || video.live || false,
-        watchPct: video.startPercent || 0,
-      }),
+    playVideo({
+      url: videoUrl,
+      title: video.title,
+      channel: video.channel,
+      thumbnail: video.thumbnail,
+      isLive: video.isLive || video.live,
+      startPercent: video.startPercent,
     }).catch(() => addToast('Play failed'))
-  }, [videoUrl, video.title, video.channel, video.isLive, addToast])
+  }, [videoUrl, video.title, video.channel, video.thumbnail, video.isLive, video.live, video.startPercent, addToast])
 
   const handleCardTouchStart = useCallback((e) => {
     longPressTriggered.current = false

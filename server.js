@@ -323,6 +323,84 @@ app.post("/api/bluetooth-disconnect", async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// Route headphones to Mac or iPhone to match the current playback
+// target. Apple's auto-switching routinely picks the wrong one;
+// connecting (Mac) or disconnecting (phone) via BluetoothConnector
+// is a hard override. On disconnect the headphones auto-reconnect
+// to whichever other paired device is currently playing — i.e. the
+// iPhone. target: 'mac' | 'phone'. Fire-and-forget: don't block the
+// caller on BT round-trips (they can take 3-10s).
+//
+// Matches AirPods + Blackshark. Add more brand substrings here as
+// needed — it's a name-substring regex, case-insensitive.
+const HEADPHONE_NAME_RE = /airpods|blackshark/i;
+let _lastAudioRoute = null;
+let _lastAudioRouteAt = 0;
+
+// When disconnecting headphones, belt-and-suspenders: mute the Mac's
+// built-in speakers + LG display audio so that if anything reroutes
+// there (macOS auto-fallback, random app), it doesn't blast through.
+// osascript's `set volume output muted true` only touches the
+// currently-selected output, so we switch to each non-headphone
+// output in turn and mute it.
+async function muteNonHeadphoneOutputs() {
+  try {
+    const [listR, currentR] = await Promise.all([
+      execP("SwitchAudioSource -a -t output"),
+      execP("SwitchAudioSource -c -t output").catch(() => ({ stdout: "" })),
+    ]);
+    const prev = currentR.stdout.trim();
+    const outputs = listR.stdout.split("\n").map(s => s.trim()).filter(Boolean);
+    const targets = outputs.filter(o => !HEADPHONE_NAME_RE.test(o));
+    for (const o of targets) {
+      try {
+        await execP(`SwitchAudioSource -s ${JSON.stringify(o)}`);
+        await execP(`osascript -e 'set volume output muted true'`);
+      } catch {}
+    }
+    // Leave the active output on the original (typically AirPods);
+    // if that device is gone post-disconnect, macOS auto-fallback
+    // will land on one of the targets we just muted.
+    if (prev && prev !== targets[targets.length - 1]) {
+      try { await execP(`SwitchAudioSource -s ${JSON.stringify(prev)}`); } catch {}
+    }
+  } catch {}
+}
+
+async function routeAudio(target) {
+  if (target !== "mac" && target !== "phone") return;
+  // Debounce identical calls within 3s (mode-switch flows can
+  // stack route calls; no reason to re-issue the same BT command).
+  const now = Date.now();
+  if (_lastAudioRoute === target && now - _lastAudioRouteAt < 3000) return;
+  _lastAudioRoute = target;
+  _lastAudioRouteAt = now;
+  try {
+    const { stdout } = await execP("blueutil --paired --format json");
+    const devices = JSON.parse(stdout);
+    const headphones = devices.filter(d => HEADPHONE_NAME_RE.test(d.name || ""));
+    if (target === "phone") {
+      // Pre-mute so the window between "AirPods disconnected" and
+      // "phone takes over" doesn't blast through built-in speakers.
+      muteNonHeadphoneOutputs();
+    }
+    for (const d of headphones) {
+      const mac = (d.address || "").replace(/:/g, "-");
+      if (!mac) continue;
+      if (target === "mac" && !d.connected) {
+        execP(`BluetoothConnector --connect ${mac}`, { timeout: 15000 }).catch(() => {});
+      } else if (target === "phone" && d.connected) {
+        execP(`BluetoothConnector --disconnect ${mac}`, { timeout: 15000 }).catch(() => {});
+      }
+    }
+  } catch {}
+}
+app.post("/api/audio-route", async (req, res) => {
+  const target = req.body?.target;
+  routeAudio(target);
+  res.json({ ok: true });
+});
+
 app.post("/api/focus-cmux", async (_req, res) => {
   try {
     const { stdout: frontOut } = await execP(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`);
@@ -1612,6 +1690,21 @@ app.get("/api/trending", async (_req, res) => {
 // Play on computer via mpv
 
 let mpvProcess = null;
+// Companion streamlink process that feeds mpv's stdin for live streams.
+// mpv alone can't keep up with 1s-segment low-latency HLS (ffmpeg's
+// HLS demuxer has no look-ahead); streamlink's HLS client handles it.
+// Tracked separately so we can tear it down on mpv exit / stream swap.
+let streamlinkProcess = null;
+// Current streamlink --hls-start-offset (seconds behind live edge).
+// 0 = mpv is at live edge. >0 = scrubbed-back DVR mode. Replaces the
+// old `onLiveProxy` / `onSubProxy` mpv-path checks, which don't work
+// now that mpv reads from stdin (path is just "-").
+let liveOffsetSec = 0;
+// True when the current stream is `post_live` — recently-ended broadcast
+// that YouTube hasn't yet encoded into DASH/progressive. Still HLS-only,
+// so we route through streamlink, but scrubber semantics differ: offset
+// is seconds-from-start, not seconds-behind-live.
+let isPostLiveStream = false;
 let nowPlaying = null;
 // Persist nowPlaying so reconnects after a server restart can recover
 // the YouTube URL even when mpv is on a proxy path (live/DVR proxy's
@@ -1684,6 +1777,8 @@ app.post("/api/play", async (req, res) => {
   if (playLock) return res.json({ ok: true, queued: true });
   playLock = true;
   playLockAt = Date.now();
+  // Audio to the Mac — mpv is about to become the audio source.
+  routeAudio("mac");
   const { url, isLive: clientIsLive, title: reqTitle, channel: reqChannel, thumbnail: reqThumb, watchPct } = req.body;
   if (!url || (!url.startsWith("https://www.youtube.com/") && !url.startsWith("https://rumble.com/"))) {
     playLock = false;
@@ -1691,12 +1786,21 @@ app.post("/api/play", async (req, res) => {
   }
   const isRumble = url.startsWith("https://rumble.com/");
 
-  // Detect live streams server-side if frontend didn't flag it
+  // Detect live streams server-side if frontend didn't flag it.
+  // Also detect `post_live` — a stream that just ended but hasn't yet
+  // been re-encoded by YouTube into DASH/progressive formats. In that
+  // window (can be hours), the only available formats are HLS m3u8.
+  // mpv+ytdl_hook routes HLS through ffmpeg's single-threaded demuxer
+  // which stutters on 1s-segment streams the same way live mode did,
+  // so we route post_live through streamlink too.
   let isLive = clientIsLive;
+  let isPostLive = false;
   if (!isLive && !isRumble) {
     try {
-      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", url], { timeout: 10000 });
-      if (stdout.trim() === "True") isLive = true;
+      const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "live_status", url], { timeout: 10000 });
+      const status = stdout.trim();
+      if (status === "is_live" || status === "is_upcoming") isLive = true;
+      else if (status === "post_live") { isLive = true; isPostLive = true; }
     } catch {}
   }
 
@@ -1755,8 +1859,31 @@ app.post("/api/play", async (req, res) => {
         mpvProcess = null;
       }
     }
-    // If mpv is already running, load new video in existing player
+    // IPC liveness ping. Process may be alive but wedged — common after
+    // macOS sleep/wake (overnight idle): audio/video pipeline hangs or
+    // IPC socket stops responding. pid-check passes, but loadfile is a
+    // no-op. Short-timeout ping catches this; on failure, force-kill
+    // and fall through to the respawn path.
     if (mpvProcess) {
+      const pingResp = await Promise.race([
+        mpvCommand(["get_property", "pid"]),
+        new Promise(r => setTimeout(() => r("__timeout__"), 800)),
+      ]);
+      if (pingResp === "__timeout__" || !pingResp || pingResp.error !== "success") {
+        console.error(`mpv IPC unresponsive (ping=${JSON.stringify(pingResp)}) — killing and respawning`);
+        try { process.kill(mpvProcess.pid, 9); } catch {}
+        try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+        _mpvCleanup();
+        mpvProcess = null;
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    // If mpv is already running, load new video in existing player.
+    // Skip for live streams — streamlink-piped mpv can't loadfile (the
+    // stdin pipe is tied to one streamlink process). Falls through to
+    // the respawn path below, which tears down both streamlink + mpv
+    // and starts fresh.
+    if (mpvProcess && !isLive) {
       try {
         // Save current video's progress before switching (also verifies mpv is responsive)
         try {
@@ -1894,6 +2021,11 @@ app.post("/api/play", async (req, res) => {
 
     // No existing player or IPC failed — spawn new one
     try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+    if (streamlinkProcess) {
+      try { streamlinkProcess.kill("SIGKILL"); } catch {}
+      streamlinkProcess = null;
+    }
+    try { execSync("pkill -9 streamlink", { stdio: "ignore" }); } catch {}
     mpvProcess = null;
     await new Promise(r => setTimeout(r, 200));
     try { require("fs").unlinkSync("/tmp/mpv-socket"); } catch {}
@@ -1903,7 +2035,7 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`];
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`, `--video-sync=display-resample`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`];
     // Pin media-title so live streams don't report "hls-live.m3u8" etc.
     // See setMpvForceTitle for context — sanitize to strip control
     // chars that can crash mpv's arg parser on some builds.
@@ -1911,22 +2043,47 @@ app.post("/api/play", async (req, res) => {
     if (cleanTitle) mpvArgs.push(`--force-media-title=${cleanTitle}`);
     if (geometry) mpvArgs.push(`--geometry=${geometry}`, `--ontop`);
     if (windowMode === "fullscreen") mpvArgs.push(`--fs`);
-    mpvArgs.push(playUrl);
-    if (isLive) {
-      // Live proxy has ~15s cache, so start near that cache's end.
-      mpvArgs.push(`--start=-3`);
-    } else if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
-    else if (watchPct > 0 && watchPct < 95) mpvArgs.push(`--start=${Math.floor(watchPct)}%`);
+    if (!isLive) {
+      mpvArgs.push(playUrl);
+      if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
+      else if (watchPct > 0 && watchPct < 95) mpvArgs.push(`--start=${Math.floor(watchPct)}%`);
+    }
 
     // Focus LG workspace so mpv spawns there
     try { execSync("aerospace workspace 1", { stdio: "ignore" }); } catch {}
 
-    // Capture stderr to a rolling buffer. Previously stdio:"ignore"
-    // dropped everything, making crash diagnostics impossible. On
-    // abnormal exit we dump the tail of this buffer.
-    const child = spawn("mpv", mpvArgs, {
-      stdio: ["ignore", "ignore", "pipe"],
-    });
+    // For live streams: pipe streamlink into mpv. ffmpeg's built-in HLS
+    // demuxer throttles download to near-realtime for live content with
+    // no look-ahead, which causes 1-2s freezes every ~5s on streams
+    // with 1s-segment low-latency encoding. Streamlink's purpose-built
+    // HLS client handles this cleanly — 0% frozen time vs 31% via mpv's
+    // ffmpeg path. VOD streams still use mpv+ytdl_hook directly.
+    let streamlinkChild = null;
+    let child;
+    if (isLive) {
+      isPostLiveStream = isPostLive;
+      liveOffsetSec = 0;
+      streamlinkChild = spawnStreamlink(url, 0);
+      try {
+        await new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error("streamlink first-byte timeout")), 10000);
+          const onReadable = () => { clearTimeout(timer); streamlinkChild.stdout.off("error", onError); resolve(); };
+          const onError = e => { clearTimeout(timer); streamlinkChild.stdout.off("readable", onReadable); reject(e); };
+          streamlinkChild.stdout.once("readable", onReadable);
+          streamlinkChild.stdout.once("error", onError);
+        });
+      } catch (e) {
+        try { streamlinkChild.kill("SIGKILL"); } catch {}
+        playLock = false;
+        return res.status(500).json({ error: `streamlink: ${e.message}` });
+      }
+      mpvArgs.push("--demuxer-lavf-format=mpegts", "-");
+      child = spawn("mpv", mpvArgs, { stdio: [streamlinkChild.stdout, "ignore", "pipe"] });
+      streamlinkProcess = streamlinkChild;
+    } else {
+      isPostLiveStream = false;
+      child = spawn("mpv", mpvArgs, { stdio: ["ignore", "ignore", "pipe"] });
+    }
     child._stderr = "";
     if (child.stderr) {
       child.stderr.on("data", (chunk) => {
@@ -2012,6 +2169,16 @@ app.post("/api/play", async (req, res) => {
         }
         mpvProcess = null;
         nowPlaying = null;
+        // Also tear down the companion streamlink if it's still running.
+        // ONLY do this when mpvProcess still referenced THIS child — a
+        // respawn (e.g. DVR seek via respawnLivePipeline) kills the old
+        // mpv and replaces streamlinkProcess with a fresh one BEFORE this
+        // delayed 'exit' event fires, so an unguarded kill here would
+        // kill the new streamlink.
+        if (streamlinkProcess) {
+          try { streamlinkProcess.kill("SIGKILL"); } catch {}
+          streamlinkProcess = null;
+        }
       }
     });
     child._startTime = Date.now();
@@ -2038,12 +2205,125 @@ app.post("/api/stop", async (_req, res) => {
   progressGen++;
   if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
   try { execSync("pkill -x mpv", { stdio: "ignore" }); } catch {}
+  if (streamlinkProcess) { try { streamlinkProcess.kill("SIGKILL"); } catch {} streamlinkProcess = null; }
+  try { execSync("pkill -x streamlink", { stdio: "ignore" }); } catch {}
   mpvProcess = null;
   nowPlaying = null;
   activePlayer = null;
   stopMpvPdtTracking();
   res.json({ ok: true });
 });
+
+// Respawn streamlink + mpv pipeline at a given offset behind live edge.
+// Used for /api/seek (DVR scrubback past mpv's cache) and /api/go-live.
+// mpv can't loadfile onto a streamlink-piped stdin — stdin is tied to
+// one streamlink process — so we fully tear down and restart the pair.
+// Caller is responsible for: clearing playbackAnchor/subProxyAnchor and
+// setting up fresh anchors BEFORE the respawn (so WS broadcasts during
+// the ~1s gap don't flash stale state).
+async function respawnLivePipeline(offsetSec) {
+  if (!nowPlaying) throw new Error("respawnLivePipeline: nothing playing");
+  // Set liveOffsetSec synchronously, BEFORE any await — WS broadcast
+  // ticks during the 250ms kill gap + 10s first-byte wait read this
+  // and clear subProxyAnchor if they see offset=0 (== live mode).
+  liveOffsetSec = offsetSec;
+  try { if (streamlinkProcess) streamlinkProcess.kill("SIGKILL"); } catch {}
+  try { if (mpvProcess) mpvProcess.kill("SIGKILL"); } catch {}
+  try { execSync("pkill -9 streamlink", { stdio: "ignore" }); } catch {}
+  try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+  streamlinkProcess = null;
+  mpvProcess = null;
+  try { fs.unlinkSync("/tmp/mpv-socket"); } catch {}
+  await new Promise(r => setTimeout(r, 250));
+
+  const title = sanitizeMpvTitle(historyMap.get(nowPlaying)?.title || "");
+  const args = [
+    `--input-ipc-server=/tmp/mpv-socket`,
+    `--hwdec=auto-safe`, `--keep-open`,
+    `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`,
+    `--video-sync=display-resample`,
+    `--demuxer-lavf-o-append=http_persistent=1`,
+    `--demuxer-lavf-o-append=http_multiple=1`,
+  ];
+  if (title) args.push(`--force-media-title=${title}`);
+  if (!windowMode || windowMode === "floating") args.push(`--geometry=38%-12+38`, `--ontop`);
+  if (windowMode === "fullscreen") args.push(`--fs`);
+  args.push(`--demuxer-lavf-format=mpegts`, `-`);
+
+  const sl = spawnStreamlink(nowPlaying, offsetSec);
+  // Wait for streamlink's first output bytes before spawning mpv.
+  // Without this gate, mpv starts reading stdin and hits EOF-like
+  // no-data, exits with code 4 ("Failed to recognize file format").
+  try {
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("streamlink first-byte timeout")), 10000);
+      const onReadable = () => { clearTimeout(timer); sl.stdout.off("error", onError); resolve(); };
+      const onError = e => { clearTimeout(timer); sl.stdout.off("readable", onReadable); reject(e); };
+      sl.stdout.once("readable", onReadable);
+      sl.stdout.once("error", onError);
+    });
+  } catch (e) {
+    try { sl.kill("SIGKILL"); } catch {}
+    const slErr = (sl._stderr || "").slice(-512);
+    throw new Error(`streamlink: ${e.message}${slErr ? " — " + slErr : ""}`);
+  }
+  const child = spawn("mpv", args, { stdio: [sl.stdout, "ignore", "pipe"] });
+  child._stderr = "";
+  child._startTime = Date.now();
+  if (child.stderr) child.stderr.on("data", c => {
+    child._stderr += c.toString();
+    if (child._stderr.length > 32 * 1024) child._stderr = child._stderr.slice(-16 * 1024);
+  });
+  child.on("exit", (code, signal) => {
+    if (code && code !== 0) {
+      const tail = (child._stderr || "").slice(-1024);
+      console.error(`respawn mpv exit code=${code} sig=${signal}\n${tail}`);
+    }
+    if (mpvProcess === child) mpvProcess = null;
+    if (streamlinkProcess) { try { streamlinkProcess.kill("SIGKILL"); } catch {} streamlinkProcess = null; }
+  });
+  mpvProcess = child;
+  streamlinkProcess = sl;
+  return child;
+}
+
+// Spawn streamlink as a child that outputs MPEG-TS on stdout. Caller
+// pipes its stdout into mpv's stdin.
+//
+// Feeds streamlink our /api/hls-live.m3u8 proxy URL (which injects
+// #EXT-X-PLAYLIST-TYPE:EVENT) rather than the YouTube URL directly —
+// streamlink's --hls-start-offset only honors DVR-scrubback when the
+// manifest declares a PLAYLIST-TYPE. YouTube's raw manifest omits it;
+// pointed at the raw URL, streamlink plays live regardless of offset.
+//
+// --stream-segment-threads=4: default of 1 thread can't keep up with
+// 1-second-segment low-latency HLS — we measured 23% frozen time with
+// single-threaded fetch vs 0% with 4 parallel downloads.
+// --ringbuffer-size=128M: larger buffer soaks up transient network
+// jitter (default 16M drains in ~15s at 8 Mbps).
+function spawnStreamlink(_youtubeUrl, offsetSec) {
+  const args = [
+    "--stdout",
+    "--stream-segment-threads", "4",
+    "--ringbuffer-size", "128M",
+    "hls://http://localhost:3000/api/hls-live.m3u8",
+    "best",
+  ];
+  if (offsetSec > 0) {
+    const total = Math.floor(offsetSec);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    args.unshift("--hls-start-offset", `${h}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")}`);
+  }
+  const p = spawn("streamlink", args, { stdio: ["ignore", "pipe", "pipe"] });
+  p._stderr = "";
+  if (p.stderr) p.stderr.on("data", c => {
+    p._stderr += c.toString();
+    if (p._stderr.length > 32 * 1024) p._stderr = p._stderr.slice(-16 * 1024);
+  });
+  return p;
+}
 
 // Persistent IPC connection to mpv — reused across requests
 const MPV_SOCKET = "/tmp/mpv-socket";
@@ -2171,9 +2451,11 @@ app.post("/api/seek", async (req, res) => {
   const { position } = req.body;
   if (typeof position !== "number") return res.status(400).json({ error: "Invalid position" });
   try {
-    const pathR = await mpvCommand(["get_property", "path"]).catch(() => null);
-    const onLiveProxy = !!pathR?.data?.includes("/api/hls-live.m3u8");
-    const onSubProxy = !!pathR?.data?.includes("/api/hls-sub.m3u8");
+    // Live-stream scrubber: live edge at offset 0, DVR scrubback at
+    // offset > 0. mpv's `path` is "-" when streamlink-piped — use the
+    // server-side liveOffsetSec + currentLiveHlsUrl instead.
+    const onLiveProxy = !!currentLiveHlsUrl && liveOffsetSec === 0;
+    const onSubProxy = !!currentLiveHlsUrl && liveOffsetSec > 0;
 
     // Frontend's `position` is in scrubber space [0, lastManifestFullDuration]
     // with live edge at the right. behindLive is how many seconds back
@@ -2181,33 +2463,43 @@ app.post("/api/seek", async (req, res) => {
     if ((onLiveProxy || onSubProxy) && lastManifestFullDuration > 0) {
       const dur = await mpvCommand(["get_property", "duration"]).catch(() => null);
       const mpvDur = dur?.data || 0;
-      const behindLive = Math.max(0, lastManifestFullDuration - position);
-
-      if (behindLive < mpvDur) {
-        // Target is within mpv's current seekable window — seek directly,
-        // no swap, no skip. Works for both live-proxy (small window) and
-        // sub-proxy (whatever window was loaded).
+      // For post_live (finite VOD), position IS seconds-from-start and
+      // there's no "live edge" — so streamlink's --hls-start-offset
+      // equals position directly. For true-live DVR, it's behind-live.
+      const newOffsetSec = isPostLiveStream
+        ? Math.max(0, position)
+        : Math.max(0, lastManifestFullDuration - position);
+      const currentOffset = liveOffsetSec;
+      // Within mpv's current buffer? Still cheaper than a respawn.
+      // For post_live: mpv's time-pos is seconds since the streamlink
+      // start (currentOffset), so target mpv_pos = newOffset - currentOffset.
+      // For live DVR: mpv plays forward from currentOffset-behind toward
+      // live; target mpv_pos = mpvDur - (newOffset - ...). The mpvDur -
+      // behindLive shortcut below covers both if we frame in "seconds
+      // the mpv timeline has advanced past the seek start."
+      const behindLive = newOffsetSec; // semantics: how far back from current seek's endpoint
+      if (behindLive < mpvDur && !isPostLiveStream) {
         const localTarget = Math.max(0, mpvDur - behindLive);
         await mpvCommand(["seek", localTarget, "absolute"]);
         return res.json({ ok: true });
       }
+      if (isPostLiveStream) {
+        // mpv's time-pos for a streamlink-piped VOD is seconds since
+        // streamlink's stream start, which equals (newOffsetSec -
+        // currentOffset) seconds past mpv's current playhead if target
+        // is forward, or backward if negative. Respawn unless target
+        // is within mpv's already-demuxed forward cache.
+        const delta = newOffsetSec - currentOffset;
+        if (delta >= 0 && delta < mpvDur) {
+          await mpvCommand(["seek", delta, "absolute"]);
+          return res.json({ ok: true });
+        }
+      }
 
-      // Target outside current window — load a sub-manifest starting
-      // ~behindLive before live edge. Sub-manifest is live-style so
-      // mpv auto-polls and catches up to live naturally.
+      // Target outside current window — respawn the streamlink+mpv
+      // pipeline at --hls-start-offset=behindLive. Full tear-down and
+      // restart because mpv's stdin is tied to the current streamlink.
       //
-      // `live_start_index=0` forces mpv to start at the FIRST segment
-      // of the sub-window (= behindLive behind real live edge). Without
-      // this, ffmpeg's HLS demuxer defaults to -3 (near the end) and
-      // the user would land back at live edge instead of their seek
-      // target. Setting via file-local-options so subsequent loadfiles
-      // (of the full live proxy) aren't affected.
-      const wasPaused = (await mpvCommand(["get_property", "pause"]).catch(() => null))?.data === true;
-      // Resolve behind→absolute media-sequence NOW. The proxy pins to
-      // this sequence for all subsequent polls from mpv, so segments
-      // never shift under mpv's cache.
-      const fromSeq = await resolveBehindToFromSeq(Math.ceil(behindLive) + 10);
-      const subUrl = `http://localhost:3000/api/hls-sub.m3u8?from_seq=${fromSeq}`;
       // Capture the content PDT the user intends to land at — derived
       // from current live edge once, at seek time. After this, the
       // scrubber's userPdt advances purely from mpv's own time-pos
@@ -2216,28 +2508,21 @@ app.post("/api/seek", async (req, res) => {
       const liveEdgeAtSeek = lastManifestEdgeEpochMs
         ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt)
         : Date.now();
-      const userPdtAtSeek = liveEdgeAtSeek - behindLive * 1000;
-      // Pre-seed subProxyAnchor with mpvPosAtAnchor=0 synchronously
-      // BEFORE loadfile. Since we pass `start=0,live_start_index=0`,
-      // mpv will start playback from position 0 in the sub-proxy window,
-      // so timePos=0 at anchor time is correct. The WS broadcast formula
-      // `userPdt = userPdtAtAnchor + (timePos - mpvPosAtAnchor) * 1000`
-      // immediately places the scrubber at the user's intended point,
-      // instead of showing a transient drift/zero while we poll for
-      // mpv's first real time-pos reading. Without this pre-seed, the
-      // thumb visibly snaps to the wrong edge for up to a full WS tick
-      // before the anchor is populated by the async poll.
+      // For live DVR: userPdt = liveEdgeAtSeek - behindLive seconds.
+      // For post_live: there's no live edge; just track progress from
+      // the seek start — subProxyAnchor is mostly a UI-scrubber hint,
+      // so use a stable reference (first PDT + offset).
+      const userPdtAtSeek = isPostLiveStream
+        ? liveEdgeAtSeek - (lastManifestFullDuration - newOffsetSec) * 1000
+        : liveEdgeAtSeek - newOffsetSec * 1000;
       subProxyAnchor = {
         wallMs: Date.now(),
         mpvPosAtAnchor: 0,
-        behindLive,
+        behindLive: newOffsetSec,
         userPdtAtAnchor: userPdtAtSeek,
       };
-      await mpvCommand(["loadfile", subUrl, "replace", -1, "start=0,demuxer-lavf-o=live_start_index=0"]);
-      setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
-      // Reset speed in case syncVod left it off-1.0 before this scrub.
-      await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
-      if (!wasPaused) await mpvCommand(["set_property", "pause", false]);
+      playbackAnchor = null;
+      await respawnLivePipeline(newOffsetSec);
 
       // Refine the anchor once mpv reports a stable non-zero time-pos.
       // The pre-seeded `mpvPosAtAnchor=0` handles the transient window
@@ -2285,14 +2570,24 @@ app.post("/api/seek-relative", async (req, res) => {
   }
 });
 
-// Fetch HLS manifest helper — short TTL cache to avoid redundant fetches on rapid seeks
+// Fetch HLS manifest helper — short TTL cache to avoid redundant fetches on rapid seeks.
+// TTL scales with TARGETDURATION — for low-latency streams with 1s segments the old
+// fixed 2500ms TTL served stale manifests to 80%+ of ffmpeg's polls (polls every
+// TARGETDURATION/2), causing mpv to play through visible segments and freeze waiting
+// for new ones.
 const _manifestCache = new Map(); // url -> { at, data, inflight }
-const MANIFEST_TTL_MS = 2500;
+function currentManifestTtlMs() {
+  // Must stay well below ffmpeg's HLS poll interval (TARGETDURATION/2) or
+  // mpv's polls get stale manifests missing the just-produced segment.
+  // Factor 150: 1s→150ms, 2s→300ms, 5s→750ms.
+  return Math.min(2500, (lastManifestTargetDur || 5) * 150);
+}
 function fetchManifest(url) {
   const now = Date.now();
   const entry = _manifestCache.get(url);
+  const ttl = currentManifestTtlMs();
   if (entry) {
-    if (entry.data && now - entry.at < MANIFEST_TTL_MS) return Promise.resolve(entry.data);
+    if (entry.data && now - entry.at < ttl) return Promise.resolve(entry.data);
     if (entry.inflight) return entry.inflight;
   }
   const https = require('https');
@@ -2410,12 +2705,20 @@ function updateManifestStatsFromText(manifest) {
   }
 }
 // Default live proxy — full manifest, mpv starts near live edge.
+// Injects `#EXT-X-PLAYLIST-TYPE:EVENT` (YouTube's raw manifest has no
+// PLAYLIST-TYPE tag) so streamlink's --hls-start-offset is honored for
+// DVR scrubback. Without this tag streamlink treats it as a plain
+// rolling-window live and ignores the offset, always starting at edge.
 app.get("/api/hls-live.m3u8", async (_req, res) => {
   if (!currentLiveHlsUrl) return res.status(400).send("No HLS URL");
   try {
     const manifest = await fetchManifest(currentLiveHlsUrl);
     updateManifestStatsFromText(manifest);
-    res.type("application/vnd.apple.mpegurl").send(manifest);
+    let out = manifest;
+    if (!manifest.includes("#EXT-X-PLAYLIST-TYPE")) {
+      out = manifest.replace(/(#EXT-X-MEDIA-SEQUENCE:[^\n]*\n)/, "$1#EXT-X-PLAYLIST-TYPE:EVENT\n");
+    }
+    res.type("application/vnd.apple.mpegurl").send(out);
   } catch (e) {
     res.status(500).send("Proxy error: " + e.message);
   }
@@ -2556,28 +2859,19 @@ app.post("/api/enable-dvr", async (_req, res) => {
 app.post("/api/go-live", async (_req, res) => {
   if (activePlayer !== "mpv" || !currentLiveHlsUrl) return res.status(400).json({ error: "No live stream" });
   try {
-    const p = await mpvCommand(["get_property", "path"]);
-    if (p?.data?.includes("/api/hls-live.m3u8")) {
-      const d = await mpvCommand(["get_property", "duration"]);
-      if (d?.data > 5) await mpvCommand(["seek", d.data - 3, "absolute"]);
-      // Seek within live proxy still invalidates the existing anchor's
-      // time-pos correspondence — drop it so WS recaptures at the new
-      // position.
+    if (liveOffsetSec === 0) {
+      // Already at live edge. Seek to end of mpv's current buffer in
+      // case user paused and playback drifted backward through the
+      // cached stream.
+      const d = await mpvCommand(["get_property", "duration"]).catch(() => null);
+      if (d?.data > 5) await mpvCommand(["seek", d.data - 1, "absolute"]);
       playbackAnchor = null;
       return res.json({ ok: true, alreadyLive: true });
     }
-    const wasPaused = await mpvCommand(["get_property", "pause"]);
-    // Clear both anchors. playbackAnchor is bucketed by proxy path,
-    // but going live → sub-proxy → live keeps the path the same, so
-    // the WS capture condition (`path !== mpvPath.data`) would never
-    // refire and the stale anchor would report the PREVIOUS
-    // behind-live value (whatever the user scrubbed to last).
+    // Scrubbed-back DVR mode — respawn the pipeline at live edge.
     playbackAnchor = null;
     subProxyAnchor = null;
-    await mpvCommand(["loadfile", "http://localhost:3000/api/hls-live.m3u8", "replace"]);
-    setMpvForceTitle(historyMap.get(nowPlaying)?.title || "");
-    await mpvCommand(["set_property", "speed", 1.0]).catch(() => {});
-    if (!wasPaused?.data) await mpvCommand(["set_property", "pause", false]);
+    await respawnLivePipeline(0);
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2835,6 +3129,110 @@ app.post("/api/mpv-speed", async (req, res) => {
   try {
     await mpvCommand(["set_property", "speed", speed]);
     res.json({ ok: true, speed });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// List available video formats for a URL (yt-dlp -J). Cached per URL
+// in-memory for the life of the process — manifests rarely change.
+const _formatsCache = new Map();
+app.get("/api/formats", async (req, res) => {
+  const url = req.query.url;
+  if (!url || typeof url !== "string") return res.status(400).json({ error: "url required" });
+  if (_formatsCache.has(url)) return res.json(_formatsCache.get(url));
+  try {
+    const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--no-playlist", "-J", url], { timeout: 15000, maxBuffer: 32 * 1024 * 1024 });
+    const data = JSON.parse(stdout);
+    const rawFormats = data.formats || [];
+    // Keep video-bearing formats (video-only DASH or progressive).
+    // Skip storyboard/thumbnail/audio-only rows.
+    const videos = rawFormats.filter(f => f.vcodec && f.vcodec !== "none" && f.height);
+    // Normalize codec family for display.
+    const codecName = (c) => {
+      if (!c) return "";
+      const s = c.toLowerCase();
+      if (s.startsWith("avc") || s.startsWith("h264")) return "h264";
+      if (s.startsWith("vp09") || s === "vp9") return "vp9";
+      if (s.startsWith("av01")) return "av1";
+      return s.split(".")[0];
+    };
+    // Bucket by (height, fps, codec-family). Keep the best-bitrate entry per bucket.
+    const buckets = new Map();
+    for (const f of videos) {
+      const fps = Math.round(f.fps || 30);
+      const codec = codecName(f.vcodec);
+      const key = `${f.height}|${fps}|${codec}`;
+      const tbr = f.tbr || f.vbr || 0;
+      const prev = buckets.get(key);
+      if (!prev || tbr > (prev.tbr || 0)) {
+        buckets.set(key, {
+          id: String(f.format_id),
+          height: f.height,
+          fps,
+          codec,
+          tbr,
+          hasAudio: f.acodec && f.acodec !== "none",
+          ext: f.ext,
+        });
+      }
+    }
+    const list = [...buckets.values()].sort((a, b) => {
+      if (a.height !== b.height) return b.height - a.height;
+      if (a.fps !== b.fps) return b.fps - a.fps;
+      const order = { h264: 0, vp9: 1, av1: 2 };
+      return (order[a.codec] ?? 9) - (order[b.codec] ?? 9);
+    });
+    const payload = { formats: list };
+    _formatsCache.set(url, payload);
+    res.json(payload);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Reload the current video at a different yt-dlp format spec.
+// Preserves playback position. Gated on VOD only (live streams go
+// through the HLS proxy, which doesn't use yt-dlp format selection).
+app.post("/api/set-quality", async (req, res) => {
+  const { format } = req.body;
+  if (!format || typeof format !== "string") return res.status(400).json({ error: "format required" });
+  if (!nowPlaying) return res.status(400).json({ error: "nothing playing" });
+  if (!mpvProcess) return res.status(400).json({ error: "mpv not running" });
+  if (currentLiveHlsUrl) return res.status(400).json({ error: "not supported for live streams" });
+  try {
+    const posR = await mpvCommand(["get_property", "time-pos"]).catch(() => null);
+    const curPos = posR?.data || 0;
+    // Pre-resolve the URL server-side with the exact format string via
+    // yt-dlp, so mpv gets a direct media URL(s) with no ytdl_hook race.
+    // Video-only formats produce separate video + audio URLs; we hand
+    // audio to mpv as an --audio-file (newline-split output from yt-dlp
+    // --get-url).
+    let urls;
+    try {
+      const { stdout } = await execFileP(
+        "yt-dlp",
+        ["--cookies", COOKIES_FILE, "--no-playlist", "-f", format, "--get-url", nowPlaying],
+        { timeout: 20000 }
+      );
+      urls = stdout.trim().split("\n").filter(Boolean);
+    } catch (e) {
+      return res.status(500).json({ error: `yt-dlp: ${e.stderr || e.message}` });
+    }
+    if (urls.length === 0) return res.status(500).json({ error: "no url resolved" });
+    const videoUrl = urls[0];
+    const audioUrl = urls.length >= 2 ? urls[1] : null;
+    const opts = {};
+    if (audioUrl) opts["audio-file"] = audioUrl;
+    if (curPos > 1) opts["start"] = String(Math.floor(curPos));
+    const title = historyMap.get(nowPlaying)?.title || "";
+    if (title) opts["force-media-title"] = sanitizeMpvTitle(title);
+    console.log(`  set-quality: fmt=${format} pos=${curPos.toFixed(1)}s ${audioUrl ? "video+audio" : "progressive"}`);
+    await mpvCommand(["loadfile", videoUrl, "replace", 0, opts]);
+    // Invalidate cached height/codec/hwdec — the URL didn't change but the
+    // underlying stream did. Without this the NP-bar label stays stale.
+    _mpvVideoInfoCache = { url: null, height: null, videoCodec: null, hwdec: null };
+    res.json({ ok: true, format });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3240,8 +3638,28 @@ function killPhoneStream() {
   if (phoneFmp4Process) { try { phoneFmp4Process.kill("SIGKILL"); } catch {} phoneFmp4Process = null; }
 }
 
+// Authoritative mpv window visibility. The WS-broadcast `visible` used
+// to be inferred from (pause + phoneActive), which diverged from reality
+// whenever macOS lost a set-visible call or the user toggled mpv
+// manually. Ask System Events every 2s and cache; optimistic updates
+// on every osascript visibility flip keep it fresh between polls.
+let _mpvVisibleCache = true;
+async function pollMpvVisible() {
+  try {
+    const { stdout } = await execFileP("osascript", ["-e", 'tell application "System Events" to get visible of process "mpv"']);
+    _mpvVisibleCache = stdout.trim() === "true";
+  } catch {
+    // mpv not running as a GUI process — treat as not visible
+    _mpvVisibleCache = false;
+  }
+}
+setInterval(() => { pollMpvVisible().catch(() => {}); }, 2000);
+pollMpvVisible().catch(() => {});
+
 app.post("/api/watch-on-phone", async (_req, res) => {
   if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
+  // Sync mode: mpv is the audio source → keep AirPods on the Mac.
+  routeAudio("mac");
   try {
     let seconds = 0;
     const pos = await mpvCommand(["get_property", "time-pos"]);
@@ -3253,6 +3671,10 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       phoneActive = true;
       // Hide mpv window when playing on phone (don't use vid=no, it can drop audio)
       try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
+      // If we're transitioning from phone-only mode (where mpv was muted
+      // as a silent progress tracker), restore audio — in sync mode mpv
+      // is the authoritative audio source.
+      try { await mpvCommand(["set_property", "mute", false]); } catch {}
     }
 
     // Live detection: try mpv's file-format first, fall back to yt-dlp
@@ -3325,7 +3747,35 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     }
   } catch (err) {
     console.error("Watch on phone error:", err.message);
+    // yt-dlp refused (e.g. "This live event has ended" on a stream that
+    // mpv *already* has loaded — the live URLs it cached back when the
+    // stream was up still play fine). Fall back to whatever mpv is
+    // currently reading from.
     try {
+      const [pathR, fmtR] = await Promise.all([
+        mpvCommand(["get_property", "path"]).catch(() => null),
+        mpvCommand(["get_property", "file-format"]).catch(() => null),
+      ]);
+      const mpvPath = pathR?.data || "";
+      const isHls = (fmtR?.data || "").includes("hls") || /\.m3u8/.test(mpvPath);
+      if (mpvPath && mpvPath.startsWith("http")) {
+        const m = nowPlaying.match(/v=([\w-]+)/);
+        const videoId = m ? m[1] : "";
+        const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
+        const s = Math.floor(pos?.data || 0);
+        if (isHls) {
+          currentLiveHlsUrl = mpvPath;
+          startMpvPdtTracking(mpvPath);
+          phoneActive = true;
+          return res.json({
+            streamUrl: mpvPath,
+            proxyUrl: `/api/phone-hls?t=${Date.now()}`,
+            seconds: s, videoId, isLive: true,
+          });
+        }
+        phoneActive = true;
+        return res.json({ streamUrl: mpvPath, seconds: s, videoId, isLive: false });
+      }
       const m = nowPlaying.match(/v=([\w-]+)/);
       const pos = await mpvCommand(["get_property", "time-pos"]).catch(() => ({ data: 0 }));
       const s = Math.floor(pos?.data || 0);
@@ -3413,6 +3863,8 @@ let _phoneOnlyToken = 0;
 app.post("/api/phone-only", async (req, res) => {
   const { url } = req.body;
   if (!url) return res.status(400).json({ error: "No URL" });
+  // Audio to the phone — the phone is about to become the audio source.
+  routeAudio("phone");
   const token = ++_phoneOnlyToken;
   const isCurrent = () => token === _phoneOnlyToken;
   try {
@@ -5007,8 +5459,11 @@ function startWsSync() {
           const histDur = historyMap.get(nowPlaying)?.duration || 0;
           const reportedDur = dur?.data || 0;
           const timePos = pos?.data || 0;
-          const onLiveProxy = !!(mpvPath?.data?.includes("/api/hls-live.m3u8"));
-          const onSubProxy = !!(mpvPath?.data?.includes("/api/hls-sub.m3u8"));
+          // With streamlink-piped mpv, mpv's path is "-" (stdin) —
+          // we can't infer live vs DVR mode from it. Use server-side
+          // liveOffsetSec instead: 0 = live edge, >0 = scrubbed back.
+          const onLiveProxy = !!currentLiveHlsUrl && liveOffsetSec === 0;
+          const onSubProxy = !!currentLiveHlsUrl && liveOffsetSec > 0;
           if (!onSubProxy && subProxyAnchor) subProxyAnchor = null;
           const dvrActive = onSubProxy;
 
@@ -5034,15 +5489,34 @@ function startWsSync() {
           // syncOffsetMs (from the UI slider) tunes further for stream-
           // specific fine adjustments.
           const MPV_DISPLAY_LAG_MS = lastManifestTargetDur * 3 * 1000;
-          if (isHls && onLiveProxy && lastManifestEdgeEpochMs && lastManifestFetchedAt
-              && reportedDur > 5 && timePos > 1
-              && (!playbackAnchor || playbackAnchor.path !== mpvPath?.data)) {
+          // Streamlink's default --hls-live-edge is 3 segments, same
+          // offset semantics as ffmpeg's live_start_index=-3, so the
+          // MPV_DISPLAY_LAG_MS formula still applies for the initial
+          // distance from live edge.
+          //
+          // Do NOT derive behindNow from (duration - timePos): with a
+          // streamlink-piped stdin, mpv's `duration` grows as streamlink
+          // buffers forward (we've measured 300+ seconds of forward
+          // cache), so `duration - timePos` is "size of cache ahead of
+          // playhead," not "distance behind live." Using it produces a
+          // userPdtAtAnchor 5+ minutes in the past → phone seeks to that
+          // stale PDT → user sees phone "laggy."
+          //
+          // Anchor capture happens once at spawn time: we know the live
+          // edge PDT at that moment, and streamlink joined 3 segments
+          // behind it, so the frame at timePos=0 has PDT = liveEdge
+          // at spawn - MPV_DISPLAY_LAG_MS. Pinning mpvPosAtAnchor at
+          // the current timePos (which may be >0 if we get here mid-play)
+          // keeps the invariant userPdt = userPdtAtAnchor + (timePos -
+          // mpvPosAtAnchor) * 1000 correct: the delta between now and
+          // when we'd logically have captured at spawn is timePos
+          // seconds of content progress, which the formula adds back.
+          if (onLiveProxy && lastManifestEdgeEpochMs && lastManifestFetchedAt
+              && reportedDur > 0 && timePos >= 0 && !paused && !playbackAnchor) {
             const liveEdgeNow = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt);
-            const behindNow = Math.max(0, reportedDur - timePos);
             playbackAnchor = {
-              path: mpvPath.data,
               mpvPosAtAnchor: timePos,
-              userPdtAtAnchor: liveEdgeNow - behindNow * 1000 - MPV_DISPLAY_LAG_MS,
+              userPdtAtAnchor: liveEdgeNow - MPV_DISPLAY_LAG_MS,
             };
           }
           // Invalidate playbackAnchor when mpv is no longer on the live
@@ -5063,6 +5537,13 @@ function startWsSync() {
           // snaps to the left edge for a tick.
           if (lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
+            // post_live: finite VOD, position = liveOffsetSec + timePos
+            // (seconds streamlink skipped from start, plus mpv's playtime).
+            // Skip the PDT-based math below — there's no live edge to
+            // extrapolate against, and doing so makes scrubPos drift.
+            if (isPostLiveStream) {
+              scrubPos = Math.max(0, Math.min(scrubDur, liveOffsetSec + timePos));
+            }
             const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
             if (onLiveProxy && playbackAnchor) {
               userPdt = playbackAnchor.userPdtAtAnchor + (timePos - playbackAnchor.mpvPosAtAnchor) * 1000;
@@ -5078,17 +5559,15 @@ function startWsSync() {
               // freeze userPdt (mpv_pos stops advancing). 1x playback
               // makes userPdt advance at 1x. Phone tracks cleanly.
               userPdt = subProxyAnchor.userPdtAtAnchor + (timePos - subProxyAnchor.mpvPosAtAnchor) * 1000;
-            } else if (liveEdgeNow) {
-              // Transient fallback before any anchor is established.
-              // Sub-proxy forces `live_start_index=0`, bypassing ffmpeg's
-              // default -3 safety margin, so MPV_DISPLAY_LAG_MS doesn't
-              // apply there — subtracting it would misreport behindLive
-              // by the lag amount (typically 6-15s) on reconnect, when
-              // no anchor is available yet.
-              const lagMs = onSubProxy ? 0 : MPV_DISPLAY_LAG_MS;
-              userPdt = liveEdgeNow - Math.max(0, reportedDur - timePos) * 1000 - lagMs;
+            } else if (liveEdgeNow && onLiveProxy) {
+              // Transient fallback for live mode before playbackAnchor
+              // is established. Under 1x playback, mpv's displayed frame
+              // is MPV_DISPLAY_LAG_MS behind live edge (streamlink's
+              // --hls-live-edge=3 segments). Do not use (reportedDur -
+              // timePos) here — see comment at playbackAnchor capture.
+              userPdt = liveEdgeNow - MPV_DISPLAY_LAG_MS;
             }
-            if (userPdt != null && liveEdgeNow) {
+            if (!isPostLiveStream && userPdt != null && liveEdgeNow) {
               const behindLiveSec = Math.max(0, (liveEdgeNow - userPdt) / 1000);
               scrubPos = Math.max(0, Math.min(scrubDur, scrubDur - behindLiveSec));
             }
@@ -5114,7 +5593,15 @@ function startWsSync() {
           // instead of "-mm:ss" behind-live. If we're on one of our own
           // proxy URLs, it's definitionally HLS regardless of what mpv
           // has gotten around to reporting.
-          const effectiveIsLive = isHls || onLiveProxy || onSubProxy;
+          //
+          // BUT: if the live upstream URL was lost (yt-dlp refused after
+          // a server restart, stream ended and became a VOD, etc.) the
+          // manifest-refresh loop can't run, PDT never gets populated,
+          // and phone sync hangs on "awaiting pdt". In that case, stop
+          // claiming it's live — let the phone fall back to VOD-style
+          // position sync so it at least stays roughly aligned.
+          const liveBackendLost = (onLiveProxy || onSubProxy) && !currentLiveHlsUrl;
+          const effectiveIsLive = !liveBackendLost && (isHls || onLiveProxy || onSubProxy);
           state = {
             type: "playback",
             playing: true, isLive: effectiveIsLive, player: "mpv",
@@ -5132,7 +5619,7 @@ function startWsSync() {
             channel: historyMap.get(nowPlaying)?.channel || "",
             thumbnail: historyMap.get(nowPlaying)?.thumbnail || "",
             monitor: currentMonitor, windowMode: windowMode || "floating",
-            visible: !phoneActive && !(pause?.data && windowMode !== "fullscreen"),
+            visible: _mpvVisibleCache,
             height: _mpvVideoInfoCache.height,
             videoCodec: _mpvVideoInfoCache.videoCodec,
             hwdec: _mpvVideoInfoCache.hwdec,
@@ -5199,8 +5686,22 @@ httpServer.listen(PORT, "0.0.0.0", async () => {
           nowPlaying = null;
         }
       } else if (url) {
-        const m = url.match(/v=([\w-]+)/);
-        nowPlaying = m ? `https://www.youtube.com/watch?v=${m[1]}` : url;
+        // YouTube watch URLs always carry an 11-char id after `?v=` or
+        // `&v=`. Loose `v=(\w+)` also matches googlevideo internals
+        // (e.g. `&mv=m`), producing a bogus v=m that poisons nowPlaying.
+        // If mpv is currently on a googlevideo URL (happens after a
+        // /api/set-quality re-resolves the stream directly), fall back
+        // to the most recent history entry — it was the YouTube URL we
+        // originally started from.
+        const m = url.match(/[?&]v=([\w-]{11})(?:&|$)/);
+        if (m) {
+          nowPlaying = `https://www.youtube.com/watch?v=${m[1]}`;
+        } else if (/googlevideo\.com/.test(url) && history[0]?.url && /youtube\.com\/watch\?v=/.test(history[0].url)) {
+          nowPlaying = history[0].url;
+          console.log("  Recovered nowPlaying from history[0] (googlevideo):", nowPlaying);
+        } else {
+          nowPlaying = url;
+        }
       } else {
         // Try media-title to find the URL in history
         const t = await mpvCommand(["get_property", "media-title"]);

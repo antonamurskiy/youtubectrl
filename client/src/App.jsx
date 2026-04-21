@@ -98,6 +98,23 @@ function TmuxTabButton({ window: w }) {
   )
 }
 
+function NowPlayingBarMount({ show, ...props }) {
+  const [mounted, setMounted] = useState(show)
+  const [exiting, setExiting] = useState(false)
+  useEffect(() => {
+    if (show) {
+      setMounted(true)
+      setExiting(false)
+    } else if (mounted) {
+      setExiting(true)
+      const t = setTimeout(() => { setMounted(false); setExiting(false) }, 200)
+      return () => clearTimeout(t)
+    }
+  }, [show, mounted])
+  if (!mounted) return null
+  return <NowPlayingBar {...props} exiting={exiting} />
+}
+
 function App() {
   const { send } = useSync()
   useMediaSession()
@@ -391,7 +408,7 @@ function App() {
           </div>
         </Suspense>
       )}
-      {playing && <NowPlayingBar send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />}
+      <NowPlayingBarMount show={playing} send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />
       {useSyncStore(s => s.commentsOpen) && playing && <CommentsPanel />}
       {secretMenuOpen && <SecretMenu />}
 

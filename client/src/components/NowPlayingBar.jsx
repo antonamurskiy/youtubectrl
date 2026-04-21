@@ -51,6 +51,23 @@ function AudioOutputButton() {
   const [open, setOpen] = useState(false)
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
+  const [volume, setVolumeState] = useState(50)
+  const [muted, setMuted] = useState(false)
+  const volInFlight = useRef(false)
+  const volPending = useRef(null)
+  const sendVolume = useCallback(() => {
+    if (volInFlight.current || volPending.current == null) return
+    const v = volPending.current
+    volPending.current = null
+    volInFlight.current = true
+    fetch('/api/volume', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ volume: v }),
+    }).catch(() => {}).finally(() => {
+      volInFlight.current = false
+      if (volPending.current != null) sendVolume()
+    })
+  }, [])
   const addToast = useUIStore(s => s.addToast)
   const loadBt = () => fetch('/api/bluetooth-devices').then(r => r.json()).then(d => setBtDevices(d.devices || [])).catch(() => {})
   // Keep current output + BT battery fresh across:
@@ -67,6 +84,11 @@ function AudioOutputButton() {
         if (!alive) return
         setOutputs(d.outputs || [])
         setCurrent(d.current || '')
+      }).catch(() => {})
+      fetch('/api/volume-status').then(r => r.json()).then(d => {
+        if (!alive) return
+        setMuted(!!d.muted)
+        if (d.volume != null) setVolumeState(d.volume)
       }).catch(() => {})
       loadBt()
     }
@@ -117,6 +139,12 @@ function AudioOutputButton() {
       .catch(() => addToast('Switch failed'))
     setOpen(false)
   }
+  const refreshOutputs = () => {
+    fetch('/api/audio-outputs').then(r => r.json()).then(d => {
+      setOutputs(d.outputs || [])
+      setCurrent(d.current || '')
+    }).catch(() => {})
+  }
   const toggleBtDevice = (d) => {
     hapticThump()
     const action = d.connected ? 'disconnect' : 'connect'
@@ -124,6 +152,13 @@ function AudioOutputButton() {
       .then(r => r.json()).then(res => {
         addToast(res.ok ? `${action === 'connect' ? 'Connected' : 'Disconnected'} ${d.name}` : 'Failed')
         loadBt()
+        // System takes a moment to register the new Core Audio device
+        // after BT connect — poll a few times so the output list and
+        // `current` selection update without the user having to close
+        // and reopen the menu.
+        refreshOutputs()
+        setTimeout(refreshOutputs, 800)
+        setTimeout(refreshOutputs, 2000)
       }).catch(() => addToast('Failed'))
   }
   return (
@@ -202,6 +237,89 @@ function AudioOutputButton() {
                 </button>
               )
             })}
+            {/* Volume — full-width scrubber, matches secret menu size-area
+                pattern. Mute toggle on the left, fill bar + pct label. */}
+            <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid var(--border)' }}>
+              <button
+                onClick={() => {
+                  hapticThump()
+                  fetch('/api/mute', { method: 'POST' }).then(r => r.json())
+                    .then(d => { setMuted(!!d.muted); addToast(d.muted ? 'Muted' : 'Unmuted') })
+                    .catch(() => addToast('Mute failed'))
+                }}
+                style={{
+                  background: 'none', border: 'none', padding: '0 12px', cursor: 'pointer',
+                  color: muted ? 'var(--red)' : 'var(--text)',
+                  display: 'inline-flex', alignItems: 'center', flexShrink: 0,
+                }}
+                aria-label={muted ? 'Unmute' : 'Mute'}
+              >
+                {muted ? (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <line x1="23" y1="9" x2="17" y2="15" />
+                    <line x1="17" y1="9" x2="23" y2="15" />
+                  </svg>
+                ) : (
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                    <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
+                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+                  </svg>
+                )}
+              </button>
+              <div
+                className="size-area"
+                style={{ flex: 1, height: 40 }}
+                ref={el => {
+                  if (!el || el._volAttached) return
+                  el._volAttached = true
+                  let dragging = false
+                  const updateFromX = (clientX) => {
+                    const rect = el.getBoundingClientRect()
+                    if (rect.width <= 0) return
+                    const x = Math.max(0, Math.min(clientX - rect.left, rect.width))
+                    const v = Math.round((x / rect.width) * 100)
+                    setVolumeState(v)
+                    volPending.current = v
+                    sendVolume()
+                  }
+                  const onTouchStart = (e) => {
+                    if (!e.touches?.length) return
+                    e.preventDefault()
+                    dragging = true
+                    hapticSelectionStart()
+                    updateFromX(e.touches[0].clientX)
+                  }
+                  const onTouchMove = (e) => {
+                    if (!dragging || !e.touches?.length) return
+                    e.preventDefault()
+                    updateFromX(e.touches[0].clientX)
+                  }
+                  const onTouchEnd = () => { dragging = false; hapticSelectionEnd() }
+                  const onMouseDown = (e) => {
+                    dragging = true
+                    updateFromX(e.clientX)
+                    const move = (ev) => { if (dragging) updateFromX(ev.clientX) }
+                    const up = () => {
+                      dragging = false
+                      window.removeEventListener('mousemove', move)
+                      window.removeEventListener('mouseup', up)
+                    }
+                    window.addEventListener('mousemove', move)
+                    window.addEventListener('mouseup', up)
+                  }
+                  el.addEventListener('touchstart', onTouchStart, { passive: false })
+                  el.addEventListener('touchmove', onTouchMove, { passive: false })
+                  el.addEventListener('touchend', onTouchEnd)
+                  el.addEventListener('touchcancel', onTouchEnd)
+                  el.addEventListener('mousedown', onMouseDown)
+                }}
+              >
+                <div className="size-fill" style={{ width: `${volume}%` }} />
+                <div className="size-label">{volume}</div>
+              </div>
+            </div>
           </div>
         </>,
         document.body
@@ -254,6 +372,20 @@ const Icons = {
       <line x1="12" y1="18" x2="12" y2="18" />
     </svg>
   ),
+  computer: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+      <rect x="2" y="4" width="20" height="12" rx="1" />
+      <line x1="6" y1="20" x2="18" y2="20" />
+      <line x1="12" y1="16" x2="12" y2="20" />
+    </svg>
+  ),
+  syncMode: (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+      <rect x="2" y="4" width="9" height="7" rx="1" />
+      <rect x="14" y="9" width="8" height="12" rx="1" />
+      <path d="M 8 14 L 12 14 L 12 17" />
+    </svg>
+  ),
   stop: (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
       <rect x="6" y="6" width="12" height="12" rx="2" />
@@ -284,7 +416,7 @@ const Icons = {
   ),
 }
 
-export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
+export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }) {
   const pb = usePlaybackStore(useShallow(s => ({
     position: s.position, duration: s.duration, url: s.url,
     isLive: s.isLive, dvrActive: s.dvrActive, paused: s.paused, playing: s.playing,
@@ -306,6 +438,9 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const [currentPosVisible, setCurrentPosVisible] = useState(false)
   const [storyboard, setStoryboard] = useState(null)
   const [titleMenu, setTitleMenu] = useState(null) // {x,y}
+  const [modeMenu, setModeMenu] = useState(null) // {x,y}
+  const [currentQuality, setCurrentQuality] = useState('Best')
+  const [formatList, setFormatList] = useState(null) // null = not fetched, [] = empty, [...] = list
   const longPressTimer = useRef(null)
   const longPressTriggered = useRef(false)
   const touchStartPos = useRef(null)
@@ -506,6 +641,33 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     fetch('/api/playpause', { method: 'POST' }).catch(() => {})
   }, [pb.paused])
 
+  const setQuality = useCallback((preset) => {
+    hapticTick()
+    setCurrentQuality(preset.label)
+    setTitleMenu(null)
+    fetch('/api/set-quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ format: preset.format }) })
+      .then(r => r.json())
+      .then(d => { if (d.error) addToast(`Quality: ${d.error}`); else addToast(`→ ${preset.label}`) })
+      .catch(() => addToast('Quality switch failed'))
+  }, [addToast])
+
+  // Reset dynamic format list when the playing URL changes
+  useEffect(() => {
+    setFormatList(null)
+    setCurrentQuality('Best')
+  }, [pb.url])
+
+  // Fetch available formats when the menu opens (VOD only)
+  useEffect(() => {
+    if (!titleMenu || pb.isLive || !pb.url || formatList !== null) return
+    const controller = new AbortController()
+    fetch(`/api/formats?url=${encodeURIComponent(pb.url)}`, { signal: controller.signal })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d?.formats) setFormatList(d.formats) })
+      .catch(() => {})
+    return () => controller.abort()
+  }, [titleMenu, pb.isLive, pb.url, formatList])
+
   const handleTitleTouchStart = useCallback((e) => {
     longPressTriggered.current = false
     const touch = e.touches?.[0] || e
@@ -578,6 +740,45 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
     setPhoneOpen(true)
   }, [phoneOpen, setPhoneOpen])
 
+  // Mode switcher. Three modes:
+  //   - computer: mpv on the Mac, phone panel closed
+  //   - sync:     mpv + phone playing the same thing, drift-synced
+  //   - phone-only: phone plays directly, mpv muted+hidden as progress tracker
+  const switchMode = useCallback((target) => {
+    hapticTick()
+    setModeMenu(null)
+    const sync = useSyncStore.getState()
+    const curMode = sync.phoneOnlyUrl ? 'phone-only' : sync.phoneOpen ? 'sync' : 'computer'
+    if (curMode === target) return
+
+    if (target === 'computer') {
+      if (sync.phoneOpen) fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+      sync.setPhoneOpen(false)
+      return
+    }
+
+    if (!pb.url) { addToast('Nothing playing'); return }
+
+    if (target === 'phone-only') {
+      // setPhoneOnly(url) opens the panel + marks phone-only. PhonePlayer's
+      // effect fetches /api/phone-only which mutes+hides mpv server-side
+      // and returns the direct stream URL.
+      sync.setPhoneOnly(pb.url)
+      return
+    }
+
+    // target === 'sync'
+    if (curMode === 'phone-only') {
+      // Clear phone-only but keep phoneOpen=true. PhonePlayer's effect
+      // re-runs with phoneOnlyUrl=null → fetches /api/watch-on-phone.
+      // Server unmutes mpv there so audio comes back on the Mac side.
+      sync.setPhoneOnly(null)
+      return
+    }
+    // coming from computer
+    sync.setPhoneOpen(true)
+  }, [pb.url, addToast])
+
   const skipBack = useCallback(() => {
     hapticTick()
     const ctrl = phoneCtrl()
@@ -623,12 +824,29 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
   const frame = seekPreview ? getStoryboardFrame(seekPreview.time) : null
 
   return (
-    <div className="now-playing" ref={rootRef}>
+    <div className={`now-playing${exiting ? ' np-exit' : ''}`} ref={rootRef}>
       {/* Progress bar — on top of everything */}
       <div
         className="np-progress-bar"
         ref={barRef}
         onPointerDown={handlePointerDownFixed}
+        onPointerMove={(e) => {
+          // Desktop hover preview. Mouse-only — pen/touch generate
+          // pointer events too but we don't want to flash the preview
+          // on passive touches. Active drags already fill seekPreview
+          // via the document-level pointermove handler.
+          if (e.pointerType !== 'mouse' || isSeeking) return
+          const bar = barRef.current
+          if (!bar) return
+          const rect = bar.getBoundingClientRect()
+          const t = snapToChapter(getSeekPosition(e.clientX))
+          const x = Math.max(100, Math.min(e.clientX - rect.left, rect.width - 100))
+          setSeekPreview({ x, time: t })
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType !== 'mouse' || isSeeking) return
+          setSeekPreview(null)
+        }}
       >
         <div className="np-progress-fill" style={{ width: `${pct}%` }} />
         {chapters.length > 1 && chapters.map((ch, i) => i > 0 && (
@@ -753,10 +971,14 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
         <button
           className={`np-btn${phoneOpen ? ' active' : ''}`}
           style={pb.phoneSyncOk === false ? { opacity: 0.3 } : undefined}
-          onClick={() => { hapticThump(); watchOnPhone() }}
-          title={pb.phoneSyncOk === false ? 'No MP4 — phone sync unavailable' : 'Watch on phone'}
+          onClick={(e) => {
+            hapticThump()
+            const r = e.currentTarget.getBoundingClientRect()
+            setModeMenu({ x: r.left + r.width / 2, y: r.top })
+          }}
+          title={phoneOnlyUrl ? 'Phone only' : phoneOpen ? 'Sync mode' : 'Computer mode'}
         >
-          {Icons.phone}
+          {phoneOnlyUrl ? Icons.phone : phoneOpen ? Icons.syncMode : Icons.computer}
         </button>
         <button
           className={`np-btn${commentsOpen ? ' active' : ''}`}
@@ -847,13 +1069,25 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             className="context-menu"
             ref={el => {
               if (!el) return
-              const rect = el.getBoundingClientRect()
-              const maxX = window.innerWidth - rect.width - 8
-              let y = titleMenu.y - rect.height - 8
-              if (y < 8) y = titleMenu.y + 8
-              el.style.top = `${y}px`
-              el.style.left = `${Math.min(Math.max(titleMenu.x - rect.width / 2, 8), maxX)}px`
+              // Room above the tap vs. below it — pick the bigger side
+              // and cap the menu's height to fit. Prevents the quality
+              // picker (which can get tall on videos with many formats)
+              // from running off either edge of the screen.
+              const margin = 8
+              const spaceAbove = titleMenu.y - margin
+              const spaceBelow = window.innerHeight - titleMenu.y - margin
+              const placeAbove = spaceAbove >= spaceBelow
+              const maxH = Math.max(120, placeAbove ? spaceAbove : spaceBelow)
+              el.style.maxHeight = `${maxH}px`
+              el.style.overflowY = 'auto'
               el.style.zIndex = 9999
+              const rect = el.getBoundingClientRect()
+              const maxX = window.innerWidth - rect.width - margin
+              const y = placeAbove
+                ? Math.max(margin, titleMenu.y - rect.height - margin)
+                : Math.min(window.innerHeight - rect.height - margin, titleMenu.y + margin)
+              el.style.top = `${y}px`
+              el.style.left = `${Math.min(Math.max(titleMenu.x - rect.width / 2, margin), maxX)}px`
             }}
           >
             <button className="context-menu-item" onClick={() => {
@@ -871,7 +1105,88 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus }) {
             }}>
               Copy link
             </button>
+            {!pb.isLive && (
+              <>
+                <div className="context-menu-sep" style={{ height: 1, background: 'var(--border)', margin: '4px 0' }} />
+                <div style={{ padding: '4px 12px', fontSize: 'var(--font-sm)', color: 'var(--text-dim)' }}>Quality</div>
+                <button
+                  className="context-menu-item"
+                  style={{ color: 'Best' === currentQuality ? 'var(--accent)' : 'var(--text)' }}
+                  onClick={() => setQuality({ label: 'Best', format: 'bv*+ba/b' })}
+                >
+                  Best{'Best' === currentQuality ? '  ●' : ''}
+                </button>
+                {formatList === null && (
+                  <div style={{ padding: '4px 12px', fontSize: 'var(--font-sm)', color: 'var(--text-dim)' }}>Loading…</div>
+                )}
+                {formatList && formatList.length === 0 && (
+                  <div style={{ padding: '4px 12px', fontSize: 'var(--font-sm)', color: 'var(--text-dim)' }}>No formats</div>
+                )}
+                {formatList && formatList.map(f => {
+                  const fpsLabel = f.fps > 30 ? `${f.height}p${f.fps}` : `${f.height}p`
+                  const label = `${fpsLabel} · ${f.codec}${f.tbr ? ` · ${Math.round(f.tbr)}k` : ''}`
+                  const fmt = f.hasAudio ? f.id : `${f.id}+bestaudio/bestvideo[height<=${f.height}][fps<=${f.fps}]+bestaudio`
+                  return (
+                    <button
+                      key={f.id + '|' + f.codec + '|' + f.fps}
+                      className="context-menu-item"
+                      style={{ color: label === currentQuality ? 'var(--accent)' : 'var(--text)' }}
+                      onClick={() => setQuality({ label, format: fmt })}
+                    >
+                      {label}{label === currentQuality ? '  ●' : ''}
+                    </button>
+                  )
+                })}
+              </>
+            )}
             <button className="context-menu-item" onClick={() => setTitleMenu(null)} style={{ color: 'var(--accent2)' }}>
+              Close
+            </button>
+          </div>
+        </>,
+        document.body
+      )}
+
+      {modeMenu && createPortal(
+        <>
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 9998 }}
+            onClick={() => setModeMenu(null)}
+          />
+          <div
+            className="context-menu"
+            ref={el => {
+              if (!el) return
+              const rect = el.getBoundingClientRect()
+              const maxX = window.innerWidth - rect.width - 8
+              let y = modeMenu.y - rect.height - 8
+              if (y < 8) y = modeMenu.y + 8
+              el.style.top = `${y}px`
+              el.style.left = `${Math.min(Math.max(modeMenu.x - rect.width / 2, 8), maxX)}px`
+              el.style.zIndex = 9999
+            }}
+          >
+            {(() => {
+              const mode = phoneOnlyUrl ? 'phone-only' : phoneOpen ? 'sync' : 'computer'
+              const Row = ({ id, label, icon }) => (
+                <button
+                  className="context-menu-item"
+                  onClick={() => switchMode(id)}
+                  style={{ color: mode === id ? 'var(--green)' : 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                >
+                  <span style={{ display: 'inline-flex', width: 16, justifyContent: 'center' }}>{icon}</span>
+                  <span>{label}{mode === id ? '  ●' : ''}</span>
+                </button>
+              )
+              return (
+                <>
+                  <Row id="computer" label="Computer" icon={Icons.computer} />
+                  <Row id="sync" label="Sync" icon={Icons.syncMode} />
+                  <Row id="phone-only" label="Phone only" icon={Icons.phone} />
+                </>
+              )
+            })()}
+            <button className="context-menu-item" onClick={() => setModeMenu(null)} style={{ color: 'var(--accent2)' }}>
               Close
             </button>
           </div>

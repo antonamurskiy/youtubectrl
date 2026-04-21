@@ -38,7 +38,14 @@ button {
   --font-sm: 14px;
 }
 
-html { background: var(--bg); }
+html {
+  background: var(--bg);
+  /* Pin auto-text-size adjustment off. Without this, iOS Safari boosts
+   * font sizes in landscape (its "readability" heuristic) and the NP
+   * bar title + channel labels render much larger than in portrait. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 
 body {
   font-family: var(--font);
@@ -333,11 +340,20 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 }
 .video-card:active::before { opacity: 1; }
 .video-card.playing {
-  background: var(--surface);
+  background: rgba(142, 192, 124, 0.10);
   margin-left: -16px;
   margin-right: -16px;
   padding-left: 16px;
   padding-right: 16px;
+}
+.video-card.playing .thumb-wrap {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+.video-card.playing .video-title,
+.video-card.playing .video-channel,
+.video-card.playing .video-meta {
+  color: var(--green);
 }
 
 .thumb-wrap {
@@ -629,6 +645,19 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   -webkit-backface-visibility: hidden;
   backface-visibility: hidden;
   -webkit-transform-style: preserve-3d;
+  animation: np-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  will-change: transform, opacity;
+}
+.now-playing.np-exit {
+  animation: np-exit 180ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes np-enter {
+  from { transform: translate3d(0, 100%, 0); opacity: 0; }
+  to   { transform: translate3d(0, 0, 0); opacity: 1; }
+}
+@keyframes np-exit {
+  from { transform: translate3d(0, 0, 0); opacity: 1; }
+  to   { transform: translate3d(0, 100%, 0); opacity: 0; }
 }
 
 .np-btn-row {
@@ -1632,6 +1661,10 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
     gap: 20px;
   }
 
+  .video-grid--wide {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .video-card {
     flex-direction: column;
     gap: 8px;
@@ -1672,5 +1705,8 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 @media (min-width: 1400px) {
   .video-grid {
     grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  }
+  .video-grid--wide {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }

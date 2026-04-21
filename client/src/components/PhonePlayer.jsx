@@ -759,21 +759,44 @@ export default function PhonePlayer({ send }) {
   }, [])
 
   // Sync phone playhead position to the hidden mpv so its own progress
-  // tracking picks up the right number after we close.
+  // tracking picks up the right number after we close, AND persist
+  // progress directly via /api/phone-progress. Direct persistence is
+  // the authoritative path — relying on mpv to save its own time-pos
+  // was fragile (muted mpv can drift, timers throttle when the WebView
+  // is backgrounded under PiP, etc.).
   const syncToMpv = useCallback(async () => {
     const url = phoneOnlyUrl
     if (!url) return
     let position = 0
+    let duration = 0
     if (isNativeIOS) {
-      try { const s = await NativePlayer.getState(); position = s?.position || 0 } catch {}
+      try { const s = await NativePlayer.getState(); position = s?.position || 0; duration = s?.duration || 0 } catch {}
     } else if (videoRef.current) {
       position = videoRef.current.currentTime || 0
+      duration = videoRef.current.duration || 0
     }
     if (position > 0) {
+      const pb = usePlaybackStore.getState()
       fetch('/api/seek', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ position }),
+      }).catch(() => {})
+      fetch('/api/phone-progress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url,
+          position,
+          duration: duration || pb.duration || 0,
+          title: pb.title || '',
+          channel: pb.channel || '',
+          thumbnail: pb.thumbnail || '',
+        }),
+        // iOS throttles fetch() when the WebView is suspended (e.g.
+        // PiP backgrounded). keepalive lets the request survive being
+        // scheduled just as the page is freezing.
+        keepalive: true,
       }).catch(() => {})
     }
   }, [phoneOnlyUrl])
@@ -793,6 +816,21 @@ export default function PhonePlayer({ send }) {
       loadedUrlRef.current = null
     })
   }, [setPhoneOpen, send, syncToMpv])
+
+  // Force one progress save whenever the WebView is about to background
+  // (PiP taking over, app switcher, screen lock). iOS throttles timers
+  // in background so the 10s interval below is unreliable — this catch
+  // ensures the position right before the transition is persisted.
+  useEffect(() => {
+    if (!phoneOnlyUrl) return
+    const onHide = () => { if (document.hidden) syncToMpv() }
+    document.addEventListener('visibilitychange', onHide)
+    window.addEventListener('pagehide', onHide)
+    return () => {
+      document.removeEventListener('visibilitychange', onHide)
+      window.removeEventListener('pagehide', onHide)
+    }
+  }, [phoneOnlyUrl, syncToMpv])
 
   // Periodic sync every 10s so mpv's position tracker (which saves to
   // history) matches the phone player. Cheap: hits /api/seek which just

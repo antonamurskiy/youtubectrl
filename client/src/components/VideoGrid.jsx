@@ -4,6 +4,7 @@ import { useUIStore } from '../stores/ui'
 import { usePlaybackStore } from '../stores/playback'
 import { useSyncStore } from '../stores/sync'
 import VideoCard from './VideoCard'
+import { playVideo } from '../playVideo'
 
 const PAGE_SIZE = 24
 
@@ -41,10 +42,9 @@ function ShortCard({ short }) {
       onMouseEnter={() => { if (!isMobile) setPreviewing(true) }}
       onMouseLeave={() => { if (!isMobile) setPreviewing(false) }}
       onClick={() => {
-        fetch('/api/play', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: `https://www.youtube.com/watch?v=${short.id}`, title: short.title }),
+        playVideo({
+          url: `https://www.youtube.com/watch?v=${short.id}`,
+          title: short.title,
         }).catch(() => {})
       }}
     >

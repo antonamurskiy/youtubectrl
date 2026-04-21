@@ -54,6 +54,14 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
     }
     private var userStartedPip = false
+    // Speaker-suppression state. During phone-only handoff from the
+    // Mac, AirPods disconnect from the Mac and briefly the iPhone
+    // routes audio through its built-in speaker before they re-connect
+    // here. suppressUntilHeadphones() mutes AVPlayer and watches for a
+    // route-change notification; once the current route is no longer
+    // the built-in speaker (bluetooth/wired headphones/CarPlay), it
+    // unmutes. Has a hard timeout so we never leave the user stuck on
+    // mute if no headphones ever connect.
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "load", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "play", returnType: CAPPluginReturnPromise),
@@ -211,8 +219,15 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         let cmd = MPRemoteCommandCenter.shared()
 
+        // Set expectedPaused BEFORE mutating player.rate so the rate KVO
+        // observer recognizes the change as expected and skips emitting
+        // `playerStateChanged`. Without this, both remote* and
+        // playerStateChanged events fire for the same tap, and JS POSTs
+        // /api/playpause twice — net zero, so the lock-widget play button
+        // appears to do nothing.
         cmd.playCommand.isEnabled = true
         cmd.playCommand.addTarget { [weak self] _ in
+            self?.expectedPaused = false
             self?.player?.play()
             self?.notifyListeners("remotePlay", data: [:])
             self?.updateNowPlayingPlaybackState()
@@ -221,6 +236,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         cmd.pauseCommand.isEnabled = true
         cmd.pauseCommand.addTarget { [weak self] _ in
+            self?.expectedPaused = true
             self?.player?.pause()
             self?.notifyListeners("remotePause", data: [:])
             self?.updateNowPlayingPlaybackState()
@@ -229,7 +245,10 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         cmd.togglePlayPauseCommand.isEnabled = true
         cmd.togglePlayPauseCommand.addTarget { [weak self] _ in
-            if let p = self?.player { if p.rate == 0 { p.play() } else { p.pause() } }
+            if let p = self?.player {
+                if p.rate == 0 { self?.expectedPaused = false; p.play() }
+                else { self?.expectedPaused = true; p.pause() }
+            }
             self?.notifyListeners("remoteTogglePlayPause", data: [:])
             self?.updateNowPlayingPlaybackState()
             return .success
@@ -639,12 +658,13 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 diag["audioSessionError"] = "\(error)"
             }
 
-            // Silent keep-alive. iOS's lock-screen Now Playing widget
-            // infers play/pause partly from whether the app's audio session
-            // is actively playing audio. Keeping the silent player at
-            // rate=1 while mpv is paused makes the widget show the pause
-            // icon (i.e. "playing") even though playbackState=.paused. So
-            // mirror the reported paused state onto the silent player.
+            // Silent keep-alive. Mirror mpv's paused state so the widget
+            // shows the right play/pause icon — silent at rate=1 makes
+            // iOS display the pause button (i.e. "content is playing")
+            // regardless of what MPNowPlayingInfoCenter.playbackState
+            // says. We accept that when paused the session may get
+            // deactivated; the resume-from-CC fetch below uses
+            // keepalive so it still reaches the server.
             if self.silentPlayer == nil {
                 if let url = URL(string: "http://yuzu.local:3000/silent.m4a") {
                     let item = AVPlayerItem(url: url)

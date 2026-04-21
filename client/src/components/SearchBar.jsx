@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback } from 'react'
 import { useUIStore } from '../stores/ui'
+import { playVideo } from '../playVideo'
 
 const YT_URL_RE = /(?:youtube\.com\/watch\?v=|youtu\.be\/|youtube\.com\/shorts\/)([\w-]+)/
 
@@ -18,11 +19,7 @@ export default function SearchBar() {
     const match = q.match(YT_URL_RE)
     if (match) {
       const url = q.includes('http') ? q : `https://www.youtube.com/watch?v=${match[1]}`
-      fetch('/api/play', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url }),
-      }).then(() => {
+      playVideo({ url }).then(() => {
         addToast('Playing URL')
         setValue('')
       }).catch(() => addToast('Play failed'))

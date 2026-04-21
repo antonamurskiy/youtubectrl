@@ -86,7 +86,10 @@ export function useNativeNowPlaying({ send }) {
         const pb = usePlaybackStore.getState()
         if (pb.paused) ctrl.play?.(); else ctrl.pause?.()
       } else {
-        fetch('/api/playpause', { method: 'POST' }).catch(() => {})
+        // keepalive: Control Center / lock-widget taps fire while the
+        // WebView is backgrounded. Without keepalive the fetch can be
+        // dropped by iOS before it goes out the wire.
+        fetch('/api/playpause', { method: 'POST', keepalive: true }).catch(() => {})
       }
     }
 
@@ -97,6 +100,7 @@ export function useNativeNowPlaying({ send }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ offset: delta }),
+        keepalive: true,
       }).catch(() => {})
     }
 
@@ -104,12 +108,18 @@ export function useNativeNowPlaying({ send }) {
     handlers.push(NativePlayer.addListener('remotePause', togglePlayPause))
     handlers.push(NativePlayer.addListener('remoteTogglePlayPause', togglePlayPause))
     // AVPlayer's state flipped externally (PiP window's play/pause
-    // button, AirPods tap while the Remote Command handlers don't
-    // catch it). If mpv's paused state doesn't match, toggle mpv so
-    // the two stay in sync. Without this, tapping play in the PiP
-    // window while the app's backgrounded did nothing lasting —
-    // our sync loop would re-pause AVPlayer on the next tick because
-    // pb.paused was still true.
+    // button, AirPods tap). If mpv's paused state doesn't match,
+    // toggle mpv so the two stay in sync. Without this, tapping play
+    // in the PiP window while the app's backgrounded did nothing
+    // lasting — our sync loop would re-pause AVPlayer on the next
+    // tick because pb.paused was still true.
+    //
+    // Lock-widget / MPRemoteCommand taps DO also change player.rate,
+    // so they'd fire this listener too — but the native plugin sets
+    // `expectedPaused` before mutating the player in those handlers,
+    // which short-circuits the rate observer and suppresses the
+    // `playerStateChanged` emission. That leaves only `remotePlay`/
+    // `remotePause` below to POST /api/playpause, one toggle per tap.
     handlers.push(NativePlayer.addListener('playerStateChanged', ({ paused }) => {
       const pb = usePlaybackStore.getState()
       if (pb.paused !== paused) {
