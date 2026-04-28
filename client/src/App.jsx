@@ -177,6 +177,26 @@ function App() {
   useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
   const longPressRef = useRef(null)
 
+  // Toggle body.keyboard-open when iOS soft keyboard is up. CSS uses
+  // this to lift FABs above the keyboard only when needed; otherwise
+  // they stay at their normal just-above-the-now-playing-bar spot.
+  useEffect(() => {
+    const vv = window.visualViewport
+    if (!vv) return
+    const update = () => {
+      const kbH = window.innerHeight - vv.height
+      document.body.classList.toggle('keyboard-open', kbH > 100)
+    }
+    update()
+    vv.addEventListener('resize', update)
+    vv.addEventListener('scroll', update)
+    return () => {
+      vv.removeEventListener('resize', update)
+      vv.removeEventListener('scroll', update)
+      document.body.classList.remove('keyboard-open')
+    }
+  }, [])
+
   // Desktop keyboard shortcuts: space play/pause, ←/→ skip 5s
   const kbSkipPosRef = useRef(null)
   const kbSkipResetRef = useRef(null)

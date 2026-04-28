@@ -1466,12 +1466,13 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 .fab-stack {
   position: fixed;
   right: 16px;
-  bottom: 408px;
+  bottom: calc(var(--np-height, 220px) + 16px);
   z-index: 101;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
+body.keyboard-open .fab-stack { bottom: 408px; }
 
 .fab-refresh, .fab-cmux, .fab-tmux {
   width: 40px;
@@ -1493,13 +1494,14 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 .claude-quick-reply {
   position: fixed;
   right: 16px;
-  bottom: 498px;
+  bottom: calc(var(--np-height, 220px) + 106px);
   z-index: 200;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
 }
+body.keyboard-open .claude-quick-reply { bottom: 498px; }
 
 .claude-quick-reply button {
   height: 36px;

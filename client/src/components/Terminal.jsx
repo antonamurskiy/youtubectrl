@@ -163,9 +163,22 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     }
   }, [])
 
-  // Re-focus xterm when terminal becomes visible
+  // Refocus xterm on reopen ONLY if the iOS keyboard was up at the
+  // moment we last closed the terminal. Focusing the xterm helper
+  // textarea on iOS forces the soft keyboard up — annoying when the
+  // user closed terminal specifically to dismiss it.
+  const wasKbOpenAtCloseRef = useRef(false)
+  const prevVisibleRef = useRef(false)
   useEffect(() => {
-    if (visible && xtermRef.current) xtermRef.current.focus()
+    const wasVisible = prevVisibleRef.current
+    prevVisibleRef.current = visible
+    if (wasVisible && !visible) {
+      const vv = window.visualViewport
+      const kbH = vv ? window.innerHeight - vv.height : 0
+      wasKbOpenAtCloseRef.current = kbH > 100
+    } else if (!wasVisible && visible && wasKbOpenAtCloseRef.current) {
+      if (xtermRef.current) xtermRef.current.focus()
+    }
   }, [visible])
 
   const sendKey = (key) => {
