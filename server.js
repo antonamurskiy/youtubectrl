@@ -269,6 +269,14 @@ if (!fs.existsSync(BT_BATTERY_BIN) && fs.existsSync(BT_BATTERY_SRC)) {
     execSync(`swiftc ${JSON.stringify(BT_BATTERY_SRC)} -o ${JSON.stringify(BT_BATTERY_BIN)}`, { stdio: "inherit" });
   } catch (e) { console.warn("[bt-battery] compile failed:", e.message); }
 }
+
+const BRIGHTNESS_BIN = path.join(__dirname, "bin", "brightness");
+const BRIGHTNESS_SRC = path.join(__dirname, "bin", "brightness.swift");
+if (!fs.existsSync(BRIGHTNESS_BIN) && fs.existsSync(BRIGHTNESS_SRC)) {
+  try {
+    execSync(`swiftc ${JSON.stringify(BRIGHTNESS_SRC)} -o ${JSON.stringify(BRIGHTNESS_BIN)}`, { stdio: "inherit" });
+  } catch (e) { console.warn("[brightness] compile failed:", e.message); }
+}
 async function getBluetoothBatteryMap() {
   try {
     const { stdout } = await execP(BT_BATTERY_BIN, { timeout: 3000 });
@@ -4465,6 +4473,31 @@ app.post("/api/toggle-resolution", async (_req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Resolution toggle failed" });
+  }
+});
+
+// Display brightness for the screen mpv is currently on. Uses the
+// DisplayServices private framework via the bin/brightness Swift
+// helper. Target follows currentMonitor ("laptop" | "lg"); when no
+// mpv is running, currentMonitor still has a sensible default.
+app.get("/api/brightness", async (_req, res) => {
+  try {
+    const { stdout } = await execFileP(BRIGHTNESS_BIN, ["get", currentMonitor], { timeout: 2000 });
+    const data = JSON.parse(stdout.trim() || "{}");
+    res.json({ target: currentMonitor, brightness: data.brightness ?? null });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+app.post("/api/brightness", async (req, res) => {
+  const v = Number(req.body?.value);
+  if (!Number.isFinite(v) || v < 0 || v > 1) return res.status(400).json({ error: "value must be 0..1" });
+  try {
+    const { stdout } = await execFileP(BRIGHTNESS_BIN, ["set", currentMonitor, String(v)], { timeout: 2000 });
+    const data = JSON.parse(stdout.trim() || "{}");
+    res.json({ target: currentMonitor, ...data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 

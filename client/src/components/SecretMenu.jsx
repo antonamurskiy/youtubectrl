@@ -368,6 +368,128 @@ function SyncOffsetSlider() {
   )
 }
 
+// Display brightness scrubber. Drives the display mpv is currently on
+// (server picks via `currentMonitor`). Same fill-bar style as the font
+// size scrubber so it sits nicely in the Misc submenu.
+function BrightnessScrubber() {
+  const [value, setValue] = useState(null) // 0..100, null until first GET
+  const ref = useRef(null)
+  const draggingRef = useRef(false)
+  const inFlightRef = useRef(false)
+  const pendingRef = useRef(null)
+  const lastSentRef = useRef(null)
+  const lastHapticRef = useRef(-1)
+
+  useEffect(() => {
+    let stale = false
+    fetch('/api/brightness')
+      .then(r => r.json())
+      .then(d => { if (!stale && d.brightness != null) setValue(Math.round(d.brightness * 100)) })
+      .catch(() => {})
+    return () => { stale = true }
+  }, [])
+
+  const send = useCallback(() => {
+    if (inFlightRef.current || pendingRef.current == null) return
+    const v = pendingRef.current
+    pendingRef.current = null
+    if (lastSentRef.current === v) return
+    lastSentRef.current = v
+    inFlightRef.current = true
+    fetch('/api/brightness', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ value: v / 100 }),
+    }).catch(() => {}).finally(() => {
+      inFlightRef.current = false
+      if (pendingRef.current != null) send()
+    })
+  }, [])
+
+  const update = useCallback((clientX) => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    if (rect.width <= 0) return
+    const x = Math.max(0, Math.min(clientX - rect.left, rect.width))
+    const v = Math.round((x / rect.width) * 100)
+    setValue(v)
+    pendingRef.current = v
+    send()
+    const step = Math.floor(v / 5)
+    if (step !== lastHapticRef.current) {
+      lastHapticRef.current = step
+      hapticSelection()
+    }
+  }, [send])
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const onTouchStart = (e) => {
+      if (!e.touches || e.touches.length === 0) return
+      e.preventDefault()
+      draggingRef.current = true
+      hapticSelectionStart()
+      update(e.touches[0].clientX)
+    }
+    const onTouchMove = (e) => {
+      if (!draggingRef.current || !e.touches || e.touches.length === 0) return
+      e.preventDefault()
+      update(e.touches[0].clientX)
+    }
+    const onTouchEnd = () => {
+      setTimeout(() => { draggingRef.current = false }, 50)
+      hapticSelectionEnd()
+    }
+    const onMouseDown = (e) => {
+      draggingRef.current = true
+      update(e.clientX)
+      const move = (ev) => { if (draggingRef.current) update(ev.clientX) }
+      const up = () => {
+        setTimeout(() => { draggingRef.current = false }, 50)
+        window.removeEventListener('mousemove', move)
+        window.removeEventListener('mouseup', up)
+      }
+      window.addEventListener('mousemove', move)
+      window.addEventListener('mouseup', up)
+    }
+    el.addEventListener('touchstart', onTouchStart, { passive: false })
+    el.addEventListener('touchmove', onTouchMove, { passive: false })
+    el.addEventListener('touchend', onTouchEnd)
+    el.addEventListener('touchcancel', onTouchEnd)
+    el.addEventListener('mousedown', onMouseDown)
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart)
+      el.removeEventListener('touchmove', onTouchMove)
+      el.removeEventListener('touchend', onTouchEnd)
+      el.removeEventListener('touchcancel', onTouchEnd)
+      el.removeEventListener('mousedown', onMouseDown)
+    }
+  }, [update])
+
+  const pct = value == null ? 0 : value
+  return (
+    <div className="secret-menu-item size-area" ref={ref}>
+      <div className="size-fill" style={{ width: `${pct}%` }} />
+      <div className="size-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
+          <circle cx="12" cy="12" r="4" />
+          <line x1="12" y1="2" x2="12" y2="5" />
+          <line x1="12" y1="19" x2="12" y2="22" />
+          <line x1="2" y1="12" x2="5" y2="12" />
+          <line x1="19" y1="12" x2="22" y2="12" />
+          <line x1="4.93" y1="4.93" x2="7.05" y2="7.05" />
+          <line x1="16.95" y1="16.95" x2="19.07" y2="19.07" />
+          <line x1="4.93" y1="19.07" x2="7.05" y2="16.95" />
+          <line x1="16.95" y1="7.05" x2="19.07" y2="4.93" />
+        </svg>
+        <span>{value == null ? '…' : `${value}%`}</span>
+      </div>
+    </div>
+  )
+}
+
 function FontSizeScrubber({ value, onChange }) {
   const ref = useRef(null)
   const draggingRef = useRef(false)
@@ -723,6 +845,7 @@ export default function SecretMenu() {
         </button>
         {showMisc && (
           <>
+            <BrightnessScrubber />
             <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
             <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
               <Ico>
