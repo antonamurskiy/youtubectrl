@@ -4633,6 +4633,12 @@ for (const [src, bin, label] of [
 }
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
+// VLM crossStreet cache, keyed by friend name + approximate pin
+// position. Survives the 20s ocr cache so a 60s frontend poll still
+// gets the AI-refined answer when the pin hasn't moved.
+let _vlmCrossCache = null; // { name, cx, cy, crossStreet, at }
+const VLM_CACHE_TTL_MS = 5 * 60 * 1000;
+const VLM_CACHE_RADIUS_PX = 60; // pin can drift this much without invalidating
 // Stealth mode: when true, Find My is parked on aerospace workspace 9
 // (never focused by either monitor), so it runs invisibly. OCR still
 // works because screencapture -l <CGWindowID> captures by window id
@@ -4739,16 +4745,27 @@ app.get("/api/findmy-friend", async (req, res) => {
         } catch {}
       }
       let crossStreet = null;
+      let crossStreetSource = null;
       if (pinLabel) {
         const pinCenter = {
           cx: pinLabel.x + pinLabel.w / 2,
           cy: pinLabel.y + pinLabel.h / 2,
         };
-        // Try the local vision LLM first; fall back to the geometric
-        // perpendicular-distance heuristic if it's not available or
-        // its answer doesn't validate against the OCR'd street names.
-        try { crossStreet = await vlmCrossStreet(rows, pinCenter); } catch {}
-        if (!crossStreet) crossStreet = nearestCrossStreet(rows, pinCenter);
+        // Reuse a VLM-cached crossStreet if it's recent and the pin
+        // hasn't moved much — avoids forcing every fresh OCR pass to
+        // start back at "geo" and wait another VLM round-trip.
+        if (
+          _vlmCrossCache &&
+          _vlmCrossCache.name === name &&
+          (Date.now() - _vlmCrossCache.at) < VLM_CACHE_TTL_MS &&
+          Math.hypot(_vlmCrossCache.cx - pinCenter.cx, _vlmCrossCache.cy - pinCenter.cy) < VLM_CACHE_RADIUS_PX
+        ) {
+          crossStreet = _vlmCrossCache.crossStreet;
+          crossStreetSource = "vlm";
+        } else {
+          crossStreet = nearestCrossStreet(rows, pinCenter);
+          if (crossStreet) crossStreetSource = "geo";
+        }
       }
       const near = rows
         .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
@@ -4771,7 +4788,7 @@ app.get("/api/findmy-friend", async (req, res) => {
         const below = rows.filter(r => r.y > header.y && r.y < header.y + 80).sort((a, b) => a.y - b.y);
         if (below[0]) address = below[0].text;
       }
-      return { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance };
+      return { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, crossStreetSource, distance };
     }
     let pass = await ocrPass();
     if (pass.notFound) {
@@ -4824,7 +4841,7 @@ app.get("/api/findmy-friend", async (req, res) => {
         };
       }
     }
-    const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance } = pass;
+    const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, crossStreetSource, distance } = pass;
     const result = {
       ok: true,
       name: header.text,
@@ -4832,6 +4849,7 @@ app.get("/api/findmy-friend", async (req, res) => {
       timeFragment,
       ageMs,
       crossStreet,
+      crossStreetSource,
       distance,
       cropUrl: pinLabel ? `/api/findmy-crop.png?t=${Date.now()}` : null,
       ocrAt: Date.now(),
@@ -4848,11 +4866,34 @@ app.get("/api/findmy-friend", async (req, res) => {
     if (_lastFindmyFriend && _lastFindmyFriend.name === name && _lastFindmyFriend.result?.ok) {
       const prev = _lastFindmyFriend.result;
       if (!result.distance && prev.distance) result.distance = prev.distance;
-      if (!result.crossStreet && prev.crossStreet) result.crossStreet = prev.crossStreet;
+      if (!result.crossStreet && prev.crossStreet) {
+        result.crossStreet = prev.crossStreet;
+        result.crossStreetSource = prev.crossStreetSource || result.crossStreetSource;
+      }
       if (!result.cropUrl && prev.cropUrl) result.cropUrl = prev.cropUrl;
     }
     _lastFindmyFriend = { name, result, at: Date.now() };
     res.json(result);
+    // Fire the vision LLM async to refine cross-street. Skip if we
+    // already served a VLM-cached answer (no point re-running). The
+    // cache when it completes so the next poll (typically 60s later
+    // via useMariaProximity) picks up the better answer. If the VLM
+    // is slow / down / returns garbage, the geometric answer stands.
+    if (pinLabel && Array.isArray(pass.rows) && pass.rows.length && pass.crossStreetSource !== "vlm") {
+      const pc = { cx: pinLabel.x + pinLabel.w / 2, cy: pinLabel.y + pinLabel.h / 2 };
+      vlmCrossStreet(pass.rows, pc).then(vlm => {
+        if (!vlm) return;
+        // Persist for future fresh OCR passes so the result is reused
+        // across the short ocr cache TTL.
+        _vlmCrossCache = { name, cx: pc.cx, cy: pc.cy, crossStreet: vlm, at: Date.now() };
+        // Patch the in-flight cached result too in case a poll lands
+        // within the 20s OCR cache window before next fresh pass.
+        if (_lastFindmyFriend?.name === name && _lastFindmyFriend?.result?.ok) {
+          _lastFindmyFriend.result.crossStreet = vlm;
+          _lastFindmyFriend.result.crossStreetSource = "vlm";
+        }
+      }).catch(() => {});
+    }
     return result;
     } catch (err) {
       const errResult = { ok: false, reason: "error", error: err.message };
@@ -4959,6 +5000,11 @@ async function vlmCrossStreet(rows, { cx, cy }) {
   const oy = Math.max(0, Math.min(dims.H - CH, Math.round(cy - CH / 2)));
   try {
     await execFileP("sips", ["-c", String(CH), String(CW), "--cropOffset", String(oy), String(ox), FINDMY_OCR_PNG, "--out", FINDMY_VLM_CROP_PNG]);
+    // Downsample to 1200px on the long side. Qwen2.5-VL tokenizes the
+    // image as ~1 token per 56×56 patch. 1400px → ~490 tokens / ~38s,
+    // 1200px → ~360 tokens / ~25s, 800px → ~150 tokens / ~10s but
+    // street labels become unreadable. 1200 is the sweet spot.
+    await execFileP("sips", ["-Z", "1200", FINDMY_VLM_CROP_PNG, "--out", FINDMY_VLM_CROP_PNG]);
   } catch { return null; }
 
   const imageB64 = fs.readFileSync(FINDMY_VLM_CROP_PNG).toString("base64");
@@ -4988,7 +5034,7 @@ No other words, quotes, prefix, or explanation.`;
         options: { temperature: 0, num_predict: 40 },
       }),
       // Long timeout — first call after a model load can be slow.
-      signal: AbortSignal.timeout(45000),
+      signal: AbortSignal.timeout(60000),
     });
   } catch { return null; }
   if (!resp.ok) return null;
