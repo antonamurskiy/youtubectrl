@@ -4604,6 +4604,23 @@ app.post("/api/brightness", async (req, res) => {
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
+// Pre-compile swift sources to native binaries on boot — `swift <src>`
+// re-JITs from source on every invocation (~5-10s) which can wedge
+// API requests under load. `swiftc` once produces a fast-launch bin.
+const FINDMY_OCR_BIN = path.join(__dirname, "bin", "findmy-ocr");
+const FINDMY_PIN_BIN = path.join(__dirname, "bin", "findmy-pin");
+for (const [src, bin, label] of [
+  [FINDMY_OCR_SWIFT, FINDMY_OCR_BIN, "findmy-ocr"],
+  [FINDMY_PIN_SWIFT, FINDMY_PIN_BIN, "findmy-pin"],
+]) {
+  try {
+    const srcStat = fs.statSync(src);
+    const binStat = fs.existsSync(bin) ? fs.statSync(bin) : null;
+    if (!binStat || binStat.mtimeMs < srcStat.mtimeMs) {
+      execSync(`swiftc ${JSON.stringify(src)} -o ${JSON.stringify(bin)}`, { stdio: "inherit" });
+    }
+  } catch (e) { console.warn(`[${label}] compile failed:`, e.message); }
+}
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
 // Stealth mode: when true, Find My is parked on aerospace workspace 9
@@ -4673,7 +4690,8 @@ app.get("/api/findmy-friend", async (req, res) => {
     //    blanks it during its spinner state).
     const DIST_RE = /^(\d+(?:\.\d+)?)\s*(mi|km|ft|m|yd)\b\.?$/i;
     async function ocrPass() {
-      const { stdout: ocr } = await execFileP("swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
+      const ocrCmd = fs.existsSync(FINDMY_OCR_BIN) ? [FINDMY_OCR_BIN, [FINDMY_OCR_PNG]] : ["swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG]];
+      const { stdout: ocr } = await execFileP(ocrCmd[0], ocrCmd[1], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
       const rows = ocr.split("\n").filter(Boolean).map(l => {
         const [bbox, ...rest] = l.split("\t");
         const [x, y, w, h] = bbox.split(",").map(Number);
@@ -4690,7 +4708,8 @@ app.get("/api/findmy-friend", async (req, res) => {
       // Final fallback to map-center geometry if even that fails.
       if (!pinLabel) {
         try {
-          const { stdout: pinOut } = await execFileP("swift", [FINDMY_PIN_SWIFT, FINDMY_OCR_PNG], { timeout: 10000 });
+          const pinCmd = fs.existsSync(FINDMY_PIN_BIN) ? [FINDMY_PIN_BIN, [FINDMY_OCR_PNG]] : ["swift", [FINDMY_PIN_SWIFT, FINDMY_OCR_PNG]];
+          const { stdout: pinOut } = await execFileP(pinCmd[0], pinCmd[1], { timeout: 10000 });
           const [pcx, pcy] = pinOut.trim().split(",").map(Number);
           if (Number.isFinite(pcx) && Number.isFinite(pcy)) {
             pinLabel = { x: pcx - 20, y: pcy - 20, w: 40, h: 40, synthetic: true };
