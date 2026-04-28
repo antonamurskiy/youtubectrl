@@ -1844,6 +1844,15 @@ app.post("/api/play", async (req, res) => {
       liveProxyUrl = "http://localhost:3000/api/hls-live.m3u8";
     } else {
       stopMpvPdtTracking();
+      // Clear live-stream state carried over from a previous /api/play.
+      // Without this, onLiveProxy stays true on subsequent VODs (because
+      // currentLiveHlsUrl is still set) and the UI shows the LIVE/GO LIVE
+      // badge on normal videos.
+      currentLiveHlsUrl = null;
+      liveOffsetSec = 0;
+      isPostLiveStream = false;
+      subProxyAnchor = null;
+      playbackAnchor = null;
     }
 
     // What we actually hand to mpv. For live streams this is our VOD
@@ -1887,11 +1896,23 @@ app.post("/api/play", async (req, res) => {
       }
     }
     // If mpv is already running, load new video in existing player.
-    // Skip for live streams — streamlink-piped mpv can't loadfile (the
-    // stdin pipe is tied to one streamlink process). Falls through to
-    // the respawn path below, which tears down both streamlink + mpv
-    // and starts fresh.
-    if (mpvProcess && !isLive) {
+    // Skip when:
+    //   - current mpv is streamlink-piped (live / post_live): new
+    //     stream needs its own pipe; loadfile on mpegts-locked demuxer
+    //     won't play an http URL either
+    //   - current mpv was spawned with --vo=null (display was
+    //     asleep/locked at the time). Display may be available now, so
+    //     respawn with gpu-next so the user actually sees the video.
+    //   - current mpv's --vo doesn't match what we'd spawn fresh right
+    //     now given the current display state.
+    try { await refreshMacStatus(); } catch {}
+    const displayUnavailable = !!(_macStatusCache.screenOff || _macStatusCache.locked);
+    const currentMpvVoNull = mpvProcess
+      ? (mpvProcess.spawnargs || []).includes("--vo=null")
+      : false;
+    const wantVoNull = displayUnavailable;
+    const voMismatch = currentMpvVoNull !== wantVoNull;
+    if (mpvProcess && !isLive && !streamlinkProcess && !voMismatch) {
       try {
         // Save current video's progress before switching (also verifies mpv is responsive)
         try {
@@ -2043,7 +2064,15 @@ app.post("/api/play", async (req, res) => {
     if (!windowMode || windowMode === "floating") {
       geometry = "38%-12+38";
     }
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`, `--video-sync=display-resample`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`];
+    // When the display is asleep/locked, mpv's gpu-next VO wedges the
+    // core event loop ("No DisplayLink available") and IPC stops
+    // responding — the ping in /api/play timeout-kills it and nothing
+    // plays. Fall back to --vo=null for audio-only in that case.
+    // mpv's built-in VO fallback chain doesn't help: gpu-next
+    // "initializes" without DisplayLink, so it never fails to cascade.
+    // displayUnavailable was computed at the top of this handler.
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`, `--video-sync=display-resample`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
+      displayUnavailable ? `--vo=null` : `--vo=gpu-next`];
     // Pin media-title so live streams don't report "hls-live.m3u8" etc.
     // See setMpvForceTitle for context — sanitize to strip control
     // chars that can crash mpv's arg parser on some builds.
@@ -2105,6 +2134,49 @@ app.post("/api/play", async (req, res) => {
     activePlayer = "mpv";
     nowPlaying = url;
     if (!windowMode) windowMode = "floating";
+
+    // Post-spawn display-availability probe. If mpv spawned with gpu-next
+    // but the display is actually unavailable (e.g., lid closed and the
+    // system_profiler heuristic missed it), mpv's core event loop wedges
+    // and get_property queries never return. Detect this within 4s by
+    // trying a cheap property read; on timeout, respawn with --vo=null.
+    // Skip for live streams (they use streamlink-piped mpv which doesn't
+    // use gpu-next at all and doesn't hit this issue).
+    if (!isLive && !displayUnavailable) {
+      (async () => {
+        // Give mpv a moment to get its IPC up.
+        await new Promise(r => setTimeout(r, 1500));
+        if (mpvProcess !== child) return;
+        // Probe: send a client-side request that goes through mpv's
+        // main event loop. If the event loop is wedged (gpu-next stuck
+        // waiting for DisplayLink), the request never returns → timeout.
+        // A returned error (e.g. "property unavailable" during ytdl_hook
+        // resolution) means the loop IS ticking — don't respawn on that.
+        const probe = await Promise.race([
+          mpvCommand(["get_property", "mpv-version"]),
+          new Promise(r => setTimeout(() => r("__timeout__"), 2500)),
+        ]);
+        if (mpvProcess !== child) return;
+        if (probe === "__timeout__") {
+          console.error("mpv IPC wedged after spawn (display asleep / no WindowServer access) — respawning with --vo=null");
+          const replaceIndex = mpvArgs.findIndex(a => a.startsWith("--vo="));
+          if (replaceIndex >= 0) mpvArgs[replaceIndex] = "--vo=null";
+          try { child.kill("SIGKILL"); } catch {}
+          try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+          mpvProcess = null;
+          await new Promise(r => setTimeout(r, 250));
+          try { fs.unlinkSync(MPV_SOCKET); } catch {}
+          const fallback = spawn("mpv", mpvArgs, { stdio: ["ignore", "ignore", "pipe"] });
+          fallback._stderr = "";
+          fallback._startTime = Date.now();
+          if (fallback.stderr) fallback.stderr.on("data", (c) => {
+            fallback._stderr += c.toString();
+            if (fallback._stderr.length > 32 * 1024) fallback._stderr = fallback._stderr.slice(-16 * 1024);
+          });
+          mpvProcess = fallback;
+        }
+      })().catch(e => console.error("display-probe error:", e.message));
+    }
 
     // Apply current window mode after mpv window appears
     const targetMode = windowMode;
@@ -3685,17 +3757,25 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       try { await mpvCommand(["set_property", "mute", false]); } catch {}
     }
 
-    // Live detection: try mpv's file-format first, fall back to yt-dlp
+    // Live detection: try mpv's file-format first, fall back to yt-dlp.
+    // With streamlink-piped mpv (live / post_live), file-format is
+    // "mpegts" not "hls", so also check server-side state.
     const fmt = await mpvCommand(["get_property", "file-format"]).catch(() => null);
-    let isLiveStream = (fmt?.data || "").includes("hls");
+    let isLiveStream = (fmt?.data || "").includes("hls") || !!currentLiveHlsUrl;
     let hlsUrl = null;
     if (isLiveStream) {
-      try {
-        const sp = await mpvCommand(["get_property", "stream-path"]);
-        const edl = sp?.data || "";
-        const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
-        if (hlsMatch) hlsUrl = hlsMatch[1];
-      } catch {}
+      // Prefer the server-side currentLiveHlsUrl (set by /api/play when
+      // streamlink was spawned) — mpv's stream-path for streamlink-piped
+      // stdin is just "-" and has no googlevideo URL to regex out.
+      if (currentLiveHlsUrl) hlsUrl = currentLiveHlsUrl;
+      else {
+        try {
+          const sp = await mpvCommand(["get_property", "stream-path"]);
+          const edl = sp?.data || "";
+          const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
+          if (hlsMatch) hlsUrl = hlsMatch[1];
+        } catch {}
+      }
     }
     // Fallback: check via yt-dlp — only if mpv's file-format already
     // suggested HLS. On a plain VOD (file-format="mov,mp4,..."),
@@ -3725,23 +3805,20 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       });
     }
 
-    // VOD — try DASH 1080p first (native AVPlayer composes video+audio),
-    // fall back to progressive 22 (720p + AAC in one URL) for web and
-    // for reliability with seeks.
-    // Prefer progressive format 22 — single URL that AVPlayer loads
-    // instantly via HTTP Range, no manifest probing or composition
-    // building. In sync mode mpv is the primary screen at full quality,
-    // so 720p on the phone is fine. The DASH 1080p composition path
-    // (137+140) takes ~8s to load because AVURLAsset has to probe both
-    // DASH manifests serially before AVPlayer can even start, and the
-    // quality gain isn't visible when mpv is what the user's actually
-    // watching.
     const { stdout } = await execFileP(
       "yt-dlp",
-      ["--cookies", COOKIES_FILE, "-f", "22/best[ext=mp4]/137+140/136+140/135+140", "--get-url", nowPlaying],
+      // Prefer DASH 1080p (composed client-side on native iOS) — the
+      // generic "bestvideo ≤ 1080p mp4 + bestaudio m4a" selector picks
+      // whichever itag is available (137 for 1080p30, 299 for 1080p60,
+      // or 136 for 720p-only videos). Falls back to progressive 22 for
+      // older videos without DASH. Composition is crash-guarded on the
+      // native side (see NativePlayerPlugin.buildCompositionItem).
+      ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", nowPlaying],
       { timeout: 15000 }
     );
     const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
+    const mpvDur = await mpvCommand(["get_property", "duration"]).catch(() => null);
+    const durationSec = mpvDur?.data || historyMap.get(nowPlaying)?.duration || 0;
     if (urls.length >= 2) {
       res.json({
         streamUrl: urls[0],
@@ -3749,9 +3826,10 @@ app.post("/api/watch-on-phone", async (_req, res) => {
         audioUrl: urls[1],
         seconds,
         videoId,
+        durationSec,
       });
     } else {
-      res.json({ streamUrl: urls[0], seconds, videoId });
+      res.json({ streamUrl: urls[0], seconds, videoId, durationSec });
     }
   } catch (err) {
     console.error("Watch on phone error:", err.message);
@@ -3826,6 +3904,12 @@ async function _preparePhoneOnlyMpvImpl(url, resumePos) {
       `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
       `--hwdec=auto-safe`, `--keep-open`, `--cache=yes`, `--autosync=30`,
       `--mute=yes`,
+      // Phone-only hides the mpv window via AppleScript — it exists as
+      // a silent progress tracker, never visible to the user. Use
+      // --vo=null so mpv doesn't touch the display subsystem at all,
+      // avoiding the gpu-next "No DisplayLink available" wedge that
+      // blocks IPC when the Mac screen is off / locked.
+      `--vo=null`,
       url,
     ];
     if (resumePos > 0) mpvArgs.push(`--start=${Math.floor(resumePos)}`);
@@ -3884,7 +3968,9 @@ app.post("/api/phone-only", async (req, res) => {
     // byte-range window on DASH URLs so seeks past ~a few minutes fail.
     const { stdout } = await execFileP("yt-dlp", [
       "--cookies", COOKIES_FILE,
-      "-f", "22/best[ext=mp4][height<=720]/best",
+      // Prefer DASH 1080p (client composes 137+140); fall through to
+      // HLS for live and post_live streams where DASH/MP4 don't exist.
+      "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4][height<=720]/best[protocol*=m3u8][height<=1080]/96/95/94/best",
       "--get-url", "--print", "is_live", "--print", "duration", "--print", "title", "--print", "channel", "--print", "thumbnail", url,
     ], { timeout: 15000 });
     if (!isCurrent()) return res.status(409).json({ error: "Superseded" });
@@ -5412,16 +5498,34 @@ let wsSyncInterval = null;
 let _macStatusCache = { locked: false, screenOff: false, frontApp: '', ethernet: false, keepAwake: false };
 let _macStatusInterval = null;
 async function refreshMacStatus() {
+  // All commands wrapped with a 2s timeout — on macOS under certain
+  // states (display woken recently, permission prompts), ioreg /
+  // system_profiler / osascript can hang indefinitely. Without the
+  // timeout, refreshMacStatus awaits forever, which blocks /api/play
+  // (which awaits it) and wedges playLock for 45s until auto-release.
+  const withTimeout = (p, ms) => Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms)),
+  ]);
+  const execPT = (cmd) => withTimeout(execP(cmd), 2000);
   const results = await Promise.allSettled([
-    execP(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`),
-    execP(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`),
-    execP(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`),
-    execP(`ifconfig en3 | grep "status:"`),
+    execPT(`ioreg -n Root -d1 -w0 | grep -o '"CGSSessionScreenIsLocked"=[a-zA-Z]*'`),
+    // Display-off signals (any true → screenOff=true):
+    //   1. SPDisplaysDataType "Display Asleep: Yes" — external displays.
+    //   2. AppleClamshellState = Yes — laptop lid closed, internal panel dark.
+    //   Lock alone is also enough to trigger --vo=null below, tracked
+    //   separately in `locked`.
+    execPT(`system_profiler SPDisplaysDataType 2>/dev/null | grep "Display Asleep"`),
+    execPT(`osascript -e 'tell application "System Events" to get name of first application process whose frontmost is true'`),
+    execPT(`ifconfig en3 | grep "status:"`),
+    execPT(`ioreg -r -k AppleClamshellState -d 1 | grep AppleClamshellState`),
   ]);
   _macStatusCache.locked = results[0].status === 'fulfilled' && results[0].value.stdout.includes("Yes");
-  _macStatusCache.screenOff = results[1].status === 'fulfilled' && results[1].value.stdout.includes("Yes");
+  const displayAsleep = results[1].status === 'fulfilled' && results[1].value.stdout.includes("Yes");
   _macStatusCache.frontApp = results[2].status === 'fulfilled' ? results[2].value.stdout.trim() : '';
   _macStatusCache.ethernet = results[3].status === 'fulfilled' && results[3].value.stdout.includes("active");
+  const clamshellClosed = results[4].status === 'fulfilled' && /= Yes/.test(results[4].value.stdout);
+  _macStatusCache.screenOff = displayAsleep || clamshellClosed;
 }
 refreshMacStatus();
 _macStatusInterval = setInterval(refreshMacStatus, 30000);

@@ -753,6 +753,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
 
     if (target === 'computer') {
       if (sync.phoneOpen) fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
+      if (isNativeIOS && sync.pipActive) NativePlayer.stopPip().catch(() => {})
       sync.setPhoneOpen(false)
       return
     }

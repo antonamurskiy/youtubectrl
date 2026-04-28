@@ -11,3 +11,4 @@ client/dist
 bin/bt-battery
 bin/brightness
 .now-playing.json
+.findmy-stealth.json

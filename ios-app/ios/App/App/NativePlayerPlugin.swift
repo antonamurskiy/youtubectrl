@@ -359,6 +359,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         let position = call.getDouble("position") ?? 0
         let autoplay = call.getBool("autoplay") ?? true
         let muted = call.getBool("muted") ?? false
+        // Server-provided authoritative duration (seconds). When present,
+        // the composition is clamped to this value — YouTube DASH URLs
+        // sometimes report 2× the real duration via AVURLAsset (seen on
+        // post_live recordings), which then propagates through the UI
+        // scrubber and break phone-only progress reporting.
+        let durationHint = call.getDouble("durationSec") ?? 0
 
         // Two-stream mode: separate DASH video + audio URLs combined into
         // an AVMutableComposition so we can play 1080p + 128kbps AAC without
@@ -367,7 +373,7 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
            let videoURL = URL(string: v), let audioURL = URL(string: a) {
             Task { @MainActor in
                 do {
-                    let item = try await self.buildCompositionItem(videoURL: videoURL, audioURL: audioURL)
+                    let item = try await self.buildCompositionItem(videoURL: videoURL, audioURL: audioURL, durationHint: durationHint)
                     self.ensureLayer()
                     if self.player == nil {
                         self.player = AVPlayer(playerItem: item)
@@ -435,32 +441,57 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     }
 
     /// Build an AVPlayerItem that plays a separate video track and audio track
-    /// as one logical stream.
+    /// as one logical stream. Defensive against half-loaded assets — YouTube's
+    /// per-track googlevideo URLs occasionally return invalid/zero durations
+    /// on first HTTP probe, which then hits an assertion inside
+    /// insertTimeRange and kills the app. We validate before inserting.
     @MainActor
-    private func buildCompositionItem(videoURL: URL, audioURL: URL) async throws -> AVPlayerItem {
-        let videoAsset = AVURLAsset(url: videoURL)
-        let audioAsset = AVURLAsset(url: audioURL)
+    private func buildCompositionItem(videoURL: URL, audioURL: URL, durationHint: Double = 0) async throws -> AVPlayerItem {
+        let assetOpts: [String: Any] = [
+            AVURLAssetPreferPreciseDurationAndTimingKey: true,
+        ]
+        let videoAsset = AVURLAsset(url: videoURL, options: assetOpts)
+        let audioAsset = AVURLAsset(url: audioURL, options: assetOpts)
 
         let composition = AVMutableComposition()
 
         async let videoDuration: CMTime = videoAsset.load(.duration)
         async let audioDuration: CMTime = audioAsset.load(.duration)
         let (vd, ad) = try await (videoDuration, audioDuration)
-        NSLog("[NativePlayer] composition video dur=\(vd.seconds) audio dur=\(ad.seconds)")
-        let duration = CMTimeMinimum(vd, ad)
+        NSLog("[NativePlayer] composition video dur=\(vd.seconds) audio dur=\(ad.seconds) hint=\(durationHint)")
+
+        func durationUsable(_ t: CMTime) -> Bool {
+            return t.isValid && !t.isIndefinite && !t.isNegativeInfinity && !t.isPositiveInfinity && t.seconds.isFinite && t.seconds > 0
+        }
+        guard durationUsable(vd), durationUsable(ad) else {
+            throw NSError(domain: "NativePlayer", code: -10, userInfo: [NSLocalizedDescriptionKey: "unusable duration: video=\(vd.seconds) audio=\(ad.seconds)"])
+        }
+        // Clamp to the server-supplied hint when present (accommodates
+        // YouTube DASH URLs that report 2× real duration via AVURLAsset).
+        // Use the minimum of hint / vd / ad — avoids reading past the
+        // real media and avoids over-clamping if the hint is stale.
+        var duration = CMTimeMinimum(vd, ad)
+        if durationHint > 0 {
+            let hint = CMTime(seconds: durationHint, preferredTimescale: 600)
+            duration = CMTimeMinimum(duration, hint)
+        }
+        let range = CMTimeRange(start: .zero, duration: duration)
 
         let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
         let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
         NSLog("[NativePlayer] loaded videoTracks=\(videoTracks.count) audioTracks=\(audioTracks.count)")
+        guard let videoTrack = videoTracks.first, let audioTrack = audioTracks.first else {
+            throw NSError(domain: "NativePlayer", code: -11, userInfo: [NSLocalizedDescriptionKey: "missing tracks: video=\(videoTracks.count) audio=\(audioTracks.count)"])
+        }
 
-        if let videoTrack = videoTracks.first {
-            let comp = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid)
-            try comp?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: videoTrack, at: .zero)
+        guard let compV = composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw NSError(domain: "NativePlayer", code: -12, userInfo: [NSLocalizedDescriptionKey: "failed to add video track"])
         }
-        if let audioTrack = audioTracks.first {
-            let comp = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
-            try comp?.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: audioTrack, at: .zero)
+        try compV.insertTimeRange(range, of: videoTrack, at: .zero)
+        guard let compA = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw NSError(domain: "NativePlayer", code: -13, userInfo: [NSLocalizedDescriptionKey: "failed to add audio track"])
         }
+        try compA.insertTimeRange(range, of: audioTrack, at: .zero)
 
         return AVPlayerItem(asset: composition)
     }

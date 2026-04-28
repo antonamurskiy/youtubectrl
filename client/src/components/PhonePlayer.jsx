@@ -147,6 +147,11 @@ export default function PhonePlayer({ send }) {
               videoUrl,
               audioUrl,
               position: data.seconds || 0,
+              // phone-only uses `duration`, watch-on-phone uses `durationSec`.
+              // Either way the plugin clamps the AVMutableComposition so
+              // YouTube DASH moov-atom metadata reporting 2× duration
+              // doesn't propagate to the scrubber.
+              durationSec: data.durationSec || data.duration || 0,
               autoplay: true,
               // Sync mode: mpv is the audio source, phone must be muted to
               // avoid a doubled audio track.
@@ -416,6 +421,7 @@ export default function PhonePlayer({ send }) {
                 videoUrl: data.videoUrl || undefined,
                 audioUrl: data.audioUrl || undefined,
                 position: data.seconds || 0,
+                durationSec: data.durationSec || data.duration || 0,
                 autoplay: true,
                 muted: !phoneOnlyRef.current,
               }).then(() => {
@@ -903,7 +909,7 @@ export default function PhonePlayer({ send }) {
     if (!isNativeIOS) return
     let alive = true
     let lastKey = ''
-    const tick = () => {
+    const sync = () => {
       if (!alive) return
       const el = videoRef.current
       if (el && phoneOpen && streamUrl) {
@@ -924,10 +930,36 @@ export default function PhonePlayer({ send }) {
         lastKey = 'hidden'
         NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
       }
-      requestAnimationFrame(tick)
+    }
+    const tick = () => {
+      sync()
+      if (alive) requestAnimationFrame(tick)
     }
     const id = requestAnimationFrame(tick)
-    return () => { alive = false; cancelAnimationFrame(id) }
+    // Rotation recovery. iOS's layout takes ~500ms to settle after
+    // orientation change. During that window the AVPlayer layer
+    // renders at its pre-rotation rect, which shows through as
+    // black/wrong-sized area in the mini player ("weird space under
+    // the video"). Force the layer hidden for the duration, then let
+    // the rAF sync re-enable it against the new layout.
+    const onOrientation = () => {
+      lastKey = 'hidden'
+      NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
+      ;[300, 500, 700].forEach(t => setTimeout(() => {
+        // Reset key so next rAF tick recomputes and re-sends with
+        // visible=true against the post-rotation bounding rect.
+        lastKey = ''
+        sync()
+      }, t))
+    }
+    window.addEventListener('orientationchange', onOrientation)
+    window.addEventListener('resize', onOrientation)
+    return () => {
+      alive = false
+      cancelAnimationFrame(id)
+      window.removeEventListener('orientationchange', onOrientation)
+      window.removeEventListener('resize', onOrientation)
+    }
   }, [phoneOpen, streamUrl])
 
   if (!phoneOpen) return null
@@ -1084,7 +1116,7 @@ export default function PhonePlayer({ send }) {
           }}
         />
       )}
-      <div style={{ display: mini ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
+      <div className="phone-player-toolbar" style={{ display: mini ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px', background: 'var(--surface)', fontSize: '12px', fontFamily: 'monospace' }}>
         <span ref={driftDisplayRef} style={{ color: 'var(--green)' }}>drift: --</span>
         <button onClick={() => { hapticThump(); setMini(true) }} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: 'var(--text)', border: '1px solid var(--text-dim)' }}>MIN</button>
         {phoneOnlyUrl && <button onClick={compMode ? handlePhone : handleComp} style={{ padding: '6px 12px', background: 'var(--surface-hover)', color: compMode ? 'var(--green)' : 'var(--text)', border: '1px solid var(--text-dim)' }}>{compMode ? 'PHONE' : 'COMP'}</button>}
