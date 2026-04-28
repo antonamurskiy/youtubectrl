@@ -4602,8 +4602,18 @@ app.post("/api/brightness", async (req, res) => {
 //   - Find My must be open on the laptop display (workspace 8) with
 //     the People tab active — `/api/toggle-findmy` already sets that up
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
+const FINDMY_VLM_CROP_PNG = "/tmp/ytctl-findmy-vlm.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
+// Local vision-language model for cross-street resolution. The
+// geometric heuristic (perpendicular distance from pin to OCR-label
+// lines) gets the street family right but can pick the wrong cross
+// street when label rotation doesn't fit a strict 90° city grid.
+// A vision LLM looks at the cropped map image directly and reasons
+// about which street the pin is on. Disabled gracefully if Ollama
+// isn't running or the model isn't pulled.
+const FINDMY_VLM_MODEL = "qwen2.5vl:7b";
+const FINDMY_VLM_HOST = "http://localhost:11434";
 // Pre-compile swift sources to native binaries on boot — `swift <src>`
 // re-JITs from source on every invocation (~5-10s) which can wedge
 // API requests under load. `swiftc` once produces a fast-launch bin.
@@ -4728,10 +4738,18 @@ app.get("/api/findmy-friend", async (req, res) => {
           }
         } catch {}
       }
-      const crossStreet = pinLabel ? nearestCrossStreet(rows, {
-        cx: pinLabel.x + pinLabel.w / 2,
-        cy: pinLabel.y + pinLabel.h / 2,
-      }) : null;
+      let crossStreet = null;
+      if (pinLabel) {
+        const pinCenter = {
+          cx: pinLabel.x + pinLabel.w / 2,
+          cy: pinLabel.y + pinLabel.h / 2,
+        };
+        // Try the local vision LLM first; fall back to the geometric
+        // perpendicular-distance heuristic if it's not available or
+        // its answer doesn't validate against the OCR'd street names.
+        try { crossStreet = await vlmCrossStreet(rows, pinCenter); } catch {}
+        if (!crossStreet) crossStreet = nearestCrossStreet(rows, pinCenter);
+      }
       const near = rows
         .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
         .filter(r => DIST_RE.test(r.text.trim()));
@@ -4904,6 +4922,101 @@ app.get("/api/findmy-crop.png", async (_req, res) => {
   }
 });
 
+// Send a pin-centered crop to the local vision LLM and ask it to
+// identify the street the pin sits on + the nearest cross-street.
+// Constrains output to OCR'd street names so the model can't
+// hallucinate streets that aren't visible. Returns "Street & Cross"
+// or null on any failure (Ollama down, model not pulled, parse
+// error, response references a non-listed street).
+async function vlmCrossStreet(rows, { cx, cy }) {
+  const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
+  const streetNames = new Set();
+  for (const r of rows) {
+    const t = r.text.trim();
+    const m = t.match(STREET_RE);
+    if (!m) continue;
+    const firstWord = m[1].split(/\s+/)[0];
+    if (firstWord.length < 3 || /^\d/.test(m[1])) continue;
+    streetNames.add(toTitleCase(t));
+  }
+  if (streetNames.size < 2) return null;
+
+  // Crop a ~900x700 window centered on the pin.
+  let dims;
+  try {
+    const { stdout } = await execFileP("sips", ["-g", "pixelWidth", "-g", "pixelHeight", FINDMY_OCR_PNG]);
+    const W = parseInt((stdout.match(/pixelWidth:\s*(\d+)/) || [])[1] || "0");
+    const H = parseInt((stdout.match(/pixelHeight:\s*(\d+)/) || [])[1] || "0");
+    if (!W || !H) return null;
+    dims = { W, H };
+  } catch { return null; }
+  // 1400x1100 gives ~3-4 city blocks of context in every direction —
+  // the model needs to see multiple parallel streets to disambiguate
+  // which one the pin sits on. Tighter crops bias toward whatever
+  // single label happens to be in frame near the pin.
+  const CW = 1400, CH = 1100;
+  const ox = Math.max(0, Math.min(dims.W - CW, Math.round(cx - CW / 2)));
+  const oy = Math.max(0, Math.min(dims.H - CH, Math.round(cy - CH / 2)));
+  try {
+    await execFileP("sips", ["-c", String(CH), String(CW), "--cropOffset", String(oy), String(ox), FINDMY_OCR_PNG, "--out", FINDMY_VLM_CROP_PNG]);
+  } catch { return null; }
+
+  const imageB64 = fs.readFileSync(FINDMY_VLM_CROP_PNG).toString("base64");
+  const list = [...streetNames].map(s => `- ${s}`).join("\n");
+  const prompt = `Dark-mode Apple Maps screenshot. There is exactly one person-silhouette pin (white person icon inside a circle) — find it.
+
+Allowed street names (use ONLY these, with this exact spelling):
+${list}
+
+Step 1: locate the pin (white silhouette circle).
+Step 2: identify STREET-ON-PIN — the road line passing directly under the pin's circle.
+Step 3: identify CROSS-STREET — the nearest road that crosses STREET-ON-PIN, measured by walking distance from the pin along STREET-ON-PIN. Only count streets that intersect STREET-ON-PIN within the visible image. Do NOT pick a street that runs parallel to STREET-ON-PIN.
+
+Reply with ONLY: STREET-ON-PIN & CROSS-STREET
+No other words, quotes, prefix, or explanation.`;
+
+  let resp;
+  try {
+    resp = await fetch(`${FINDMY_VLM_HOST}/api/generate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: FINDMY_VLM_MODEL,
+        prompt,
+        images: [imageB64],
+        stream: false,
+        options: { temperature: 0, num_predict: 40 },
+      }),
+      // Long timeout — first call after a model load can be slow.
+      signal: AbortSignal.timeout(45000),
+    });
+  } catch { return null; }
+  if (!resp.ok) return null;
+  let data;
+  try { data = await resp.json(); } catch { return null; }
+  const raw = String(data?.response || "").trim();
+  if (!raw) return null;
+
+  // Parse "A & B" — be lenient about whitespace and quotes.
+  const cleaned = raw.replace(/^["'`]+|["'`]+$/g, "").trim();
+  const parts = cleaned.split(/\s*&\s*|\s+and\s+/i).map(s => s.trim()).filter(Boolean);
+  if (parts.length === 0) return null;
+
+  // Validate: each part must match (case-insensitive) one of the OCR
+  // street names. Accept partial matches if the OCR name contains
+  // the model's answer or vice versa (handles "Palmetto" vs "Palmetto St").
+  const lower = [...streetNames].map(s => ({ name: s, low: s.toLowerCase() }));
+  const validate = (s) => {
+    const sl = s.toLowerCase();
+    return lower.find(({ low }) => low === sl || low.includes(sl) || sl.includes(low))?.name || null;
+  };
+  const a = validate(parts[0]);
+  const b = parts[1] ? validate(parts[1]) : null;
+  if (!a) return null;
+  if (b && a !== b) return `${a} & ${b}`;
+  return a;
+}
+
 // Pick the two closest streets to {cx, cy} and join them as "A & B".
 // Apple Maps places street labels along the road (rotated to match
 // road direction), so the LABEL POSITION is just one point on a long
@@ -4987,15 +5100,17 @@ function nearestCrossStreet(rows, { cx, cy }) {
     if (l.aspect > 1.6) {
       // Wide+short bbox → text along grid → parallel family.
       perpDist = dParallel; family = "parallel";
-    } else if (l.aspect < 0.62) {
-      // Tall+narrow → text perpendicular → cross family.
-      perpDist = dCross; family = "cross";
     } else {
-      // Squareish bbox → text rotated diagonally; family ambiguous.
-      // Pick whichever line the pin is closer to (the road actually
-      // running through the pin's vicinity).
-      if (dParallel < dCross) { perpDist = dParallel; family = "parallel"; }
-      else { perpDist = dCross; family = "cross"; }
+      // Aspect ≤ 1.6: text rotated significantly off the grid
+      // direction. In a city grid, parallel-family street labels
+      // come out at ~1.9-2.0 aspect (text rotated to match grid).
+      // Anything notably squarer or taller is overwhelmingly a
+      // cross-direction street. Don't try to pick the better family
+      // by min-distance — at the intersection of a cross-street
+      // with the pin's own road, parallel-line distance will be
+      // tiny (the cross-street IS perpendicular there) and steal
+      // ranking from the actual parallel street.
+      perpDist = dCross; family = "cross";
     }
     const existing = seen.get(l.name);
     if (!existing || perpDist < existing.perpDist) {
