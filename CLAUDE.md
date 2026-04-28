@@ -109,17 +109,11 @@ ios-app/
 - **AirPlay route picker** via a hidden `AVRoutePickerView` whose button we
   programmatically trigger.
 - **Keep-awake** via `UIApplication.isIdleTimerDisabled` while playing.
-- **Live Activity — REMOVED (2026-04).** We used to ship a
-  `YouTubeCtrlWidget` extension with play/pause/volume buttons on the
-  lock screen via ActivityKit + AppIntents. It worked, but the standard
-  MPNowPlayingInfoCenter media widget covers the same use case with less
-  code, no iOS rate-limit quirks, and better OS integration (AirPods,
-  CarPlay). The widget extension target + Swift files are still in the
-  Xcode project but dormant — the plugin's `startLiveActivity` /
-  `updateLiveActivity` bridged methods exist but aren't called from JS.
-  App.jsx calls `endLiveActivity()` once on mount to clean up any
-  stragglers from older installs. Easy to revive by wiring the hook back
-  in; don't re-add without a specific reason.
+- **Live Activity — DORMANT.** Widget extension target + Swift files
+  remain in the Xcode project but the JS hook is unwired. Replaced by
+  MPNowPlayingInfoCenter (less code, better OS integration). App.jsx
+  calls `endLiveActivity()` once on mount to clean up stragglers from
+  older installs. Don't re-add without a specific reason.
 - **Deep link**: `youtubectrl://play?url=...` forwards to `/api/play` so a
   Shortcut can share YouTube URLs into the app.
 - **Background audio**: Info.plist has `UIBackgroundModes=audio` and the
@@ -127,23 +121,16 @@ ios-app/
 
 ### Volume intercept — how it works
 
-1. `AVAudioSession.outputVolume` is KVO-observed.
-2. On change, compute `delta = newValue - lastObservedVolume`. Store new
-   as `lastObservedVolume` unconditionally.
-3. If `|delta| < 0.005`, ignore (iOS noise).
-4. Emit `volumeButton` event with `±3` (fixed step). JS side POSTs
-   `/api/volume-bump` which debounces osascript calls 30ms server-side.
-5. After every press, silently restore phone volume to the 0.5 baseline
-   via the hidden `MPVolumeView`'s UISlider — the phone's own volume
-   should not drift while the app is controlling the Mac.
-6. Distinguishing our restore from a user press: an observation is
-   swallowed only if it matches baseline AND arrives within ~80ms of
-   when we requested the restore (`lastRestoreRequestedAt`). The earlier
-   blanket `restoringVolume` flag dropped *any* observation during the
-   window — including real user presses — which is why we previously
-   only recentered at the edges. The match-target + time-window check
-   narrows the race to the rare case where a physical press happens to
-   land exactly on baseline within 80ms of our restore.
+KVO-observe `AVAudioSession.outputVolume`. On each change with
+|delta|≥0.005, emit a `volumeButton` event with ±3 step → JS POSTs
+`/api/volume-bump` (debounced 30ms server-side) → osascript bumps Mac
+volume. After each press, silently restore phone volume to 0.5 via
+hidden `MPVolumeView` UISlider so the phone's own level doesn't drift.
+
+To distinguish our restore from a user press: swallow an observation
+only if it matches the restore target AND arrives within ~80ms of
+`lastRestoreRequestedAt`. Earlier blanket `restoringVolume` flag was
+too coarse — it dropped real user presses landing in the window.
 
 ### Capacitor / Xcode project gotchas
 
@@ -169,17 +156,13 @@ ios-app/
 
 ### Adding a new Swift file to the App target
 
-1. Create the `.swift` file under `ios-app/ios/App/App/` (or `Shared/` if
-   it should also be compiled into the widget).
-2. Use the `xcodeproj` gem if available (`gem install --user-install xcodeproj`),
-   or edit `ios-app/ios/App/App.xcodeproj/project.pbxproj` manually —
-   add entries to: PBXBuildFile, PBXFileReference, the `App` PBXGroup
-   (`504EC3061FED79650016851F`), and the Sources PBXSourcesBuildPhase
-   (`504EC3001FED79650016851F`). Use unique hex IDs like
-   `AABBCCDD00020000000000NN`.
-3. If it's a plugin, remember to register it in `MainViewController`'s
-   `capacitorDidLoad()` and add the `_ = MyPlugin.self` anchor in
-   `AppDelegate`.
+Use the `xcodeproj` Ruby gem (`gem install --user-install xcodeproj`)
+to edit `ios-app/ios/App/App.xcodeproj/project.pbxproj` — manual
+editing is too error-prone. Place the file under
+`ios-app/ios/App/App/` (or `Shared/` for files compiled into the
+widget too). For plugins, register in `MainViewController`'s
+`capacitorDidLoad()` and add `_ = MyPlugin.self` anchor in
+`AppDelegate`.
 
 ### Server lifecycle & macOS permissions
 
@@ -253,112 +236,92 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 - `progressInterval` uses a generation counter (`progressGen`) to prevent overlapping intervals from rapid play requests
 - `startProgressTracking(url)` captures the URL at setup time to prevent saving progress to the wrong video
 - Cross-device resume: local `.history.json` position takes priority; falls back to `watchPct` from YouTube history API → mpv `--start=N%` (percentage-based seek). Frontend sends `video.startPercent` in play request.
+- **`--vo=null` fallback**: when the display is asleep (no WindowServer access), mpv IPC wedges after spawn with `--vo=gpu-next`. After a cheap-property-read timeout post-spawn, kill and respawn with `--vo=null` for audio-only playback. On next `/api/play`, if previous mpv was `--vo=null` and the display is now awake (or vice-versa), `voMismatch` triggers a respawn instead of reusing.
 
 ### Live stream DVR — READ THIS BEFORE TOUCHING
 
-mpv handles live playback AND DVR scrubbing. VLC is gone. This section
-was rewritten multiple times — the design is subtle and every piece
-is load-bearing.
+Live + DVR + post_live all play through **streamlink piped into mpv's
+stdin**. VLC is gone. ffmpeg's HLS demuxer is gone too (it can't seek
+past its tiny live cache). This section is load-bearing — every piece
+matters.
 
-#### The core limitation
+#### The core limitation we worked around
 
-**ffmpeg's HLS demuxer cannot seek past its cache on live manifests.**
-It clamps `seekable-ranges` to whatever segments are currently buffered
-(~15-30s), regardless of `--demuxer-max-back-bytes` or
-`--force-seekable=yes` or `--demuxer-lavf-o=live_seekable=1`. Tested
-with mpv 0.41 + ffmpeg 8.1 in April 2026 — still broken.
+ffmpeg's HLS demuxer clamps `seekable-ranges` to whatever segments are
+currently buffered (~15-30s) on live manifests, regardless of cache
+size flags. mpv-direct-on-HLS therefore can't DVR-scrub past its
+buffer. Tested with mpv 0.41 + ffmpeg 8.1 in April 2026 — still
+broken. So we don't let mpv touch HLS directly for live.
 
-The decision "is this live?" is based on **ENDLIST presence**, not the
-`EXT-X-PLAYLIST-TYPE` tag. So:
+#### The streamlink-piped solution
 
-| Manifest shape                    | mpv behavior            | Seekable |
-|-----------------------------------|-------------------------|----------|
-| Live (no ENDLIST)                 | auto-polls, never EOFs  | Cache only |
-| VOD tag (no ENDLIST)              | auto-polls, never EOFs  | Cache only (tested!) |
-| ENDLIST (+/- VOD tag)             | no polling, EOFs at end | Full manifest |
-| EVENT tag (no ENDLIST)            | auto-polls              | Cache only (tested!) |
+streamlink reads `/api/hls-live.m3u8` (which injects
+`#EXT-X-PLAYLIST-TYPE:EVENT` so streamlink honors `--hls-start-offset`
+— without that tag streamlink ignores the offset and always starts at
+edge). streamlink streams MPEG-TS into mpv's stdin. From mpv's
+perspective it's just an infinite stream — no HLS demuxer involved,
+no seekable-range clamping.
 
-**You cannot have both "mpv polls for new segments" AND "full
-seekable range" with ffmpeg's HLS demuxer.** Mutually exclusive.
-Reading this and thinking you have a clever workaround? You don't.
-Try it, then confirm it in `demuxer-cache-state.seekable-ranges`.
-
-#### The hybrid solution
-
-Two proxy endpoints, mpv swaps between them on user action:
-
-- **`/api/hls-live.m3u8`** — pass-through of the YouTube live manifest.
-  No tag injection. mpv treats as live, auto-polls, never EOFs, plays
-  continuously. Seekable = ~15-30s of cache.
-
-- **`/api/hls-sub.m3u8?from_seq=<N>`** — "sub-live" proxy. Serves all
-  segments with media-sequence ≥ N, plus new ones as YouTube produces
-  them. No tags. mpv treats as live, auto-polls, extends forever.
-  `from_seq` pins the start to an ABSOLUTE segment number (not "behind
-  N seconds") so as the live manifest rolls, mpv's cached segments
-  never shift under it. **This pinning is the trick that makes mpv's
-  time-pos advance at true 1x instead of drifting.**
-
-**mpv is always on one of these**. It's always "live-style", so:
-- Playback never cuts out at a manifest end (no ENDLIST → never EOFs).
-- No periodic reloads, no reload-induced skips.
-- Skips only happen when the user explicitly seeks outside mpv's cache.
+Server-side state:
+- `currentLiveHlsUrl` — upstream YouTube HLS manifest URL
+- `streamlinkProcess` — child process feeding mpv's stdin
+- `liveOffsetSec` — current `--hls-start-offset` (0 = live edge,
+  >0 = DVR scrubback). Single source of truth for "where is mpv in
+  the DVR window."
+- `isPostLiveStream` — true when yt-dlp reports `live_status=post_live`
+  (just-ended broadcast that's not yet a regular VOD). Treated like
+  live but `liveOffsetSec` is seconds-from-start, not behind-live.
 
 #### How a scrub-back works
 
 1. Frontend sends `POST /api/seek { position }` where `position` is in
-   scrubber-space (0 to `lastManifestFullDuration`).
-2. Server computes `behindLive = lastManifestFullDuration - position`.
-3. If `behindLive < mpv's reported duration` (target is in the current
-   cache), direct `seek` within the current proxy. No skip.
-4. Else: `resolveBehindToFromSeq(behindLive)` reads the current
-   YouTube manifest and converts `behindLive` seconds into an absolute
-   `from_seq`. Then `loadfile hls-sub.m3u8?from_seq=X` with options
-   `start=0,demuxer-lavf-o=live_start_index=0`. **One skip.**
-5. Anchor recorded (see "Scrubber math" below).
+   scrubber-space (0 to `lastManifestFullDuration`, live edge at right).
+2. Server computes `newOffsetSec = lastManifestFullDuration - position`
+   (or `position` directly for post_live).
+3. If target is within mpv's current forward/backward buffer: direct
+   `seek` within mpv. No skip.
+4. Else: `respawnLivePipeline(newOffsetSec)` — kill streamlink+mpv,
+   spawn fresh streamlink with `--hls-start-offset=newOffsetSec`,
+   pipe into a new mpv. **One skip.** Anchor recorded.
 
-`live_start_index=0` is the critical option: ffmpeg's default for live
-HLS is `-3` (near end, so mpv lands at ~live edge). We need it to land
-at the BEGINNING of the sub-window (= `behindLive` seconds back).
+`/api/go-live` respawns with offset=0 to swap back to live edge.
 
 #### Scrubber math — the anchor system
 
-Problem: mpv's `time-pos` on the sub-proxy does NOT correspond to any
-absolute DVR timeline. It's local to mpv's current cache. Separately,
-`lastManifestFullDuration` (the real DVR window size) updates every
-10s from the server-side manifest refresh. We need to compute "where
-in the 4h window is the user right now" for the scrubber UI.
+mpv's `time-pos` on a streamlink-piped stream is "seconds since
+streamlink started feeding," NOT an absolute DVR position. The
+scrubber UI needs absolute position in the DVR window. Solve with an
+anchor captured at each seek:
 
-Solution: on every sub-proxy seek, capture an anchor:
 ```
 subProxyAnchor = {
   wallMs: Date.now(),            // wall clock at seek
-  mpvPosAtAnchor: <captured>,    // mpv's time-pos at seek (polled, can take ~2s for mpv to report)
-  behindLive: <requested>,       // seconds behind live at seek moment
+  mpvPosAtAnchor: <captured>,    // mpv's time-pos at seek (polled async, can take ~2s)
+  behindLive: <requested>,       // newOffsetSec at seek moment
+  userPdtAtAnchor: <PDT ms>,     // user's intended content PDT at seek
 }
 ```
 
-Each WS broadcast tick, compute:
+Each WS broadcast tick:
 ```
 wallElapsed = (Date.now() - anchor.wallMs) / 1000
 playElapsed = mpv_time_pos - anchor.mpvPosAtAnchor
 behindLive  = anchor.behindLive + (wallElapsed - playElapsed)
-scrubDur    = lastManifestFullDuration
-scrubPos    = scrubDur - behindLive
+scrubPos    = lastManifestFullDuration - behindLive
 ```
 
-Math works out: playback at 1x → wallElapsed == playElapsed → behindLive
-stays constant (thumb stays put). Paused → playElapsed == 0 → behindLive
-grows at 1x (thumb drifts left as live advances). Both correct.
+Playback at 1x → wallElapsed == playElapsed → behindLive constant
+(thumb stays put). Paused → playElapsed == 0 → behindLive grows at 1x
+(thumb drifts left as live advances).
 
-Anchor capture is **async** because mpv takes up to ~3s to report a
-valid `time-pos` after a sub-proxy `loadfile` (the new manifest needs
-to download + parse). Poll every 100ms up to 40 times. Until anchor is
-captured, WS broadcast falls back to the live-proxy formula (tiny
-behindLive, thumb at right edge) — acceptable transient.
+Anchor capture is **async** — mpv takes up to ~3s to report a valid
+`time-pos` after a respawn. Pre-seed `mpvPosAtAnchor=0` so the
+scrubber doesn't flash, then refine once mpv reports a non-zero
+time-pos (poll every 100ms up to 40 times). `userPdtAtAnchor` stays
+pinned to the user's intended PDT.
 
-Anchor is cleared automatically when mpv is no longer on the sub-proxy
-(WS tick does `if (!onSubProxy) subProxyAnchor = null`).
+Anchor cleared automatically when `liveOffsetSec === 0` (back at live
+edge).
 
 #### UI layer
 
@@ -378,63 +341,58 @@ Anchor is cleared automatically when mpv is no longer on the sub-proxy
 
 #### /api/play lifecycle
 
-For `isLive: true`:
-1. `yt-dlp -f 301/300/96/… --get-url` resolves the upstream HLS URL,
-   stored in `currentLiveHlsUrl`.
-2. `subProxyAnchor = null` (stale state from prior stream wiped).
+For `isLive: true` (or `post_live`):
+1. `yt-dlp -f 301/300/96/… --get-url` resolves the upstream HLS URL →
+   `currentLiveHlsUrl`. Detect post_live via `yt-dlp --print live_status`.
+2. Wipe `subProxyAnchor`, `playbackAnchor`, `liveOffsetSec`.
 3. `startMpvPdtTracking(url)` — PDT tracking + `manifestStatsRefresh`
    (polls manifest every 10s to keep `lastManifestFullDuration` and
    `lastManifestEdgeEpochMs` fresh).
-4. Synchronous `fetchManifest()` once right now — primes
-   `lastManifestFullDuration` before user can scrub. Without this, a
-   seek in the first ~10s would fall into the non-live fallback path
-   and fail silently.
-5. `mpv loadfile /api/hls-live.m3u8` with `--start=-3` (near live edge
-   of cache). Zero skips for normal watching.
+4. Synchronous `fetchManifest()` once now — primes
+   `lastManifestFullDuration` before user can scrub.
+5. `spawnStreamlink(url, 0)` → mpv reads from streamlink stdout. Zero
+   skips for normal watching.
 
 #### Things we tried that DON'T work (do not re-litigate)
 
+- **mpv directly on YouTube HLS** — ffmpeg's HLS demuxer clamps
+  seekable-ranges to its tiny cache regardless of cache flags.
+- **VOD/EVENT tag without ENDLIST** — still treated as live (clamped).
 - **`--demuxer-max-back-bytes=2048M`** alone — cache grows but ffmpeg
   still clamps `seekable-ranges` to its own calculated live window.
-- **`EXT-X-PLAYLIST-TYPE:EVENT`** alone — still treated as live
-  (clamped). EVENT vs VOD tag doesn't matter without ENDLIST.
-- **VOD tag without ENDLIST** — still treated as live (clamped).
 - **Reload on approach to EOF** (old `mpvLiveReload` every N min) —
-  works but causes periodic visible skips. Removed in favor of the
-  sub-proxy approach.
-- **Use mpv's PDT (`mpvPdtEpochMs + time_pos * 1000`) to compute
-  "behind live"** — mpv's `time-pos` on live HLS is NOT absolute PTS.
-  It's local to mpv's current cache. Confirmed by probe: PDT formula
-  gave a 30-hour delta for a stream that was clearly near live edge.
-  Use the anchor system instead.
-- **Trim sub-proxy by `behind=N` seconds each request** — as YouTube's
-  live edge advances, the "start" of the trimmed window shifts. mpv's
-  cached segments get renumbered underneath, and `time-pos` starts
-  going BACKWARD. Must pin by absolute `from_seq` instead.
+  causes periodic visible skips. streamlink-piped never EOFs.
+- **`mpvPdtEpochMs + time_pos * 1000` for "behind live"** — mpv's
+  time-pos on a streamlink stream is local to streamlink's start, not
+  stream-epoch PTS. Use the anchor system.
+- **`/api/hls-sub.m3u8?behind=N`** — as live edge advances, the trim
+  window shifts and mpv's cached segments renumber underneath.
+  `time-pos` goes BACKWARD. (The from_seq variant of that endpoint
+  still exists but isn't on the primary scrubback path.)
 
 #### Relevant state
 
 - `currentLiveHlsUrl` — upstream YouTube HLS URL. Set by `/api/play`.
+- `streamlinkProcess` — current streamlink child piping into mpv.
+- `liveOffsetSec` — current `--hls-start-offset` (0 = at live edge).
+- `isPostLiveStream` — recently-ended broadcast flag.
 - `lastManifestFullDuration` — DVR window size (seconds). Refreshed
-  by `/api/hls-live.m3u8` fetches + the 10s interval.
+  by `/api/hls-live.m3u8` fetches + 10s interval.
 - `lastManifestEdgeEpochMs`, `lastManifestFetchedAt` — live edge PDT
-  + when captured. Kept around for potential future use in phone-sync
-  math; not currently used by scrubber.
-- `subProxyAnchor = null | { wallMs, mpvPosAtAnchor, behindLive }` —
-  see "Scrubber math" above.
-- `mpvPdtEpochMs` — stream-epoch wall-clock for phone sync
-  (unchanged, pre-existed). NOT used for the scrubber because mpv's
-  time-pos on live doesn't give absolute PDT. See above.
+  + when captured.
+- `lastManifestTargetDur` — `#EXT-X-TARGETDURATION` (segment length).
+- `subProxyAnchor` / `playbackAnchor` — see "Scrubber math" above.
+- `mpvPdtEpochMs` — stream-epoch wall-clock; captured but not
+  actively used for sync (kept for potential debugging).
 
 #### Relevant endpoints
 
-- `GET /api/hls-live.m3u8` — pass-through live manifest
-- `GET /api/hls-sub.m3u8?from_seq=N` — trimmed live manifest, pinned start
-- `GET /api/hls-sub.m3u8?behind=N` — behind-mode (resolved to from_seq at request time; only useful for one-shot tests, don't pass this from normal seeks)
-- `POST /api/seek { position }` — scrubber-space seek, may swap to sub-proxy
-- `POST /api/go-live` — swap back to live-proxy, seek live edge
-- `GET /api/_debug/sync` — dumps all the state above; check here first
-  when debugging live/DVR
+- `GET /api/hls-live.m3u8` — proxy that injects EXT-X-PLAYLIST-TYPE:EVENT
+  (so streamlink's --hls-start-offset is honored). streamlink reads this.
+- `POST /api/seek { position }` — scrubber-space seek, may respawn streamlink
+- `POST /api/go-live` — respawn streamlink at offset=0
+- `GET /api/_debug/sync` — dumps all the state above; first stop for
+  "why is sync broken"
 
 ### AeroSpace Integration
 
@@ -462,7 +420,7 @@ For `isLive: true`:
 ### Phone Mode (Watch on Phone)
 
 - Phone plays the same video as the desktop player, synced via mpv position
-- **All streams use mpv** — live and VOD. mpv plays a VOD-tagged HLS proxy for live so DVR scrubbing works the same way as VOD seeking.
+- **All streams: Mac uses mpv** — VODs play directly; live + post_live play via streamlink piped into mpv (see Live stream DVR section). Phone gets the upstream YouTube manifest URL directly (no proxy).
 - **Unified sync path (VOD + live)**:
   - Phone gets direct YouTube URL from `yt-dlp --get-url` (MP4 for VODs, HLS for live)
   - `clockOffset` (server-client clock diff) measured via ping/pong, recalibrated every 5min. **Critical sign: `Date.now() + clockOffset - serverTs`** (not minus — clockOffset = serverClock - clientClock, so adding converts client time to server time).
@@ -526,23 +484,22 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    already playing a live stream when the server restarts, we
    re-resolve and re-track. Without this, server restart leaves
    `mpvPdtEpochMs=0` until the user triggers `/api/play` again.
-6. **Broadcast (CURRENT, post-DVR rewrite)**: in the `/ws/sync`
-   playback tick for mpv on the live/sub proxy:
+6. **Broadcast**: in the `/ws/sync` playback tick for streamlink-piped
+   mpv (live or DVR-scrubbed):
    ```
    liveEdgeNow   = lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt)
-   behindLiveSec = (live proxy)  mpvDur - timePos
-                 | (sub proxy)   anchor.behindLive + (wallElapsed - playElapsed)
+   behindLiveSec = (liveOffsetSec === 0)  mpvDur - timePos
+                 | (liveOffsetSec  >  0)  anchor.behindLive + (wallElapsed - playElapsed)
    absoluteMs    = liveEdgeNow - behindLiveSec * 1000 + syncOffsetMs
    ```
    This gives the wall-clock PDT of the frame mpv is currently showing
    (what the phone's `AVPlayerItem.currentDate()` also reports).
    `phoneSyncOk: true` when we have valid manifest-edge stats.
 
-   **Do NOT use `mpvPdtEpochMs + timePos * 1000` here.** That formula
-   worked when mpv was on the VOD+ENDLIST proxy (timePos was absolute
-   PTS), but with the current live/sub proxies, timePos is local to
-   mpv's cache, not the stream epoch. Empirically wrong by many hours
-   for long-running streams (PTS wrap interaction).
+   **Do NOT use `mpvPdtEpochMs + timePos * 1000` here.** mpv's
+   `time-pos` on a streamlink-piped stream is local to streamlink's
+   start, not stream-epoch PTS. Empirically wrong by many hours for
+   long-running streams.
 
    `mpvPdtEpochMs` is still captured by `startMpvPdtTracking` for
    potential debugging use but nothing actively reads it for sync.
@@ -557,10 +514,11 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
    cache-growth noise.
 
 8. **MPV_DISPLAY_LAG_MS = 3 × TARGETDURATION × 1000** subtracts from
-   userPdtAtAnchor to correct for ffmpeg's HLS live-buffer offset.
-   ffmpeg defaults to `live_start_index=-3` — mpv's cache-end is
-   always 3 segments behind real live edge as a safety margin. Three
-   segments in **time** varies per stream:
+   userPdtAtAnchor to correct for streamlink's HLS live-buffer offset.
+   streamlink defaults to `--hls-live-edge=3` (same convention as
+   ffmpeg's `live_start_index=-3`) — output is always 3 segments
+   behind real live edge as a safety margin. Three segments in
+   **time** varies per stream:
    - lofi (5s segments) → 15 000 ms lag
    - sl4m + many others (2s segments) → 6 000 ms lag
 
@@ -600,12 +558,13 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
     → phone seeks further forward → phone closer to live. Typical
     good values live in ±1-2s range; -3s to +3s is the sweet spot
 
-12. **Two anchor systems, one per proxy mode** — see the scrubber
+12. **Two anchor systems, one per offset mode** — see the scrubber
     section for the full writeup, but the short version for sync:
-    - `playbackAnchor` (live proxy): captured from cache-offset once
-      at steady state. Includes `MPV_DISPLAY_LAG_MS` subtraction.
-    - `subProxyAnchor` (sub proxy, = DVR-scrubbed): captured at seek
-      time with `userPdtAtAnchor = liveEdgeAtSeek - behindLive * 1000`.
+    - `playbackAnchor` (`liveOffsetSec === 0`): captured from
+      cache-offset once at steady state. Includes `MPV_DISPLAY_LAG_MS`
+      subtraction.
+    - `subProxyAnchor` (`liveOffsetSec > 0`, = DVR-scrubbed): captured
+      at seek time with `userPdtAtAnchor = liveEdgeAtSeek - behindLive * 1000`.
       **Do NOT derive userPdt from `liveEdgeNow - behindLive * 1000`
       each tick** — liveEdgeNow jitters ~1s on every 10s manifest
       refresh because YouTube's edge doesn't advance perfectly
@@ -629,10 +588,8 @@ drift becomes `mpv_PDT − phone_PDT` in real wall-clock milliseconds.
     via WS. At 1.0 it shows `1×`, during hold `2×`, off-1.0 shows in
     red (e.g. `0.97×`). Whenever `syncVod` rate-nudging bugs out and
     leaves mpv at a non-1 speed, it's visible at a glance. Also reset
-    to 1.0 on every `loadfile` in `/api/play`, `/api/seek` (sub-proxy
-    swap), and `/api/go-live`.
-    for most streams. The ±8s headroom exists for bizarre edge cases
-    (extreme bitrate, weird encoder buffering).
+    to 1.0 on every streamlink respawn (`/api/play`, `/api/seek` past
+    cache, `/api/go-live`) and VOD `loadfile`.
 
 #### Data flow (native plugin, `NativePlayerPlugin.swift`)
 
@@ -768,7 +725,7 @@ and wreck its sync.
 - **Mac status**: polled server-side every 10s (`refreshMacStatus`), cached in `_macStatusCache`, included in WS broadcast (no client-side HTTP polling)
 - **Now-playing bar icons**: eye icon (green=visible/red `#d05050`=hidden, tap toggles mpv visibility), terminal icon with window frame (green=cmux focused/gray=not, tap toggles cmux/mpv focus)
 - **Refresh FAB**: fixed bottom-right above now-playing bar, long-press opens secret menu
-- **Secret menu** (status dots or long-press refresh): labeled status indicators (WS, ETH, UNLK, SCR), volume slider (persists in UI store, ignores events >20px outside area), mute toggle (red when muted), audio output selector (SwitchAudioSource), toggle resolution, refresh cookies, focus cmux, lock Mac, close. Uses darker `#151515` background.
+- **Secret menu** (status dots or long-press refresh): labeled status indicators (WS, ETH, UNLK, SCR), volume slider, mute toggle, audio output selector (SwitchAudioSource), focus cmux, lock Mac. **Misc submenu** (collapsed): brightness slider (drives display mpv is on, via custom Swift `bin/brightness` binary), toggle resolution, refresh cookies, sync-offset slider, close. Uses darker `#151515` background.
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
 - **Search bar replaces logo** in header — left-aligned text, no background
@@ -795,5 +752,6 @@ and wreck its sync.
 - `cookies.txt` — Firefox YouTube cookies, exported on startup (runtime, gitignored)
 - `/tmp/mpv-socket` — mpv IPC socket (runtime)
 - `activePlayer` — server-side variable: `'mpv'` | `null`
-- `currentLiveHlsUrl` — upstream YouTube HLS URL for the live stream currently playing (used by the VOD proxy and PDT tracking)
+- `currentLiveHlsUrl` — upstream YouTube HLS URL for the live stream currently playing (read by streamlink via `/api/hls-live.m3u8` and by PDT tracking)
+- `bin/brightness` — Swift binary compiled on server boot from `bin/brightness.swift`, drives the active display's brightness for the Misc-submenu slider
 - `public/silent.m4a` — truly silent 5-minute m4a for iOS Media Session (must be actual silence, not low volume — iOS drops session at volume=0)

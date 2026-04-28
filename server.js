@@ -4603,6 +4603,7 @@ app.post("/api/brightness", async (req, res) => {
 //     the People tab active — `/api/toggle-findmy` already sets that up
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
+const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
 // Stealth mode: when true, Find My is parked on aerospace workspace 9
@@ -4681,7 +4682,33 @@ app.get("/api/findmy-friend", async (req, res) => {
       const matches = rows.filter(r => r.text.toLowerCase().includes(name)).sort((a, b) => a.y - b.y);
       if (matches.length === 0) return { notFound: true };
       const header = matches[0];
-      const pinLabel = matches.find(m => m.x > 500);
+      let pinLabel = matches.find(m => m.x > 500);
+      // Fallback: when the friend's pin has no OCR-readable text label
+      // (e.g., contact stored as email-only — Apple Maps renders just
+      // a person silhouette in a circle), run the Swift pin detector
+      // which looks for the white-silhouette-inside-circle pattern.
+      // Final fallback to map-center geometry if even that fails.
+      if (!pinLabel) {
+        try {
+          const { stdout: pinOut } = await execFileP("swift", [FINDMY_PIN_SWIFT, FINDMY_OCR_PNG], { timeout: 10000 });
+          const [pcx, pcy] = pinOut.trim().split(",").map(Number);
+          if (Number.isFinite(pcx) && Number.isFinite(pcy)) {
+            pinLabel = { x: pcx - 20, y: pcy - 20, w: 40, h: 40, synthetic: true };
+          }
+        } catch {}
+      }
+      if (!pinLabel) {
+        try {
+          const { stdout: dims } = await execFileP("sips", ["-g", "pixelWidth", "-g", "pixelHeight", FINDMY_OCR_PNG]);
+          const W = parseInt((dims.match(/pixelWidth:\s*(\d+)/) || [])[1] || "0");
+          const H = parseInt((dims.match(/pixelHeight:\s*(\d+)/) || [])[1] || "0");
+          if (W && H) {
+            const cx = Math.round((500 + W) / 2);
+            const cy = Math.round(H / 2);
+            pinLabel = { x: cx - 20, y: cy - 20, w: 40, h: 40, synthetic: true };
+          }
+        } catch {}
+      }
       const crossStreet = pinLabel ? nearestCrossStreet(rows, {
         cx: pinLabel.x + pinLabel.w / 2,
         cy: pinLabel.y + pinLabel.h / 2,
@@ -4858,37 +4885,116 @@ app.get("/api/findmy-crop.png", async (_req, res) => {
   }
 });
 
-// Pick the two closest different-named street labels to {cx, cy} and
-// join them as "A & B". Handles Apple Maps' all-caps "SPRING ST"
-// format plus common OCR mistakes ("1K ST" → skip).
+// Pick the two closest streets to {cx, cy} and join them as "A & B".
+// Apple Maps places street labels along the road (rotated to match
+// road direction), so the LABEL POSITION is just one point on a long
+// line. A pin can be ON Palmetto St even though the only "PALMETTO
+// ST" label appears far across the map. Naive nearest-label gives
+// wrong answers in that case.
+//
+// Algorithm:
+//   1. Detect grid orientation. NYC-grid streets are parallel within
+//      each family. If two same-name labels exist (e.g. multiple
+//      GATES AVE), the vector between them gives the grid angle.
+//      Otherwise default to horizontal.
+//   2. Infer per-label direction from bbox aspect:
+//      - aspect > 1.5: text rendered along grid → parallel family
+//      - aspect < 0.67: text rendered perpendicular → cross family
+//      - else: ambiguous, treat as parallel
+//   3. Compute perpendicular distance from pin to the inferred road
+//      LINE (through the label's center, in the inferred direction).
+//   4. Return closest parallel + closest cross (one from each family).
 function nearestCrossStreet(rows, { cx, cy }) {
   const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
-  const streets = [];
+  const labels = [];
   for (const r of rows) {
     const t = r.text.trim();
     const m = t.match(STREET_RE);
     if (!m) continue;
-    // Skip obvious OCR garbage — street names are usually ≥3 letters
-    // and don't start with lone digits (e.g. "1K ST" is noise).
     if (m[1].length < 2 || /^\d/.test(m[1])) continue;
-    const centerX = r.x + r.w / 2;
-    const centerY = r.y + r.h / 2;
-    const dist = Math.hypot(centerX - cx, centerY - cy);
-    streets.push({ name: toTitleCase(t), dist });
+    // Reject OCR garbage where the first word is < 3 letters. Real
+    // street prefixes are at least 3 chars (sorry, "St James Pl");
+    // observed garbage: "I POND RD" (FRESH POND RD with F misread),
+    // "VE ST" (partial), "AL AVE" (partial).
+    const firstWord = m[1].split(/\s+/)[0];
+    if (firstWord.length < 3) continue;
+    labels.push({
+      name: toTitleCase(t),
+      lcx: r.x + r.w / 2,
+      lcy: r.y + r.h / 2,
+      aspect: r.w / r.h,
+    });
   }
-  if (streets.length === 0) return null;
-  streets.sort((a, b) => a.dist - b.dist);
-  // Dedupe by name — keep the closest instance of each unique street
-  const seen = new Set();
-  const unique = [];
-  for (const s of streets) {
-    if (seen.has(s.name)) continue;
-    seen.add(s.name);
-    unique.push(s);
-    if (unique.length === 2) break;
+  if (labels.length === 0) return null;
+
+  // Detect grid orientation from any same-name label pair.
+  let gridAngle = 0;
+  const byName = new Map();
+  for (const l of labels) {
+    if (!byName.has(l.name)) byName.set(l.name, []);
+    byName.get(l.name).push(l);
   }
-  if (unique.length < 2) return unique[0]?.name || null;
-  return `${unique[0].name} & ${unique[1].name}`;
+  let bestPairDist = 0;
+  for (const instances of byName.values()) {
+    if (instances.length < 2) continue;
+    for (let i = 0; i < instances.length; i++) {
+      for (let j = i + 1; j < instances.length; j++) {
+        const dx = instances[j].lcx - instances[i].lcx;
+        const dy = instances[j].lcy - instances[i].lcy;
+        const d = Math.hypot(dx, dy);
+        if (d > bestPairDist && d > 100) {
+          bestPairDist = d;
+          let a = Math.atan2(dy, dx);
+          // Normalize to [-pi/2, pi/2] (lines have 180° symmetry).
+          while (a > Math.PI / 2) a -= Math.PI;
+          while (a < -Math.PI / 2) a += Math.PI;
+          gridAngle = a;
+        }
+      }
+    }
+  }
+  const cosG = Math.cos(gridAngle), sinG = Math.sin(gridAngle);
+  const cosP = Math.cos(gridAngle + Math.PI / 2), sinP = Math.sin(gridAngle + Math.PI / 2);
+
+  // Per-label perpendicular distance. Dedupe by name (keep closest
+  // perpendicular distance, which is the "most likely instance" of
+  // that street relative to the pin).
+  const seen = new Map();
+  for (const l of labels) {
+    const vx = cx - l.lcx, vy = cy - l.lcy;
+    const dParallel = Math.abs(vx * sinG - vy * cosG);
+    const dCross = Math.abs(vx * sinP - vy * cosP);
+    let perpDist, family;
+    if (l.aspect > 1.6) {
+      // Wide+short bbox → text along grid → parallel family.
+      perpDist = dParallel; family = "parallel";
+    } else if (l.aspect < 0.62) {
+      // Tall+narrow → text perpendicular → cross family.
+      perpDist = dCross; family = "cross";
+    } else {
+      // Squareish bbox → text rotated diagonally; family ambiguous.
+      // Pick whichever line the pin is closer to (the road actually
+      // running through the pin's vicinity).
+      if (dParallel < dCross) { perpDist = dParallel; family = "parallel"; }
+      else { perpDist = dCross; family = "cross"; }
+    }
+    const existing = seen.get(l.name);
+    if (!existing || perpDist < existing.perpDist) {
+      seen.set(l.name, { name: l.name, perpDist, family });
+    }
+  }
+
+  const sorted = [...seen.values()].sort((a, b) => a.perpDist - b.perpDist);
+  if (sorted.length === 0) return null;
+
+  const closestParallel = sorted.find(s => s.family === "parallel");
+  const closestCross = sorted.find(s => s.family === "cross");
+
+  if (closestParallel && closestCross) {
+    return `${closestParallel.name} & ${closestCross.name}`;
+  }
+  if (sorted.length >= 2) return `${sorted[0].name} & ${sorted[1].name}`;
+  return sorted[0]?.name || null;
 }
 
 function toTitleCase(s) {
