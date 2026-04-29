@@ -188,11 +188,15 @@ export default function PhonePlayer({ send }) {
             useSyncStore.getState().setPhoneVideoCtrl({
               play: () => {
                 if (bgMode) { bgAudio.play().catch(() => {}) } else { videoRef.current?.play() }
-                fetch('/api/playpause', { method: 'POST' }).catch(() => {}) // unpause mpv
+                // keepalive so iOS doesn't drop the fetch when the
+                // WebView is backgrounded (lock-screen widget pause
+                // arrives there). Without it the server never sees
+                // the toggle and mpv stays playing/visible on the Mac.
+                fetch('/api/playpause', { method: 'POST', keepalive: true }).catch(() => {}) // unpause mpv
               },
               pause: () => {
                 bgAudio.pause(); videoRef.current?.pause()
-                fetch('/api/playpause', { method: 'POST' }).catch(() => {}) // pause mpv
+                fetch('/api/playpause', { method: 'POST', keepalive: true }).catch(() => {}) // pause mpv
               },
               seek: (t) => { if (videoRef.current) videoRef.current.currentTime = t; bgAudio.currentTime = t },
               // Skip delta — reads the phone video's live currentTime instead of mpv's
