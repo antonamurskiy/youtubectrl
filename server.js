@@ -4743,23 +4743,23 @@ app.get("/api/findmy-friend", async (req, res) => {
       }
       let crossStreet = null;
       if (pinLabel) {
-        // Apple Maps friend pins are a circle (silhouette / photo)
-        // with a pointer tail extending below — the TAIL TIP is the
-        // actual map location, not the circle center. find-pin.swift
-        // returns the silhouette centroid; the visible pin extends
-        // ~1.4 × the synthesized bbox height below the centroid before
-        // hitting actual road pixels. Empirically tuned against the
-        // Ridgewood/Queens map view.
+        // Apple Maps friend pins now render without a tail in dark
+        // mode — the silhouette circle's center IS the actual
+        // location. Use the bbox center directly.
         const pinCenter = {
           cx: pinLabel.x + pinLabel.w / 2,
-          cy: pinLabel.y + pinLabel.h / 2 + Math.round(pinLabel.h * 1.4),
+          cy: pinLabel.y + pinLabel.h / 2,
         };
-        // Try road-network reachability first (respects train tracks,
-        // water, and buildings as barriers). Fall back to the
-        // straight-line geometric algorithm if it can't calibrate
-        // (binary missing, no road pixels under pin, etc.).
-        try { crossStreet = await roadWalkCrossStreet(rows, pinCenter); } catch {}
-        if (!crossStreet) crossStreet = nearestCrossStreet(rows, pinCenter);
+        // Y-proximity (parallel) + Euclidean (cross) heuristic. The
+        // geometric perpendicular-line approach assumed a single grid
+        // angle inferred from same-name pairs; that's unreliable when
+        // streets are at varying angles (some near-horizontal, some
+        // diagonal). Y-proximity directly answers "which residential
+        // street's row matches the pin's row" which matches user
+        // expectation in NYC-style grids. Road-walk attempted but
+        // disabled — the road mask fragments at intersections and
+        // gives worse results than the simple heuristic.
+        crossStreet = nearestCrossStreet(rows, pinCenter);
       }
       const near = rows
         .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
@@ -4984,24 +4984,24 @@ async function roadWalkCrossStreet(rows, { cx, cy }) {
 }
 
 // Pick the two closest streets to {cx, cy} and join them as "A & B".
-// Apple Maps places street labels along the road (rotated to match
-// road direction), so the LABEL POSITION is just one point on a long
-// line. A pin can be ON Palmetto St even though the only "PALMETTO
-// ST" label appears far across the map. Naive nearest-label gives
-// wrong answers in that case.
+// Apple Maps places street labels along the road; the LABEL POSITION
+// is just one point on a long line. A pin can be ON Palmetto St even
+// though the only "PALMETTO ST" label appears far across the map.
 //
 // Algorithm:
-//   1. Detect grid orientation. NYC-grid streets are parallel within
-//      each family. If two same-name labels exist (e.g. multiple
-//      GATES AVE), the vector between them gives the grid angle.
-//      Otherwise default to horizontal.
-//   2. Infer per-label direction from bbox aspect:
-//      - aspect > 1.5: text rendered along grid → parallel family
-//      - aspect < 0.67: text rendered perpendicular → cross family
-//      - else: ambiguous, treat as parallel
-//   3. Compute perpendicular distance from pin to the inferred road
-//      LINE (through the label's center, in the inferred direction).
-//   4. Return closest parallel + closest cross (one from each family).
+//   1. Family classification by bbox aspect. Wide+short (aspect > 1.6)
+//      = parallel-family residential street running mostly east-west
+//      in this view. Squarer / tall+narrow = cross-family avenue
+//      running more north-south.
+//   2. For PARALLEL family: rank by |label_y - pin_y|. The pin is
+//      addressed ON the horizontal-ish street whose row matches its
+//      Y. Streets in NYC Queens grid have varying angles and a single
+//      grid-angle assumption is unreliable; horizontal-row matching
+//      is the most direct signal: "same block as the label".
+//   3. For CROSS family: rank by Euclidean distance to label center.
+//      Penalizes streets across the map (e.g., Admiral Ave at the
+//      top of the screenshot when the pin is at the bottom).
+//   4. Return closest parallel + closest cross.
 function nearestCrossStreet(rows, { cx, cy }) {
   const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
   const labels = [];
@@ -5025,25 +5025,28 @@ function nearestCrossStreet(rows, { cx, cy }) {
   }
   if (labels.length === 0) return null;
 
-  // Detect grid orientation from any same-name label pair.
-  let gridAngle = 0;
+  // Detect grid angle from same-name parallel-family label pairs.
+  // Two same-name labels (e.g. "MADISON ST" appearing twice along
+  // its length) lie on the same straight line, so the vector between
+  // them gives the road's actual angle. Falls back to horizontal
+  // (angle 0) if no pair exists.
+  let gridAngle = 0, bestPairDist = 0;
   const byName = new Map();
   for (const l of labels) {
+    if (l.aspect <= 1.6) continue;  // only parallel family for grid detection
     if (!byName.has(l.name)) byName.set(l.name, []);
     byName.get(l.name).push(l);
   }
-  let bestPairDist = 0;
-  for (const instances of byName.values()) {
-    if (instances.length < 2) continue;
-    for (let i = 0; i < instances.length; i++) {
-      for (let j = i + 1; j < instances.length; j++) {
-        const dx = instances[j].lcx - instances[i].lcx;
-        const dy = instances[j].lcy - instances[i].lcy;
+  for (const insts of byName.values()) {
+    if (insts.length < 2) continue;
+    for (let i = 0; i < insts.length; i++) {
+      for (let j = i + 1; j < insts.length; j++) {
+        const dx = insts[j].lcx - insts[i].lcx;
+        const dy = insts[j].lcy - insts[i].lcy;
         const d = Math.hypot(dx, dy);
         if (d > bestPairDist && d > 100) {
           bestPairDist = d;
           let a = Math.atan2(dy, dx);
-          // Normalize to [-pi/2, pi/2] (lines have 180° symmetry).
           while (a > Math.PI / 2) a -= Math.PI;
           while (a < -Math.PI / 2) a += Math.PI;
           gridAngle = a;
@@ -5051,50 +5054,47 @@ function nearestCrossStreet(rows, { cx, cy }) {
       }
     }
   }
-  const cosG = Math.cos(gridAngle), sinG = Math.sin(gridAngle);
-  const cosP = Math.cos(gridAngle + Math.PI / 2), sinP = Math.sin(gridAngle + Math.PI / 2);
+  const tanG = Math.tan(gridAngle);
 
-  // Per-label perpendicular distance. Dedupe by name (keep closest
-  // perpendicular distance, which is the "most likely instance" of
-  // that street relative to the pin).
+  // Family classification + per-family distance metric:
+  //   - parallel family: project the road LINE through the label at
+  //     the grid angle, compute |road_y_at_pin_x - pin_y|. This
+  //     handles the "label is far across the map but pin is on the
+  //     same street" case.
+  //   - cross family: rank by Euclidean distance to label center —
+  //     penalizes streets across the map (e.g., Admiral Ave at the
+  //     top when pin is at the bottom).
   const seen = new Map();
   for (const l of labels) {
-    const vx = cx - l.lcx, vy = cy - l.lcy;
-    const dParallel = Math.abs(vx * sinG - vy * cosG);
-    const dCross = Math.abs(vx * sinP - vy * cosP);
-    let perpDist, family;
-    if (l.aspect > 1.6) {
-      // Wide+short bbox → text along grid → parallel family.
-      perpDist = dParallel; family = "parallel";
+    const isParallel = l.aspect > 1.6;
+    let dist;
+    if (isParallel) {
+      const roadYatPinX = l.lcy + tanG * (cx - l.lcx);
+      dist = Math.abs(roadYatPinX - cy);
     } else {
-      // Aspect ≤ 1.6: text rotated significantly off the grid
-      // direction. In a city grid, parallel-family street labels
-      // come out at ~1.9-2.0 aspect (text rotated to match grid).
-      // Anything notably squarer or taller is overwhelmingly a
-      // cross-direction street. Don't try to pick the better family
-      // by min-distance — at the intersection of a cross-street
-      // with the pin's own road, parallel-line distance will be
-      // tiny (the cross-street IS perpendicular there) and steal
-      // ranking from the actual parallel street.
-      perpDist = dCross; family = "cross";
+      dist = Math.hypot(l.lcx - cx, l.lcy - cy);
     }
+    const family = isParallel ? "parallel" : "cross";
     const existing = seen.get(l.name);
-    if (!existing || perpDist < existing.perpDist) {
-      seen.set(l.name, { name: l.name, perpDist, family });
+    if (!existing || dist < existing.dist) {
+      seen.set(l.name, { name: l.name, dist, family });
     }
   }
-
-  const sorted = [...seen.values()].sort((a, b) => a.perpDist - b.perpDist);
-  if (sorted.length === 0) return null;
-
-  const closestParallel = sorted.find(s => s.family === "parallel");
-  const closestCross = sorted.find(s => s.family === "cross");
+  const all = [...seen.values()];
+  if (all.length === 0) return null;
+  const closestParallel = all
+    .filter(s => s.family === "parallel")
+    .sort((a, b) => a.dist - b.dist)[0];
+  const closestCross = all
+    .filter(s => s.family === "cross")
+    .sort((a, b) => a.dist - b.dist)[0];
 
   if (closestParallel && closestCross) {
     return `${closestParallel.name} & ${closestCross.name}`;
   }
-  if (sorted.length >= 2) return `${sorted[0].name} & ${sorted[1].name}`;
-  return sorted[0]?.name || null;
+  if (closestParallel) return closestParallel.name;
+  if (closestCross) return closestCross.name;
+  return null;
 }
 
 // Fix Vision OCR fragmentation on rotated multi-word street names.
