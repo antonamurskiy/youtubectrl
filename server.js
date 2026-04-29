@@ -4604,14 +4604,17 @@ app.post("/api/brightness", async (req, res) => {
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
+const FINDMY_ROAD_WALK_SWIFT = path.join(__dirname, "scripts", "road-walk.swift");
 // Pre-compile swift sources to native binaries on boot — `swift <src>`
 // re-JITs from source on every invocation (~5-10s) which can wedge
 // API requests under load. `swiftc` once produces a fast-launch bin.
 const FINDMY_OCR_BIN = path.join(__dirname, "bin", "findmy-ocr");
 const FINDMY_PIN_BIN = path.join(__dirname, "bin", "findmy-pin");
+const FINDMY_ROAD_WALK_BIN = path.join(__dirname, "bin", "findmy-road-walk");
 for (const [src, bin, label] of [
   [FINDMY_OCR_SWIFT, FINDMY_OCR_BIN, "findmy-ocr"],
   [FINDMY_PIN_SWIFT, FINDMY_PIN_BIN, "findmy-pin"],
+  [FINDMY_ROAD_WALK_SWIFT, FINDMY_ROAD_WALK_BIN, "findmy-road-walk"],
 ]) {
   try {
     const srcStat = fs.statSync(src);
@@ -4734,7 +4737,12 @@ app.get("/api/findmy-friend", async (req, res) => {
           cx: pinLabel.x + pinLabel.w / 2,
           cy: pinLabel.y + pinLabel.h / 2,
         };
-        crossStreet = nearestCrossStreet(rows, pinCenter);
+        // Try road-network reachability first (respects train tracks,
+        // water, and buildings as barriers). Fall back to the
+        // straight-line geometric algorithm if it can't calibrate
+        // (binary missing, no road pixels under pin, etc.).
+        try { crossStreet = await roadWalkCrossStreet(rows, pinCenter); } catch {}
+        if (!crossStreet) crossStreet = nearestCrossStreet(rows, pinCenter);
       }
       const near = rows
         .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
@@ -4907,6 +4915,56 @@ app.get("/api/findmy-crop.png", async (_req, res) => {
     res.status(500).send(err.message);
   }
 });
+
+// Pixel-level road-network reachability resolver — runs the
+// scripts/road-walk.swift binary on the screenshot and asks "which
+// labeled streets are reachable from the pin by walking the road
+// pixels". Train tracks, water, and buildings act as natural
+// barriers because they're not in the road-color mask. Returns
+// "Street & Cross" or null on any failure (binary missing, BFS
+// found no road near pin, calibration failed, etc.).
+async function roadWalkCrossStreet(rows, { cx, cy }) {
+  const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
+  const labels = [];
+  for (const r of rows) {
+    const t = r.text.trim();
+    const m = t.match(STREET_RE);
+    if (!m) continue;
+    const firstWord = m[1].split(/\s+/)[0];
+    if (firstWord.length < 3 || /^\d/.test(m[1])) continue;
+    labels.push({ name: toTitleCase(t), x: r.x, y: r.y, w: r.w, h: r.h });
+  }
+  if (labels.length < 2) return null;
+
+  const cmd = fs.existsSync(FINDMY_ROAD_WALK_BIN)
+    ? [FINDMY_ROAD_WALK_BIN, [FINDMY_OCR_PNG]]
+    : ["swift", [FINDMY_ROAD_WALK_SWIFT, FINDMY_OCR_PNG]];
+  const payload = JSON.stringify({ pin: { x: cx, y: cy }, labels });
+
+  return new Promise((resolve) => {
+    const child = require("child_process").spawn(cmd[0], cmd[1]);
+    let out = "", err = "";
+    let done = false;
+    const finish = (val) => { if (!done) { done = true; resolve(val); try { child.kill(); } catch {} } };
+    const timer = setTimeout(() => finish(null), 5000);
+    child.stdout.on("data", d => { out += d; });
+    child.stderr.on("data", d => { err += d; });
+    child.on("error", () => { clearTimeout(timer); finish(null); });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0 || !out.trim()) return finish(null);
+      try {
+        const j = JSON.parse(out.trim());
+        if (!j.streetOnPin) return finish(null);
+        if (j.crossStreet && j.crossStreet !== j.streetOnPin) {
+          return finish(`${j.streetOnPin} & ${j.crossStreet}`);
+        }
+        return finish(j.streetOnPin);
+      } catch { finish(null); }
+    });
+    child.stdin.end(payload);
+  });
+}
 
 // Pick the two closest streets to {cx, cy} and join them as "A & B".
 // Apple Maps places street labels along the road (rotated to match
