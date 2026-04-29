@@ -132,6 +132,28 @@ only if it matches the restore target AND arrives within ~80ms of
 `lastRestoreRequestedAt`. Earlier blanket `restoringVolume` flag was
 too coarse — it dropped real user presses landing in the window.
 
+### iOS lock-screen / Control-Center widgets and `keepalive`
+
+When the user taps play/pause on the iOS lock-screen Now Playing
+widget, the WebView is **backgrounded**. iOS aggressively cancels
+in-flight `fetch()` requests on backgrounded webviews. Any handler
+that POSTs to the server in response to a lock-screen widget tap
+**must** use `fetch(..., { keepalive: true })` or the request never
+goes out the wire — server-side state (mpv pause, hide, etc.) silently
+desyncs from the iOS-side UI.
+
+Hot paths that need `keepalive: true`:
+- `useNativeNowPlaying.js` — `togglePlayPause`, `skip`, `seek` handlers
+  for `remotePlay` / `remotePause` / `remoteTogglePlayPause` /
+  `remoteSkip` / `remoteSeek` events from the native plugin
+- `PhonePlayer.jsx` — both `phoneVideoCtrl.play` and
+  `phoneVideoCtrl.pause` (sync-mode controls that toggle mpv via
+  `/api/playpause`)
+
+Symptom of missing keepalive: "I paused from lock screen and mpv
+didn't hide on the Mac." (Server never saw the pause → mpv kept
+playing → auto-hide-on-pause never fired.)
+
 ### Capacitor / Xcode project gotchas
 
 - **Plugin discovery in Capacitor 7 SPM mode**: plugins living inside a
@@ -724,7 +746,8 @@ and wreck its sync.
 - **Status dots** in header (4 dots, tap opens secret menu): WebSocket, Ethernet (en3), Mac lock, Screen on/off
 - **Mac status**: polled server-side every 10s (`refreshMacStatus`), cached in `_macStatusCache`, included in WS broadcast (no client-side HTTP polling)
 - **Now-playing bar icons**: eye icon (green=visible/red `#d05050`=hidden, tap toggles mpv visibility), terminal icon with window frame (green=cmux focused/gray=not, tap toggles cmux/mpv focus)
-- **Refresh FAB**: fixed bottom-right above now-playing bar, long-press opens secret menu
+- **Refresh FAB**: fixed bottom-right above now-playing bar, long-press opens secret menu. Default position is `calc(var(--np-height, 220px) + 16px)` from bottom (just above the now-playing bar with the same 16px right padding). When the iOS soft keyboard opens, FABs lift to `bottom: 408px` so they don't get covered. Detected via a `body.keyboard-open` class set by `App.jsx`'s `visualViewport` listener (`window.innerHeight - vv.height > 100`). Same pattern lifts `.claude-quick-reply` from 106px → 498px.
+- **Terminal: remember keyboard state on close**. The xterm helper textarea is auto-focused on terminal open IFF the iOS keyboard was up at the moment of last close. Tracked with `wasKbOpenAtCloseRef` + a `prevVisibleRef` watching the `visible` prop transition. Without this, every reopen forces the soft keyboard up even when the user dismissed it on purpose. First-ever open doesn't auto-focus (default ref state is false).
 - **Secret menu** (status dots or long-press refresh): labeled status indicators (WS, ETH, UNLK, SCR), volume slider, mute toggle, audio output selector (SwitchAudioSource), focus cmux, lock Mac. **Misc submenu** (collapsed): brightness slider (drives display mpv is on, via custom Swift `bin/brightness` binary), toggle resolution, refresh cookies, sync-offset slider, close. Uses darker `#151515` background.
 - `touch-action: manipulation` on `*` to prevent double-tap zoom
 - YouTube URL pasted in search box auto-plays immediately
@@ -767,6 +790,12 @@ OCR → pin detection → cross-street resolution. Deterministic, no AI.
    one number is what cracked the cross-street problem; **don't
    replace it with bbox-aspect inference or single-grid-angle
    detection** — those were tried and were strictly worse.
+
+   `req.minimumTextHeight = 0.005` (low). Default ~0.03125 dropped
+   PALMETTO ST and other smaller labels at wider display
+   resolutions, so the geometric ranker had no Palmetto candidate
+   and returned a wrong answer. Don't bump this back up unless
+   you're seeing clear false positives from tiny artifacts.
 3. **Friend row match.** `rows.filter(r => text.includes(name))`
    — name is e.g. `"mchimishkyan"` (from `useMariaProximity.js`),
    matches the email/contact label in FM's People panel.
