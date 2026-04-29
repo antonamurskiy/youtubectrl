@@ -286,17 +286,16 @@ function FindMyToggle({ addToast }) {
               if (refreshing) return
               hapticTick()
               setRefreshing(true)
-              // Server work: hide + 300ms + activate + (stealth-aware re-hide).
-              // Then client re-fetches the friend payload for both the text row
-              // and the map crop. Spinner runs until all of it resolves.
-              const serverWork = fetch('/api/refresh-findmy', { method: 'POST' })
-                .then(() => addToast('Find My refreshed'))
+              // Server now AWAITS the full activate→3s refresh→re-park
+              // cycle before responding, so the friend re-fetch can run
+              // immediately afterward without racing the in-flight
+              // activated FM window (which has wrong OCR geometry).
+              fetch('/api/refresh-findmy', { method: 'POST' })
+                .then(() => fetch('/api/findmy-friend?name=mchimishkyan&force=1'))
+                .then(rr => rr.json()).then(setFriend)
+                .then(() => { window.dispatchEvent(new Event('findmy-refresh')); addToast('Find My refreshed') })
                 .catch(() => addToast('Refresh failed'))
-              const clientRefetch = new Promise(r => setTimeout(r, 1500))
-                .then(() => fetch('/api/findmy-friend?name=mchimishkyan&force=1')
-                  .then(rr => rr.json()).then(setFriend).catch(() => {}))
-                .then(() => window.dispatchEvent(new Event('findmy-refresh')))
-              Promise.all([serverWork, clientRefetch]).finally(() => setRefreshing(false))
+                .finally(() => setRefreshing(false))
             }}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter" className={refreshing ? 'spin' : undefined}>

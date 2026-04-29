@@ -5119,19 +5119,18 @@ app.post("/api/refresh-findmy", async (_req, res) => {
     await execFileP("osascript", ["-e",
       'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // Activate re-fits the corner window to fit fully on LG; the
-      // re-park returns it to the corner sliver. The wait BEFORE
-      // re-parking is what gives FM time to actually pull fresh
-      // location data from iCloud — 300ms wasn't enough (FM gets
-      // re-parked before its network refresh completes, leaving the
-      // displayed time-fragment stale). 3s is enough headroom for
-      // the typical refresh round-trip; user accepts a short flash.
-      setTimeout(async () => {
-        const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
-        const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
-        const wid = line ? line.split("|")[0].trim() : "";
-        if (wid) parkFindMyStealth(wid);
-      }, 3000);
+      // Activate re-fits the corner window to fit fully on LG; we
+      // give FM ~3s to actually pull fresh location data from
+      // iCloud (300ms isn't enough — re-park before network refresh
+      // completes leaves the displayed time-fragment stale). Then
+      // re-park to the corner sliver. AWAIT the whole cycle so the
+      // frontend's follow-up /api/findmy-friend hits a parked +
+      // refreshed window, not the in-flight activated one.
+      await new Promise(r => setTimeout(r, 3000));
+      const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
+      const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
+      const wid = line ? line.split("|")[0].trim() : "";
+      if (wid) await parkFindMyStealth(wid);
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
