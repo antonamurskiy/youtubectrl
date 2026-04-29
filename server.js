@@ -4718,9 +4718,14 @@ app.get("/api/findmy-friend", async (req, res) => {
         try {
           const pinCmd = fs.existsSync(FINDMY_PIN_BIN) ? [FINDMY_PIN_BIN, [FINDMY_OCR_PNG]] : ["swift", [FINDMY_PIN_SWIFT, FINDMY_OCR_PNG]];
           const { stdout: pinOut } = await execFileP(pinCmd[0], pinCmd[1], { timeout: 10000 });
-          const [pcx, pcy] = pinOut.trim().split(",").map(Number);
-          if (Number.isFinite(pcx) && Number.isFinite(pcy)) {
-            pinLabel = { x: pcx - 20, y: pcy - 20, w: 40, h: 40, synthetic: true };
+          // find-pin.swift outputs "cx,cy,bw,bh" — bbox dims of the
+          // detected silhouette in screenshot pixels. Forward those so
+          // downstream pin-tail offset scales with HiDPI / Retina /
+          // window-size variations instead of being hardcoded.
+          const parts = pinOut.trim().split(",").map(Number);
+          if (parts.length >= 2 && parts.every(Number.isFinite)) {
+            const [pcx, pcy, pbw = 40, pbh = 40] = parts;
+            pinLabel = { x: pcx - pbw / 2, y: pcy - pbh / 2, w: pbw, h: pbh, synthetic: true };
           }
         } catch {}
       }

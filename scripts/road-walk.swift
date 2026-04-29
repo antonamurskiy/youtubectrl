@@ -68,6 +68,10 @@ guard let nsImage = NSImage(contentsOfFile: path),
 }
 let W = cgImage.width
 let H = cgImage.height
+// Reference resolution where pixel constants were tuned (Retina FM
+// window on a 2560-wide display). Scale all pixel-distance constants
+// by this so behavior is invariant under display-resolution changes.
+let SCALE = Double(W) / 2940.0
 
 let bytesPerRow = W * 4
 var pixels = [UInt8](repeating: 0, count: W * H * 4)
@@ -86,13 +90,15 @@ context.draw(cgImage, in: CGRect(x: 0, y: 0, width: W, height: H))
 }
 
 // Calibrate road color. In dark-mode Apple Maps the brightness
-// ladder is: text (V > 200) > buildings (V ~ 130-160) > ROADS
-// (V ~ 105-125) > background terrain (V ~ 90-110) > tracks (V < 90).
+// ladder is: text (V > 200) > buildings (V ~ 145-170) > ROADS
+// (V ~ 110-140) > background terrain (V ~ 90-108) > tracks (V < 90).
 // The label bbox always contains some road pixels (label is ON the
 // road) but ALSO building pixels (bbox is wider than the road strip).
-// To target roads specifically, filter samples to V ∈ [105, 130]
-// — excludes buildings on the bright side and background on the dark.
-var roadSamples: [(Int, Int, Int)] = []
+// Build a histogram of max-channel inside each label bbox and pick
+// the densest BIN in the road brightness range — robust to whether
+// roads come out at V=115 or V=135 in different captures.
+var binCounts = [Int](repeating: 0, count: 256)
+var binPixels = [[(Int, Int, Int)]](repeating: [], count: 256)
 for l in labels {
     let halfW = max(10, l.w / 2 - 2)
     let halfH = max(8, l.h / 2 - 2)
@@ -102,9 +108,25 @@ for l in labels {
             if sx < 0 || sx >= W || sy < 0 || sy >= H { continue }
             let p = pixel(sx, sy)
             let mx = max(p.0, max(p.1, p.2))
-            if mx >= 105 && mx <= 130 { roadSamples.append(p) }
+            if mx < 105 || mx > 145 { continue }
+            binCounts[mx] += 1
+            binPixels[mx].append(p)
         }
     }
+}
+// Find peak bin ABOVE background. Background terrain dominates the
+// dim end (~107-112) of the bbox histogram — roads are brighter
+// than background, so the road peak lives in [115, 145]. Force the
+// peak above background level even when background has more pixels.
+var peakBin = 120, peakScore = 0
+for b in 115...145 {
+    var s = 0
+    for k in max(115, b - 2)...min(145, b + 2) { s += binCounts[k] }
+    if s > peakScore { peakScore = s; peakBin = b }
+}
+var roadSamples: [(Int, Int, Int)] = []
+for k in max(108, peakBin - 6)...min(145, peakBin + 6) {
+    roadSamples.append(contentsOf: binPixels[k])
 }
 if roadSamples.count < 24 {
     FileHandle.standardError.write("calibration failed: only \(roadSamples.count) road samples\n".data(using: .utf8)!)
@@ -131,7 +153,7 @@ let medB = median(roadSamples.map { $0.2 })
     let p = pixel(x, y)
     let mx = max(p.0, max(p.1, p.2))
     let mn = min(p.0, min(p.1, p.2))
-    if mx < 110 || mx > 135 { return false }
+    if mx < peakBin - 8 || mx > peakBin + 12 { return false }
     if (mx - mn) > 65 { return false }
     // Hue check: blue-grey roads have B > G > R typically.
     if (medB > medR) && !(p.2 >= p.0 - 5) { return false }
@@ -146,8 +168,9 @@ let medB = median(roadSamples.map { $0.2 })
 // Pin might land on the friend silhouette icon, not the road itself.
 // Spiral out up to 100px to find the nearest road pixel as our BFS seed.
 var startX = pinX, startY = pinY
+let SPIRAL_R = max(40, Int((100.0 * SCALE).rounded()))
 if !isRoad(startX, startY) {
-    outer: for r in 1...100 {
+    outer: for r in 1...SPIRAL_R {
         for thetaIdx in 0..<32 {
             let theta = Double(thetaIdx) * .pi / 16
             let sx = pinX + Int(cos(theta) * Double(r))
@@ -211,7 +234,7 @@ for y in 0..<H {
 // radius 2 is a mask pixel. Two horizontal+vertical passes give a
 // box dilation of effective radius 2.
 var dilated = rawMask
-let R_DILATE = 3
+let R_DILATE = max(2, Int((4.0 * SCALE).rounded()))
 // Horizontal pass.
 var tmp = [UInt8](repeating: 0, count: pixCount)
 for y in 0..<H {
@@ -236,7 +259,7 @@ for x in 0..<W {
 // 8-connected BFS over dilated road mask. dist[idx] = step count
 // from start. Cap at MAX_DIST steps.
 var dist = [Int32](repeating: -1, count: pixCount)
-let MAX_DIST: Int32 = 2500
+let MAX_DIST: Int32 = Int32((2500.0 * SCALE).rounded())
 let startIdx = startY * W + startX
 dist[startIdx] = 0
 var queue: [Int] = [startIdx]
@@ -299,8 +322,9 @@ struct LabelDist { let name: String; let d: Int32; let aspect: Double }
 var ranked: [LabelDist] = []
 for l in labels {
     var minD: Int32 = .max
-    let x0 = max(0, l.cx - 50), x1 = min(W, l.cx + 50)
-    let y0 = max(0, l.cy - 50), y1 = min(H, l.cy + 50)
+    let LBL_WIN = max(20, Int((50.0 * SCALE).rounded()))
+    let x0 = max(0, l.cx - LBL_WIN), x1 = min(W, l.cx + LBL_WIN)
+    let y0 = max(0, l.cy - LBL_WIN), y1 = min(H, l.cy + LBL_WIN)
     for sy in y0..<y1 {
         let rowBase = sy * W
         for sx in x0..<x1 {

@@ -98,7 +98,7 @@ for y in 0..<H {
     }
 }
 
-struct Candidate { let cx: Int; let cy: Int; let score: Double }
+struct Candidate { let cx: Int; let cy: Int; let bw: Int; let bh: Int; let score: Double }
 var best: Candidate? = nil
 
 for c in components {
@@ -142,9 +142,15 @@ for c in components {
     // strong pin body around them.
     let score = ringRatio + density * 0.5 - abs(1.0 - aspect) * 0.3
     if best == nil || score > best!.score {
-        best = Candidate(cx: cx, cy: cy, score: score)
+        best = Candidate(cx: cx, cy: cy, bw: bw, bh: bh, score: score)
     }
 }
 
 guard let pin = best else { exit(2) }
-print("\(pin.cx),\(pin.cy)")
+// Output: cx,cy,bw,bh — silhouette bbox so callers can scale the
+// tail-tip offset (Apple Maps friend pin tail extends ~bh/2 below
+// silhouette bottom = ~1.4×bh/2 below center) correctly across
+// HiDPI / Retina / non-Retina displays. The screenshot pixel size
+// already encodes the actual rendered scale, so all downstream
+// constants derived from these bbox dims are display-invariant.
+print("\(pin.cx),\(pin.cy),\(pin.bw),\(pin.bh)")
