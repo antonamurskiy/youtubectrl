@@ -4605,16 +4605,19 @@ const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
 const FINDMY_ROAD_WALK_SWIFT = path.join(__dirname, "scripts", "road-walk.swift");
+const FINDMY_CLICK_SWIFT = path.join(__dirname, "scripts", "click-window-point.swift");
 // Pre-compile swift sources to native binaries on boot — `swift <src>`
 // re-JITs from source on every invocation (~5-10s) which can wedge
 // API requests under load. `swiftc` once produces a fast-launch bin.
 const FINDMY_OCR_BIN = path.join(__dirname, "bin", "findmy-ocr");
 const FINDMY_PIN_BIN = path.join(__dirname, "bin", "findmy-pin");
 const FINDMY_ROAD_WALK_BIN = path.join(__dirname, "bin", "findmy-road-walk");
+const FINDMY_CLICK_BIN = path.join(__dirname, "bin", "findmy-click");
 for (const [src, bin, label] of [
   [FINDMY_OCR_SWIFT, FINDMY_OCR_BIN, "findmy-ocr"],
   [FINDMY_PIN_SWIFT, FINDMY_PIN_BIN, "findmy-pin"],
   [FINDMY_ROAD_WALK_SWIFT, FINDMY_ROAD_WALK_BIN, "findmy-road-walk"],
+  [FINDMY_CLICK_SWIFT, FINDMY_CLICK_BIN, "findmy-click"],
 ]) {
   try {
     const srcStat = fs.statSync(src);
@@ -4648,6 +4651,23 @@ async function findmyWindowId() {
 // overlapping requests both screenshot to the same /tmp path and
 // corrupt each other's OCR results mid-write.
 let _findmyInFlight = null;
+let _findmyInFlightAt = 0;
+let _findmyRunningCache = { ok: false, at: 0 };
+async function checkFindMyRunning() {
+  if (Date.now() - _findmyRunningCache.at < 5000) return _findmyRunningCache.ok;
+  try {
+    const { stdout } = await execFileP("osascript",
+      ["-e", 'tell application "System Events" to exists process "FindMy"'],
+      { timeout: 2000 });
+    const ok = stdout.trim() === "true";
+    _findmyRunningCache = { ok, at: Date.now() };
+    return ok;
+  } catch {
+    // System Events wedged or timed out — assume not running, don't cache long
+    _findmyRunningCache = { ok: false, at: Date.now() - 4000 };
+    return false;
+  }
+}
 app.get("/api/findmy-friend", async (req, res) => {
   const name = (req.query.name || "").toLowerCase();
   const force = req.query.force === "1";
@@ -4655,16 +4675,22 @@ app.get("/api/findmy-friend", async (req, res) => {
   if (!force && _lastFindmyFriend && _lastFindmyFriend.name === name && (Date.now() - _lastFindmyFriend.at) < 20000) {
     return res.json(_lastFindmyFriend.result);
   }
+  // Stale-lock guard: if the in-flight promise has been hanging for >30s,
+  // assume it wedged (e.g. swift binary or screencapture stuck) and drop it
+  // so new callers don't pancake behind a dead promise.
+  if (_findmyInFlight && (Date.now() - _findmyInFlightAt) > 30000) {
+    _findmyInFlight = null;
+  }
   if (_findmyInFlight) {
     try { return res.json(await _findmyInFlight); }
     catch { return res.json({ ok: false, reason: "error" }); }
   }
+  _findmyInFlightAt = Date.now();
   _findmyInFlight = (async () => {
     try {
     // 1. Confirm Find My is running; bail if not
-    const { stdout: existsOut } = await execFileP("osascript", ["-e",
-      'tell application "System Events" to exists process "FindMy"']);
-    if (existsOut.trim() !== "true") {
+    const running = await checkFindMyRunning();
+    if (!running) {
       const r = { ok: false, reason: "not-running", hint: "Open Find My first" };
       if (!res.headersSent) res.json(r);
       return r;
@@ -4810,14 +4836,48 @@ app.get("/api/findmy-friend", async (req, res) => {
         pinLabel: next.pinLabel || pass.pinLabel,
       };
     }
-    // If Find My shows "Paused", Maria's location data isn't being
-    // refreshed by the app. Force a re-poll: activate (triggers FM's
-    // background location refresh) then re-park + re-OCR. One-shot —
-    // no loop even if "Paused" persists, to keep response time
-    // bounded.
-    if (/paused/i.test(pass.timeFragment || "")) {
+    // Force a Find My re-poll when location data looks stale.
+    // Triggers:
+    //   - timeFragment matches "Paused" (FM stopped polling)
+    //   - distance is null (FM is showing "Locating..." spinner OR
+    //     the friend isn't currently selected in the People panel,
+    //     which means FM doesn't render a distance label for them)
+    // Activate FM (triggers a fresh iCloud location pull), click the
+    // friend row to ensure they're selected, wait for the refresh +
+    // selection to settle, re-park, re-OCR. One-shot per request to
+    // keep response time bounded.
+    const needsRefresh = /paused/i.test(pass.timeFragment || "") || !pass.distance;
+    if (needsRefresh) {
       await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
-      await new Promise(r => setTimeout(r, 1500));
+      // Brief settle so the window is up and the AX hierarchy is live
+      // before we post a click event into it.
+      await new Promise(r => setTimeout(r, 500));
+      // Click the friend's row in the People panel. CGEvent.postToPid
+      // (in the helper) targets FM's process directly — works even
+      // when stealth has parked the window mostly off-screen, since
+      // the receiver translates the coords into window-local space
+      // without going through screen hit-testing. HiDPI / 2560-vs-
+      // 1280 LG resolution all collapse into the helper's
+      // window_logical / screenshot_pixel ratio.
+      try {
+        const sips = await execFileP("sips", ["-g", "pixelWidth", "-g", "pixelHeight", FINDMY_OCR_PNG]);
+        const pxW = +(sips.stdout.match(/pixelWidth:\s+(\d+)/)?.[1] || 0);
+        const pxH = +(sips.stdout.match(/pixelHeight:\s+(\d+)/)?.[1] || 0);
+        const cx = pass.header.x + pass.header.w / 2;
+        const cy = pass.header.y + pass.header.h / 2;
+        if (pxW && pxH) {
+          const clickCmd = fs.existsSync(FINDMY_CLICK_BIN)
+            ? [FINDMY_CLICK_BIN, ["find my", String(cx), String(cy), String(pxW), String(pxH)]]
+            : ["swift", [FINDMY_CLICK_SWIFT, "find my", String(cx), String(cy), String(pxW), String(pxH)]];
+          await execFileP(clickCmd[0], clickCmd[1], { timeout: 3000 }).catch(() => {});
+        }
+      } catch {}
+      // Wait for FM to actually pull fresh location data from iCloud
+      // and render the selected friend's distance label. 3s total
+      // refresh window (500ms settle + 2.5s here) matches what
+      // /api/refresh-findmy uses; less than that and the re-park
+      // can land before iCloud responds.
+      await new Promise(r => setTimeout(r, 2500));
       if (findmyStealth) {
         const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
         const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
