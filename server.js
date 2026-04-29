@@ -4602,18 +4602,8 @@ app.post("/api/brightness", async (req, res) => {
 //   - Find My must be open on the laptop display (workspace 8) with
 //     the People tab active — `/api/toggle-findmy` already sets that up
 const FINDMY_OCR_PNG = "/tmp/ytctl-findmy.png";
-const FINDMY_VLM_CROP_PNG = "/tmp/ytctl-findmy-vlm.png";
 const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
-// Local vision-language model for cross-street resolution. The
-// geometric heuristic (perpendicular distance from pin to OCR-label
-// lines) gets the street family right but can pick the wrong cross
-// street when label rotation doesn't fit a strict 90° city grid.
-// A vision LLM looks at the cropped map image directly and reasons
-// about which street the pin is on. Disabled gracefully if Ollama
-// isn't running or the model isn't pulled.
-const FINDMY_VLM_MODEL = "qwen2.5vl:7b";
-const FINDMY_VLM_HOST = "http://localhost:11434";
 // Pre-compile swift sources to native binaries on boot — `swift <src>`
 // re-JITs from source on every invocation (~5-10s) which can wedge
 // API requests under load. `swiftc` once produces a fast-launch bin.
@@ -4633,12 +4623,6 @@ for (const [src, bin, label] of [
 }
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
-// VLM crossStreet cache, keyed by friend name + approximate pin
-// position. Survives the 20s ocr cache so a 60s frontend poll still
-// gets the AI-refined answer when the pin hasn't moved.
-let _vlmCrossCache = null; // { name, cx, cy, crossStreet, at }
-const VLM_CACHE_TTL_MS = 5 * 60 * 1000;
-const VLM_CACHE_RADIUS_PX = 60; // pin can drift this much without invalidating
 // Stealth mode: when true, Find My is parked on aerospace workspace 9
 // (never focused by either monitor), so it runs invisibly. OCR still
 // works because screencapture -l <CGWindowID> captures by window id
@@ -4745,27 +4729,12 @@ app.get("/api/findmy-friend", async (req, res) => {
         } catch {}
       }
       let crossStreet = null;
-      let crossStreetSource = null;
       if (pinLabel) {
         const pinCenter = {
           cx: pinLabel.x + pinLabel.w / 2,
           cy: pinLabel.y + pinLabel.h / 2,
         };
-        // Reuse a VLM-cached crossStreet if it's recent and the pin
-        // hasn't moved much — avoids forcing every fresh OCR pass to
-        // start back at "geo" and wait another VLM round-trip.
-        if (
-          _vlmCrossCache &&
-          _vlmCrossCache.name === name &&
-          (Date.now() - _vlmCrossCache.at) < VLM_CACHE_TTL_MS &&
-          Math.hypot(_vlmCrossCache.cx - pinCenter.cx, _vlmCrossCache.cy - pinCenter.cy) < VLM_CACHE_RADIUS_PX
-        ) {
-          crossStreet = _vlmCrossCache.crossStreet;
-          crossStreetSource = "vlm";
-        } else {
-          crossStreet = nearestCrossStreet(rows, pinCenter);
-          if (crossStreet) crossStreetSource = "geo";
-        }
+        crossStreet = nearestCrossStreet(rows, pinCenter);
       }
       const near = rows
         .filter(r => r.x < 700 && Math.abs(r.y - header.y) < 60)
@@ -4788,7 +4757,7 @@ app.get("/api/findmy-friend", async (req, res) => {
         const below = rows.filter(r => r.y > header.y && r.y < header.y + 80).sort((a, b) => a.y - b.y);
         if (below[0]) address = below[0].text;
       }
-      return { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, crossStreetSource, distance };
+      return { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance };
     }
     let pass = await ocrPass();
     if (pass.notFound) {
@@ -4815,12 +4784,15 @@ app.get("/api/findmy-friend", async (req, res) => {
         pinLabel: next.pinLabel || pass.pinLabel,
       };
     }
-    // If Find My shows "Paused", Maria's location data isn't being
-    // refreshed by the app. Force a re-poll: activate (triggers FM's
-    // background location refresh) then re-park + re-OCR. One-shot —
-    // no loop even if "Paused" persists, to keep response time
-    // bounded.
-    if (/paused/i.test(pass.timeFragment || "")) {
+    // Force a re-poll when FM shows "Paused" OR when the displayed
+    // ping is stale (>=60s old). In stealth mode FM never gains
+    // focus on its own, so iCloud refreshes for the friend's phone
+    // don't get pulled — the displayed time-fragment freezes at
+    // whatever it last rendered. Activating FM kicks the location
+    // refresh; we then re-park to keep stealth.
+    const isPaused = /paused/i.test(pass.timeFragment || "");
+    const isStale = pass.ageMs != null && pass.ageMs >= 60_000;
+    if (isPaused || isStale) {
       await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
       await new Promise(r => setTimeout(r, 1500));
       if (findmyStealth) {
@@ -4841,7 +4813,7 @@ app.get("/api/findmy-friend", async (req, res) => {
         };
       }
     }
-    const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, crossStreetSource, distance } = pass;
+    const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance } = pass;
     const result = {
       ok: true,
       name: header.text,
@@ -4849,7 +4821,6 @@ app.get("/api/findmy-friend", async (req, res) => {
       timeFragment,
       ageMs,
       crossStreet,
-      crossStreetSource,
       distance,
       cropUrl: pinLabel ? `/api/findmy-crop.png?t=${Date.now()}` : null,
       ocrAt: Date.now(),
@@ -4866,34 +4837,11 @@ app.get("/api/findmy-friend", async (req, res) => {
     if (_lastFindmyFriend && _lastFindmyFriend.name === name && _lastFindmyFriend.result?.ok) {
       const prev = _lastFindmyFriend.result;
       if (!result.distance && prev.distance) result.distance = prev.distance;
-      if (!result.crossStreet && prev.crossStreet) {
-        result.crossStreet = prev.crossStreet;
-        result.crossStreetSource = prev.crossStreetSource || result.crossStreetSource;
-      }
+      if (!result.crossStreet && prev.crossStreet) result.crossStreet = prev.crossStreet;
       if (!result.cropUrl && prev.cropUrl) result.cropUrl = prev.cropUrl;
     }
     _lastFindmyFriend = { name, result, at: Date.now() };
     res.json(result);
-    // Fire the vision LLM async to refine cross-street. Skip if we
-    // already served a VLM-cached answer (no point re-running). The
-    // cache when it completes so the next poll (typically 60s later
-    // via useMariaProximity) picks up the better answer. If the VLM
-    // is slow / down / returns garbage, the geometric answer stands.
-    if (pinLabel && Array.isArray(pass.rows) && pass.rows.length && pass.crossStreetSource !== "vlm") {
-      const pc = { cx: pinLabel.x + pinLabel.w / 2, cy: pinLabel.y + pinLabel.h / 2 };
-      vlmCrossStreet(pass.rows, pc).then(vlm => {
-        if (!vlm) return;
-        // Persist for future fresh OCR passes so the result is reused
-        // across the short ocr cache TTL.
-        _vlmCrossCache = { name, cx: pc.cx, cy: pc.cy, crossStreet: vlm, at: Date.now() };
-        // Patch the in-flight cached result too in case a poll lands
-        // within the 20s OCR cache window before next fresh pass.
-        if (_lastFindmyFriend?.name === name && _lastFindmyFriend?.result?.ok) {
-          _lastFindmyFriend.result.crossStreet = vlm;
-          _lastFindmyFriend.result.crossStreetSource = "vlm";
-        }
-      }).catch(() => {});
-    }
     return result;
     } catch (err) {
       const errResult = { ok: false, reason: "error", error: err.message };
@@ -4962,106 +4910,6 @@ app.get("/api/findmy-crop.png", async (_req, res) => {
     res.status(500).send(err.message);
   }
 });
-
-// Send a pin-centered crop to the local vision LLM and ask it to
-// identify the street the pin sits on + the nearest cross-street.
-// Constrains output to OCR'd street names so the model can't
-// hallucinate streets that aren't visible. Returns "Street & Cross"
-// or null on any failure (Ollama down, model not pulled, parse
-// error, response references a non-listed street).
-async function vlmCrossStreet(rows, { cx, cy }) {
-  const STREET_RE = /^([A-Z0-9][A-Z0-9'\s]+?)\s+(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY)$/;
-  const streetNames = new Set();
-  for (const r of rows) {
-    const t = r.text.trim();
-    const m = t.match(STREET_RE);
-    if (!m) continue;
-    const firstWord = m[1].split(/\s+/)[0];
-    if (firstWord.length < 3 || /^\d/.test(m[1])) continue;
-    streetNames.add(toTitleCase(t));
-  }
-  if (streetNames.size < 2) return null;
-
-  // Crop a ~900x700 window centered on the pin.
-  let dims;
-  try {
-    const { stdout } = await execFileP("sips", ["-g", "pixelWidth", "-g", "pixelHeight", FINDMY_OCR_PNG]);
-    const W = parseInt((stdout.match(/pixelWidth:\s*(\d+)/) || [])[1] || "0");
-    const H = parseInt((stdout.match(/pixelHeight:\s*(\d+)/) || [])[1] || "0");
-    if (!W || !H) return null;
-    dims = { W, H };
-  } catch { return null; }
-  // 1400x1100 gives ~3-4 city blocks of context in every direction —
-  // the model needs to see multiple parallel streets to disambiguate
-  // which one the pin sits on. Tighter crops bias toward whatever
-  // single label happens to be in frame near the pin.
-  const CW = 1400, CH = 1100;
-  const ox = Math.max(0, Math.min(dims.W - CW, Math.round(cx - CW / 2)));
-  const oy = Math.max(0, Math.min(dims.H - CH, Math.round(cy - CH / 2)));
-  try {
-    await execFileP("sips", ["-c", String(CH), String(CW), "--cropOffset", String(oy), String(ox), FINDMY_OCR_PNG, "--out", FINDMY_VLM_CROP_PNG]);
-    // Downsample to 1200px on the long side. Qwen2.5-VL tokenizes the
-    // image as ~1 token per 56×56 patch. 1400px → ~490 tokens / ~38s,
-    // 1200px → ~360 tokens / ~25s, 800px → ~150 tokens / ~10s but
-    // street labels become unreadable. 1200 is the sweet spot.
-    await execFileP("sips", ["-Z", "1200", FINDMY_VLM_CROP_PNG, "--out", FINDMY_VLM_CROP_PNG]);
-  } catch { return null; }
-
-  const imageB64 = fs.readFileSync(FINDMY_VLM_CROP_PNG).toString("base64");
-  const list = [...streetNames].map(s => `- ${s}`).join("\n");
-  const prompt = `Dark-mode Apple Maps screenshot. There is exactly one person-silhouette pin (white person icon inside a circle) — find it.
-
-Allowed street names (use ONLY these, with this exact spelling):
-${list}
-
-Step 1: locate the pin (white silhouette circle).
-Step 2: identify STREET-ON-PIN — the road line passing directly under the pin's circle.
-Step 3: identify CROSS-STREET — the nearest road that crosses STREET-ON-PIN, measured by walking distance from the pin along STREET-ON-PIN. Only count streets that intersect STREET-ON-PIN within the visible image. Do NOT pick a street that runs parallel to STREET-ON-PIN.
-
-Reply with ONLY: STREET-ON-PIN & CROSS-STREET
-No other words, quotes, prefix, or explanation.`;
-
-  let resp;
-  try {
-    resp = await fetch(`${FINDMY_VLM_HOST}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: FINDMY_VLM_MODEL,
-        prompt,
-        images: [imageB64],
-        stream: false,
-        options: { temperature: 0, num_predict: 40 },
-      }),
-      // Long timeout — first call after a model load can be slow.
-      signal: AbortSignal.timeout(60000),
-    });
-  } catch { return null; }
-  if (!resp.ok) return null;
-  let data;
-  try { data = await resp.json(); } catch { return null; }
-  const raw = String(data?.response || "").trim();
-  if (!raw) return null;
-
-  // Parse "A & B" — be lenient about whitespace and quotes.
-  const cleaned = raw.replace(/^["'`]+|["'`]+$/g, "").trim();
-  const parts = cleaned.split(/\s*&\s*|\s+and\s+/i).map(s => s.trim()).filter(Boolean);
-  if (parts.length === 0) return null;
-
-  // Validate: each part must match (case-insensitive) one of the OCR
-  // street names. Accept partial matches if the OCR name contains
-  // the model's answer or vice versa (handles "Palmetto" vs "Palmetto St").
-  const lower = [...streetNames].map(s => ({ name: s, low: s.toLowerCase() }));
-  const validate = (s) => {
-    const sl = s.toLowerCase();
-    return lower.find(({ low }) => low === sl || low.includes(sl) || sl.includes(low))?.name || null;
-  };
-  const a = validate(parts[0]);
-  const b = parts[1] ? validate(parts[1]) : null;
-  if (!a) return null;
-  if (b && a !== b) return `${a} & ${b}`;
-  return a;
-}
 
 // Pick the two closest streets to {cx, cy} and join them as "A & B".
 // Apple Maps places street labels along the road (rotated to match

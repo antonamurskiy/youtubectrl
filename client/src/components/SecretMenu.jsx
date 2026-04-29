@@ -317,22 +317,6 @@ function FindMyToggle({ addToast }) {
         >
           <div style={{ color: 'var(--text)' }}>
             Maria: {friend.crossStreet || friend.address || '—'}
-            {friend.crossStreet && friend.crossStreetSource ? (
-              <span
-                title={friend.crossStreetSource === 'vlm' ? 'Refined by local vision LLM' : 'Geometric estimate from OCR labels'}
-                style={{
-                  marginLeft: 6,
-                  fontSize: '0.75em',
-                  padding: '0 4px',
-                  border: '1px solid var(--border)',
-                  borderRadius: 2,
-                  color: friend.crossStreetSource === 'vlm' ? 'var(--green)' : 'var(--text-dim)',
-                  letterSpacing: 0.5,
-                }}
-              >
-                {friend.crossStreetSource === 'vlm' ? 'AI' : 'GEO'}
-              </span>
-            ) : null}
             {friend.distance ? <span style={{ color: 'var(--text-dim)' }}>{' · '}{friend.distance}</span> : null}
           </div>
           <div style={{ color: (friend.ageMs != null && friend.ageMs > 10 * 60 * 1000) ? 'var(--red)' : 'var(--text-dim)' }}>
