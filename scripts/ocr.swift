@@ -49,6 +49,12 @@ let req = VNRecognizeTextRequest { (request, error) in
 }
 req.recognitionLevel = .accurate
 req.usesLanguageCorrection = true
+// Catch smaller street labels at lower display resolutions / wider
+// map views. Default minimumTextHeight is ~0.03125 (1/32 of the
+// shorter image dimension) which drops street-name labels at certain
+// zoom levels (e.g. PALMETTO ST disappearing while LINDEN ST and
+// GATES AVE are still detected). Halve it.
+req.minimumTextHeight = 0.005
 
 let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
 do {
