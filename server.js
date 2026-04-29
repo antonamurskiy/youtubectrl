@@ -4784,15 +4784,12 @@ app.get("/api/findmy-friend", async (req, res) => {
         pinLabel: next.pinLabel || pass.pinLabel,
       };
     }
-    // Force a re-poll when FM shows "Paused" OR when the displayed
-    // ping is stale (>=60s old). In stealth mode FM never gains
-    // focus on its own, so iCloud refreshes for the friend's phone
-    // don't get pulled — the displayed time-fragment freezes at
-    // whatever it last rendered. Activating FM kicks the location
-    // refresh; we then re-park to keep stealth.
-    const isPaused = /paused/i.test(pass.timeFragment || "");
-    const isStale = pass.ageMs != null && pass.ageMs >= 60_000;
-    if (isPaused || isStale) {
+    // If Find My shows "Paused", Maria's location data isn't being
+    // refreshed by the app. Force a re-poll: activate (triggers FM's
+    // background location refresh) then re-park + re-OCR. One-shot —
+    // no loop even if "Paused" persists, to keep response time
+    // bounded.
+    if (/paused/i.test(pass.timeFragment || "")) {
       await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
       await new Promise(r => setTimeout(r, 1500));
       if (findmyStealth) {
@@ -5122,14 +5119,19 @@ app.post("/api/refresh-findmy", async (_req, res) => {
     await execFileP("osascript", ["-e",
       'tell application "FindMy" to activate']).catch(() => {});
     if (findmyStealth) {
-      // Activate re-fits the corner window to fit fully on LG;
-      // re-park 300ms later returns it to the corner sliver.
+      // Activate re-fits the corner window to fit fully on LG; the
+      // re-park returns it to the corner sliver. The wait BEFORE
+      // re-parking is what gives FM time to actually pull fresh
+      // location data from iCloud — 300ms wasn't enough (FM gets
+      // re-parked before its network refresh completes, leaving the
+      // displayed time-fragment stale). 3s is enough headroom for
+      // the typical refresh round-trip; user accepts a short flash.
       setTimeout(async () => {
         const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
         const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
         const wid = line ? line.split("|")[0].trim() : "";
         if (wid) parkFindMyStealth(wid);
-      }, 300);
+      }, 3000);
     }
     res.json({ ok: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
