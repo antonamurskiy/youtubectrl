@@ -60,10 +60,31 @@ body {
   transition: background-color 400ms ease;
 }
 
-/* Maria-proximity alert: whole-app dark-red wash when she's within
- * 1 mile. Override --bg so every surface reading from it (cards,
- * now-playing bar, header, etc.) picks up the alert tone together. */
-body.maria-proximity { --bg: #3a0a0a; }
+/* Maria-proximity alert: shift the whole palette to a red-themed
+ * variant so the dark-red wash doesn't fight the cream/green/blue
+ * gruvbox accents. Cool tones (green, blue, cyan) warm into peach /
+ * dusty rose; cream text shifts to warm peach for contrast on red.
+ * Every surface and accent reading from a CSS var picks up the alert
+ * theme together. */
+body.maria-proximity {
+  --bg: #3a0a0a;
+  --surface: #4a1212;
+  --surface-hover: #5c1a1a;
+  --border: #4a1212;
+  --text: #f5d4c0;
+  --text-dim: #bf9489;
+  --accent: #f5d4c0;
+  --accent2: #f0a878;
+  --accent3: #5c1a1a;
+  --accent-glow: rgba(245, 212, 192, 0.08);
+  --accent-soft: rgba(245, 212, 192, 0.04);
+  --red: #ff8585;
+  --green: #e8a888;
+  --yellow: #f0c878;
+  --blue: #c98a98;
+  --magenta: #e08aa0;
+  --cyan: #f0a878;
+}
 html:has(body.maria-proximity) { background: #3a0a0a; }
 
 /* ── App container ── */

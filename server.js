@@ -5321,15 +5321,37 @@ app.post("/api/refresh-findmy", async (_req, res) => {
 
 // Current Find My running state (for the secret menu to render a
 // "Show" vs "Close" label without the user having to guess).
+// Cached so the proximity hook polling every 60s + the visibilitychange
+// triggers don't each spawn two osascripts on the hot path. Critically,
+// gives every osascript a 2s timeout — without it, a wedged System
+// Events held this endpoint hostage for 2 minutes per call and let
+// polls pile up in the queue.
+let _findmyStatusCache = { state: { visible: false, running: false }, at: 0 };
 app.get("/api/findmy-status", async (_req, res) => {
+  if (Date.now() - _findmyStatusCache.at < 5000) {
+    return res.json(_findmyStatusCache.state);
+  }
   try {
-    const { stdout: existsOut } = await execFileP("osascript", ["-e",
-      'tell application "System Events" to exists process "FindMy"']);
-    if (existsOut.trim() !== "true") return res.json({ visible: false, running: false });
-    const { stdout: visOut } = await execFileP("osascript", ["-e",
-      'tell application "System Events" to get visible of process "FindMy"']);
-    res.json({ visible: visOut.trim() === "true", running: true });
-  } catch { res.json({ visible: false, running: false }); }
+    const { stdout: existsOut } = await execFileP("osascript",
+      ["-e", 'tell application "System Events" to exists process "FindMy"'],
+      { timeout: 2000 });
+    if (existsOut.trim() !== "true") {
+      const state = { visible: false, running: false };
+      _findmyStatusCache = { state, at: Date.now() };
+      return res.json(state);
+    }
+    const { stdout: visOut } = await execFileP("osascript",
+      ["-e", 'tell application "System Events" to get visible of process "FindMy"'],
+      { timeout: 2000 });
+    const state = { visible: visOut.trim() === "true", running: true };
+    _findmyStatusCache = { state, at: Date.now() };
+    res.json(state);
+  } catch {
+    // Don't cache the failure long — a wedged SE shouldn't lock the
+    // status as "not running" for the full 5s window.
+    _findmyStatusCache = { state: { visible: false, running: false }, at: Date.now() - 4000 };
+    res.json({ visible: false, running: false });
+  }
 });
 
 // Toggle Find My on the MacBook Air built-in display.

@@ -20,21 +20,30 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
   const touchStartXRef = useRef(null)
 
   useEffect(() => {
-    const css = getComputedStyle(document.documentElement)
-    const v = (name) => css.getPropertyValue(name).trim()
-    const term = new XTerm({
-      fontFamily: xtermFontFamily(),
-      fontSize: currentFontSize(),
-      theme: {
+    // Read the current palette out of CSS vars. Called both at terminal
+    // creation and whenever body.maria-proximity flips, so the xterm
+    // theme stays in sync with the rest of the UI's theme override.
+    const buildTheme = () => {
+      // Read from body, not documentElement — the proximity overrides
+      // are scoped to body.maria-proximity, and CSS custom properties
+      // don't bubble up. Reading from html silently gave the default
+      // gruvbox palette regardless of class state.
+      const css = getComputedStyle(document.body)
+      const v = (name) => css.getPropertyValue(name).trim()
+      const proximity = document.body.classList.contains('maria-proximity')
+      // Green has no CSS var (hardcoded olive in default theme); during
+      // proximity, swap to a peach that harmonizes with the red wash.
+      const green = proximity ? '#d49b7e' : '#7e8e50'
+      return {
         background: v('--bg'),
         foreground: v('--text'),
         cursor: v('--text'),
-        cursorAccent: '#151515',
+        cursorAccent: proximity ? '#2a0606' : '#151515',
         selectionBackground: v('--surface'),
         selectionForeground: v('--text'),
-        black: '#151515',
+        black: proximity ? '#2a0606' : '#151515',
         red: v('--red'),
-        green: '#7e8e50',
+        green,
         yellow: v('--yellow'),
         blue: v('--blue'),
         magenta: v('--magenta'),
@@ -42,17 +51,35 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
         white: v('--text'),
         brightBlack: v('--text-dim'),
         brightRed: v('--red'),
-        brightGreen: '#7e8e50',
+        brightGreen: green,
         brightYellow: v('--yellow'),
         brightBlue: v('--blue'),
         brightMagenta: v('--magenta'),
         brightCyan: v('--cyan'),
         brightWhite: v('--bright-white'),
-      },
+      }
+    }
+    const term = new XTerm({
+      fontFamily: xtermFontFamily(),
+      fontSize: currentFontSize(),
+      theme: buildTheme(),
       cursorBlink: false,
       allowProposedApi: true,
       scrollback: 1000,
     })
+    // Re-apply the theme whenever maria-proximity toggles. xterm
+    // accepts a fresh theme object via term.options.theme — the
+    // active renderer (WebGL or DOM) repaints with the new palette.
+    const proximityObserver = new MutationObserver(() => {
+      try {
+        term.options.theme = buildTheme()
+        // WebGL renderer caches the glyph atlas keyed on the theme;
+        // refresh forces it to repaint visible cells with the new
+        // colors instead of holding the previous palette until scroll.
+        term.refresh(0, term.rows - 1)
+      } catch {}
+    })
+    proximityObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(termRef.current)
@@ -153,6 +180,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
 
     return () => {
       if (reconnectRef.current) clearTimeout(reconnectRef.current)
+      proximityObserver.disconnect()
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('app-font-change', handleFontChange)
       termEl?.removeEventListener('touchend', refocusOnTap)
@@ -204,6 +232,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
         <button onClick={() => sendKey('\x03')}>^C</button>
         <button onClick={() => sendKey('\x0c')}>^L</button>
         <button onClick={() => sendKey('\x04')}>^D</button>
+        <button onClick={() => sendKey('\x0f')}>^O</button>
         <button onClick={() => sendKey('\x1a')}>^Z</button>
         <button onClick={() => sendKey('\x1b')}>esc</button>
         <button onClick={() => sendKey('\t')}>tab</button>
