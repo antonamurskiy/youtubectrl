@@ -744,6 +744,129 @@ and wreck its sync.
 - **cmux focus toggle**: aerospace-based, exits maximize when focusing cmux, restores on mpv focus. `phoneActive` synced to keep eye icon consistent.
 - **Window resize on loadfile**: floating mode re-applies 38% width, 16:9 aspect, top-right position via AppleScript after video loads (prevents vertical shorts from stretching window). Maximize/fullscreen modes re-apply aerospace fullscreen.
 
+### Find My friend lookup — `/api/findmy-friend`
+
+Maria's location pulled from the FindMy macOS app via screenshot →
+OCR → pin detection → cross-street resolution. Deterministic, no AI.
+~1.5–3s end-to-end depending on FM refresh path.
+
+#### Pipeline
+
+1. **Screenshot.** `screencapture -l <CGWindowID>` if stealth mode is
+   on (FM parked off-screen on workspace 1, captured by window-id);
+   else `-D 2` for laptop display 2. Saves to
+   `/tmp/ytctl-findmy.png`.
+2. **OCR.** `bin/findmy-ocr` (compiled from `scripts/ocr.swift` on
+   boot) runs Apple Vision `VNRecognizeTextRequest` and prints one
+   row per detected text:
+   `x,y,w,h,angleDeg\ttext`
+   `angleDeg` is the **text baseline angle** in degrees — read
+   from Vision's rotated quadrangle (`bottomLeft → bottomRight`
+   vector). Apple Maps places street labels along the road, so
+   the baseline IS the road's direction at that label point. This
+   one number is what cracked the cross-street problem; **don't
+   replace it with bbox-aspect inference or single-grid-angle
+   detection** — those were tried and were strictly worse.
+3. **Friend row match.** `rows.filter(r => text.includes(name))`
+   — name is e.g. `"mchimishkyan"` (from `useMariaProximity.js`),
+   matches the email/contact label in FM's People panel.
+4. **Pin detection.** `bin/findmy-pin` (from
+   `scripts/find-pin.swift`) finds the white person-silhouette
+   pin in the map area. Algorithm: connected-component white
+   pixels (RGB ≥ 240) of size 50–800, compact aspect, surrounded
+   by uniform mid-grey ring (the pin body). Outputs
+   `cx,cy,bw,bh` — silhouette centroid + actual bbox dims so
+   the pin location scales correctly across HiDPI / Retina /
+   non-Retina displays.
+5. **OCR fragmentation reconstruction**
+   (`reconstructFragmentedStreetLabels`). Vision splits rotated
+   compound names: `"FRESH POND RD"` comes out as `["FRESH"]` +
+   `["I POND RD"]` (F→I misread) and the surrounding `FreshPond
+   Hardware` business label. When a regex-rejected fragment
+   (first word ≤ 2 chars) sits within ~200px of a known prefix
+   hint (`FRESH`, `OLD`, `NEW`, `WEST`, etc.), synthesize a
+   corrected row at the union bbox. Special-cased: prefix=FRESH
+   + suffix=RD + nearby `POND` → emit `FRESH POND RD` (avoids
+   the lossy `FRESH RD`).
+6. **Cross-street resolution** (`nearestCrossStreet`). Two
+   metrics, picked by family:
+   - **Parallel family** (`bbox aspect > 1.6`, residential
+     streets running mostly along the local grid): perpendicular
+     distance from pin to the LINE through the label center at
+     the label's baseline angle. `dist = |v × dir|` where
+     `dir = (cos θ, sin θ)`, `v = (cx − lcx, cy − lcy)`.
+     Closest = STREET-ON-PIN.
+   - **Cross family** (`aspect ≤ 1.6`, perpendicular avenues):
+     Euclidean distance to label center. Naturally penalizes
+     streets across the map (Admiral Ave at the top of the view
+     when the pin is at the bottom).
+   Closest of each family → `"Parallel St & Cross Ave"`.
+
+#### Why these specific choices
+
+- **Per-label baseline angle, not single grid angle.** NYC
+  Queens grid has streets at varying angles (Madison runs at
+  −18°, Palmetto more horizontal). Inferring a single grid angle
+  from same-name pairs gave wrong answers on streets with
+  different angles. Vision's quadrangle gives each label its
+  own angle directly.
+- **No road-walk BFS.** A `scripts/road-walk.swift` exists from
+  earlier iteration that does pixel-level BFS along a road-color
+  mask with barrier detection (train tracks, water). It works in
+  principle but the road mask fragments at intersections — every
+  tuning of color tolerance, dilation, V-band threshold gave
+  worse net results than the simple geometric heuristic. Kept in
+  the repo as a reference implementation; **not called from the
+  hot path**.
+- **No vision LLM.** Tried qwen2.5vl:7b, qwen3-vl:8b (thinking
+  + instruct), qwen3-vl:4b-instruct via Ollama. All gave
+  inconsistent answers, took 5–90s per call, and underperformed
+  the deterministic algorithm. Ollama uninstalled, models deleted.
+  Don't re-add without external ground truth (e.g. lat/long
+  from a Find My private API) to validate against.
+- **Pin tail offset is 0.** Earlier code added `1.4 × bbox.h` to
+  the silhouette centroid to land on the pin "tip." Modern Apple
+  Maps friend pins are tail-less circles — the centroid IS the
+  map location. Don't add an offset.
+
+#### Stealth mode + force-refresh
+
+`/api/refresh-findmy` activates FM via `osascript`, waits **3s**
+for FM to actually pull fresh location data from iCloud, then
+re-parks the window via `parkFindMyStealth` (workspace 1, sized
+1470×923, positioned off-screen sliver at 2557,1322). 300ms
+wasn't enough — re-park happened before the network refresh
+completed, leaving timeFragment stuck. The endpoint AWAITS the
+full cycle so the frontend's follow-up `/api/findmy-friend?force=1`
+hits a re-parked + refreshed window. Don't put `setTimeout` back.
+
+#### Resolution / HiDPI
+
+All pixel-distance constants in `road-walk.swift` derive a
+`SCALE = W / 2940` from screenshot width and apply it to dilation
+radius, BFS depth cap, label window, spiral search radius. Server
+uses the actual `pinLabel.h` from find-pin (not a hardcoded 40px)
+for any size-dependent math. Switching displays adjusts
+automatically because the screenshot's pixel dimensions encode
+the rendered scale.
+
+#### Pre-compiled binaries
+
+Compiled on server boot if source mtime is newer than binary mtime:
+- `bin/findmy-ocr` ← `scripts/ocr.swift`
+- `bin/findmy-pin` ← `scripts/find-pin.swift`
+- `bin/findmy-road-walk` ← `scripts/road-walk.swift` (dormant)
+
+Each binary is fast-launch (~50ms). `swift <src>` JIT-compiles per
+invocation (~5–10s) and can wedge System Events under load — there's
+a recovery story in commit history (`killall "System Events"`).
+
+#### Debug
+
+- `ROADWALK_DEBUG=1` — per-label distance dump on stderr
+- `ROADWALK_DEBUG_MASK=path` — dump road-color mask as PNG
+- `ROADWALK_DEBUG_VISITED=path` — dump BFS visited set as PNG (green = reached, grey = road but unreachable)
+
 ## Key Files
 
 - `.env` — `YOUTUBE_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
@@ -754,4 +877,7 @@ and wreck its sync.
 - `activePlayer` — server-side variable: `'mpv'` | `null`
 - `currentLiveHlsUrl` — upstream YouTube HLS URL for the live stream currently playing (read by streamlink via `/api/hls-live.m3u8` and by PDT tracking)
 - `bin/brightness` — Swift binary compiled on server boot from `bin/brightness.swift`, drives the active display's brightness for the Misc-submenu slider
+- `bin/findmy-ocr`, `bin/findmy-pin`, `bin/findmy-road-walk` — Swift binaries compiled on server boot from `scripts/*.swift`. Hot path uses ocr + pin; road-walk is dormant. See "Find My friend lookup".
+- `/tmp/ytctl-findmy.png` — most recent FindMy screenshot, source of truth for OCR + pin detection
+- `.findmy-stealth.json` — `{ on: bool }` stealth-mode persistence
 - `public/silent.m4a` — truly silent 5-minute m4a for iOS Media Session (must be actual silence, not low volume — iOS drops session at volume=0)
