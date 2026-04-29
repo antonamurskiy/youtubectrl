@@ -4695,11 +4695,16 @@ app.get("/api/findmy-friend", async (req, res) => {
     async function ocrPass() {
       const ocrCmd = fs.existsSync(FINDMY_OCR_BIN) ? [FINDMY_OCR_BIN, [FINDMY_OCR_PNG]] : ["swift", [FINDMY_OCR_SWIFT, FINDMY_OCR_PNG]];
       const { stdout: ocr } = await execFileP(ocrCmd[0], ocrCmd[1], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
-      const rows = ocr.split("\n").filter(Boolean).map(l => {
+      const rawRows = ocr.split("\n").filter(Boolean).map(l => {
         const [bbox, ...rest] = l.split("\t");
         const [x, y, w, h] = bbox.split(",").map(Number);
         return { x, y, w, h, text: rest.join("\t") };
       });
+      // Reconstruct compound street names that Vision OCR splits or
+      // garbles (e.g. "FRESH POND RD" → "FRESH" + "I POND RD"). The
+      // synthesized rows are appended; real rows are kept so the
+      // friend-row matcher and pin detector still see the originals.
+      const rows = reconstructFragmentedStreetLabels(rawRows);
       const matches = rows.filter(r => r.text.toLowerCase().includes(name)).sort((a, b) => a.y - b.y);
       if (matches.length === 0) return { notFound: true };
       const header = matches[0];
@@ -5078,6 +5083,54 @@ function nearestCrossStreet(rows, { cx, cy }) {
   }
   if (sorted.length >= 2) return `${sorted[0].name} & ${sorted[1].name}`;
   return sorted[0]?.name || null;
+}
+
+// Fix Vision OCR fragmentation on rotated multi-word street names.
+// Apple Maps renders "FRESH POND RD" rotated to follow the road; OCR
+// sometimes splits it into ["FRESH"] + ["I POND RD"] (F→I misread on
+// the smaller fragment) or ["FRESH POND RI"] (last char misread).
+// We detect short PREFIX hints near a regex-rejected fragment and
+// rewrite the merged label, then push it as a synthetic OCR row so
+// downstream consumers see the corrected name + a reasonable bbox.
+const COMPOUND_PREFIX_HINTS = ["FRESH", "OLD", "NEW", "WEST", "EAST", "NORTH", "SOUTH", "GRAND", "UPPER", "LOWER", "SAINT", "FORT"];
+const STREET_SUFFIX = /^(ST|AVE|AV|BLVD|BWY|PL|RD|DR|LN|HWY|WAY|PKWY|TPKE|BROADWAY|RI)$/;
+function reconstructFragmentedStreetLabels(rows) {
+  const synth = [];
+  // Build prefix-hint index: short single-word OCR rows that match
+  // a known compound-name prefix.
+  const prefixes = rows.filter(r => COMPOUND_PREFIX_HINTS.includes(r.text.trim().toUpperCase()));
+  if (prefixes.length === 0) return rows;
+  for (const r of rows) {
+    const t = r.text.trim();
+    // Look for "X POND RD"-style fragments: ends in a street suffix
+    // (or near-miss like RI), starts with 1-2 chars (likely OCR error).
+    const tokens = t.split(/\s+/);
+    if (tokens.length < 2) continue;
+    const last = tokens[tokens.length - 1].toUpperCase();
+    if (!STREET_SUFFIX.test(last)) continue;
+    const first = tokens[0];
+    if (first.length > 2) continue;
+    // Find nearest prefix hint within 200px of this row's center.
+    const cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+    let best = null, bestD = Infinity;
+    for (const p of prefixes) {
+      const pcx = p.x + p.w / 2, pcy = p.y + p.h / 2;
+      const d = Math.hypot(pcx - cx, pcy - cy);
+      if (d < 200 && d < bestD) { best = p; bestD = d; }
+    }
+    if (!best) continue;
+    // Rebuild as "PREFIX rest-of-tokens"; normalize "RI" → "RD" since
+    // it's overwhelmingly the misread form here.
+    const rest = tokens.slice(1).join(" ");
+    const fixedSuffix = last === "RI" ? "RD" : last;
+    const reconstructed = `${best.text.trim().toUpperCase()} ${rest.replace(new RegExp(last + "$"), fixedSuffix)}`;
+    // Synth row at the union bbox of prefix + main fragment so
+    // road-walk's window check covers both pieces.
+    const x0 = Math.min(r.x, best.x), y0 = Math.min(r.y, best.y);
+    const x1 = Math.max(r.x + r.w, best.x + best.w), y1 = Math.max(r.y + r.h, best.y + best.h);
+    synth.push({ x: x0, y: y0, w: x1 - x0, h: y1 - y0, text: reconstructed });
+  }
+  return rows.concat(synth);
 }
 
 function toTitleCase(s) {
