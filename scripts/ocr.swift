@@ -34,7 +34,16 @@ let req = VNRecognizeTextRequest { (request, error) in
         let by = Int((1 - obs.boundingBox.maxY) * h)
         let bw = Int(obs.boundingBox.width * w)
         let bh = Int(obs.boundingBox.height * h)
-        let line = "\(bx),\(by),\(bw),\(bh)\t\(top.string)"
+        // Text baseline angle from the rotated quadrangle. Vision
+        // returns four corners of the (rotated) bounding rect; the
+        // baseline runs from bottomLeft to bottomRight. In Vision's
+        // bottom-left-origin normalized coords, dy is inverted vs the
+        // image-pixel top-left coords we output, so flip Y to match.
+        let bl = obs.bottomLeft, br = obs.bottomRight
+        let dx = (br.x - bl.x) * w
+        let dy = -(br.y - bl.y) * h    // flip to top-left-origin
+        let angleDeg = Int((atan2(dy, dx) * 180.0 / .pi).rounded())
+        let line = "\(bx),\(by),\(bw),\(bh),\(angleDeg)\t\(top.string)"
         print(line)
     }
 }

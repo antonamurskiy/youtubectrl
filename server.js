@@ -4697,8 +4697,9 @@ app.get("/api/findmy-friend", async (req, res) => {
       const { stdout: ocr } = await execFileP(ocrCmd[0], ocrCmd[1], { timeout: 15000, maxBuffer: 4 * 1024 * 1024 });
       const rawRows = ocr.split("\n").filter(Boolean).map(l => {
         const [bbox, ...rest] = l.split("\t");
-        const [x, y, w, h] = bbox.split(",").map(Number);
-        return { x, y, w, h, text: rest.join("\t") };
+        const parts = bbox.split(",").map(Number);
+        const [x, y, w, h, angleDeg = 0] = parts;
+        return { x, y, w, h, angleDeg, text: rest.join("\t") };
       });
       // Reconstruct compound street names that Vision OCR splits or
       // garbles (e.g. "FRESH POND RD" → "FRESH" + "I POND RD"). The
@@ -5021,46 +5022,20 @@ function nearestCrossStreet(rows, { cx, cy }) {
       lcx: r.x + r.w / 2,
       lcy: r.y + r.h / 2,
       aspect: r.w / r.h,
+      // Per-label baseline angle from Vision OCR's rotated quad —
+      // gives the road's actual direction at this label position
+      // (text is rendered along the road).
+      angleDeg: r.angleDeg ?? 0,
     });
   }
   if (labels.length === 0) return null;
 
-  // Detect grid angle from same-name parallel-family label pairs.
-  // Two same-name labels (e.g. "MADISON ST" appearing twice along
-  // its length) lie on the same straight line, so the vector between
-  // them gives the road's actual angle. Falls back to horizontal
-  // (angle 0) if no pair exists.
-  let gridAngle = 0, bestPairDist = 0;
-  const byName = new Map();
-  for (const l of labels) {
-    if (l.aspect <= 1.6) continue;  // only parallel family for grid detection
-    if (!byName.has(l.name)) byName.set(l.name, []);
-    byName.get(l.name).push(l);
-  }
-  for (const insts of byName.values()) {
-    if (insts.length < 2) continue;
-    for (let i = 0; i < insts.length; i++) {
-      for (let j = i + 1; j < insts.length; j++) {
-        const dx = insts[j].lcx - insts[i].lcx;
-        const dy = insts[j].lcy - insts[i].lcy;
-        const d = Math.hypot(dx, dy);
-        if (d > bestPairDist && d > 100) {
-          bestPairDist = d;
-          let a = Math.atan2(dy, dx);
-          while (a > Math.PI / 2) a -= Math.PI;
-          while (a < -Math.PI / 2) a += Math.PI;
-          gridAngle = a;
-        }
-      }
-    }
-  }
-  const tanG = Math.tan(gridAngle);
-
   // Family classification + per-family distance metric:
-  //   - parallel family: project the road LINE through the label at
-  //     the grid angle, compute |road_y_at_pin_x - pin_y|. This
-  //     handles the "label is far across the map but pin is on the
-  //     same street" case.
+  //   - parallel family: project the road LINE through the label
+  //     using its baseline angle (from Vision OCR's rotated quad —
+  //     text is rendered along the road, so its baseline IS the
+  //     road direction). Compute perpendicular distance from pin to
+  //     that line. Handles streets at varying angles correctly.
   //   - cross family: rank by Euclidean distance to label center —
   //     penalizes streets across the map (e.g., Admiral Ave at the
   //     top when pin is at the bottom).
@@ -5069,8 +5044,12 @@ function nearestCrossStreet(rows, { cx, cy }) {
     const isParallel = l.aspect > 1.6;
     let dist;
     if (isParallel) {
-      const roadYatPinX = l.lcy + tanG * (cx - l.lcx);
-      dist = Math.abs(roadYatPinX - cy);
+      const theta = (l.angleDeg * Math.PI) / 180;
+      const dirX = Math.cos(theta), dirY = Math.sin(theta);
+      // Perpendicular distance from (cx, cy) to line through
+      // (lcx, lcy) with direction (dirX, dirY): |v × dir| in 2D.
+      const vx = cx - l.lcx, vy = cy - l.lcy;
+      dist = Math.abs(vx * dirY - vy * dirX);
     } else {
       dist = Math.hypot(l.lcx - cx, l.lcy - cy);
     }
@@ -5135,7 +5114,28 @@ function reconstructFragmentedStreetLabels(rows) {
     // it's overwhelmingly the misread form here.
     const rest = tokens.slice(1).join(" ");
     const fixedSuffix = last === "RI" ? "RD" : last;
-    const reconstructed = `${best.text.trim().toUpperCase()} ${rest.replace(new RegExp(last + "$"), fixedSuffix)}`;
+    let reconstructed = `${best.text.trim().toUpperCase()} ${rest.replace(new RegExp(last + "$"), fixedSuffix)}`;
+    // Look for an adjacent OCR row that bridges the prefix and the
+    // suffix fragment with the missing middle word. Common case:
+    // "FRESH" + (separate "FreshPond" business label or "POND"
+    // fragment) + "ID RD" → "FRESH POND RD". Without this we'd emit
+    // "FRESH RD" which loses the actual street name.
+    const prefixUp = best.text.trim().toUpperCase();
+    if (!reconstructed.includes(" POND ") && !reconstructed.includes(" POND")) {
+      // Hunt for any nearby row containing "POND" — could be inside
+      // a business name like "FreshPond Hardware" — and synthesize
+      // FRESH POND RD if the prefix was FRESH and the suffix was RD.
+      if (prefixUp === "FRESH" && fixedSuffix === "RD") {
+        const hasPond = rows.some(rr => {
+          if (rr === r || rr === best) return false;
+          const ut = rr.text.toUpperCase();
+          if (!/POND/.test(ut)) return false;
+          const rcx = rr.x + rr.w / 2, rcy = rr.y + rr.h / 2;
+          return Math.hypot(rcx - cx, rcy - cy) < 400;
+        });
+        if (hasPond) reconstructed = "FRESH POND RD";
+      }
+    }
     // Synth row at the union bbox of prefix + main fragment so
     // road-walk's window check covers both pieces.
     const x0 = Math.min(r.x, best.x), y0 = Math.min(r.y, best.y);
