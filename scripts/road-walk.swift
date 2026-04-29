@@ -258,12 +258,37 @@ for x in 0..<W {
 
 // 8-connected BFS over dilated road mask. dist[idx] = step count
 // from start. Cap at MAX_DIST steps.
+//
+// Multi-seed: rather than starting BFS from a single road pixel, seed
+// EVERY road pixel within ~SEED_R of the pin. This bridges
+// fragmented road networks where the spiral seed lands on a tiny
+// island disconnected from the rest. The pin's "actual location" is
+// covered by SOME road pixel within that radius regardless of which
+// road segment found by spiral search.
 var dist = [Int32](repeating: -1, count: pixCount)
 let MAX_DIST: Int32 = Int32((2500.0 * SCALE).rounded())
-let startIdx = startY * W + startX
-dist[startIdx] = 0
-var queue: [Int] = [startIdx]
+let SEED_R = max(30, Int((80.0 * SCALE).rounded()))
+var queue: [Int] = []
 queue.reserveCapacity(400_000)
+let sx0 = max(0, pinX - SEED_R), sx1 = min(W - 1, pinX + SEED_R)
+let sy0 = max(0, pinY - SEED_R), sy1 = min(H - 1, pinY + SEED_R)
+for sy in sy0...sy1 {
+    for sx in sx0...sx1 {
+        let dxp = sx - pinX, dyp = sy - pinY
+        if dxp * dxp + dyp * dyp > SEED_R * SEED_R { continue }
+        let idx = sy * W + sx
+        if dilated[idx] == 1 && dist[idx] == -1 {
+            dist[idx] = 0
+            queue.append(idx)
+        }
+    }
+}
+if queue.isEmpty {
+    // No road within radius — fall through to single-seed at the
+    // spiral-found start so the algorithm still produces something.
+    dist[startY * W + startX] = 0
+    queue.append(startY * W + startX)
+}
 var head = 0
 let neighbors: [(Int, Int)] = [(1,0),(-1,0),(0,1),(0,-1),(1,1),(1,-1),(-1,1),(-1,-1)]
 while head < queue.count {
