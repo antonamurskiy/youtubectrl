@@ -456,12 +456,15 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   const duration = pb.duration || 1
   const pct = duration > 0 ? Math.min(100, (position / duration) * 100) : 0
 
-  // Fetch storyboard data when video changes
+  // Fetch storyboard data when video changes. Live + post_live also
+  // have storyboards (YouTube generates them retroactively across the
+  // DVR window), so the previous pb.isLive bail was leaving DVR scrubs
+  // preview-less. yt-dlp returns sb formats for both.
   useEffect(() => {
     setStoryboard(null)
     if (!pb.url) return
     const videoId = pb.url.match(/[?&]v=([\w-]+)/)?.[1]
-    if (!videoId || pb.isLive) return
+    if (!videoId) return
 
     const controller = new AbortController()
     fetch(`/api/storyboard?videoId=${videoId}`, { signal: controller.signal })
@@ -469,7 +472,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
       .then(data => { if (data) setStoryboard(data) })
       .catch(() => {})
     return () => controller.abort()
-  }, [pb.url, pb.isLive])
+  }, [pb.url])
 
   const getSeekPosition = useCallback((clientX) => {
     const bar = barRef.current
@@ -484,7 +487,20 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
     const { url, width, height, cols, rows, interval } = storyboard
     const c = cols || 5, r = rows || 5
     const framesPerPage = c * r
-    const frameIndex = Math.floor(seconds / (interval || 2))
+    // Storyboard frames are indexed from BROADCAST START, not scrubber 0.
+    //   - VOD / post_live: scrubber position IS seconds-from-start.
+    //   - Live DVR: scrubber position is relative to the rolling DVR
+    //     window (0 = oldest available, duration = live edge). Map to
+    //     broadcast-start time using broadcastStartMs + liveEdgeMs:
+    //       scrubTargetPdt = liveEdgeMs - (duration - scrubberPos) * 1000
+    //       framesSeconds  = (scrubTargetPdt - broadcastStartMs) / 1000
+    let framesSeconds = seconds
+    if (pb.isLive && !pb.isPostLive && pb.broadcastStartMs && pb.liveEdgeMs && pb.duration) {
+      const scrubTargetPdt = pb.liveEdgeMs - (pb.duration - seconds) * 1000
+      framesSeconds = (scrubTargetPdt - pb.broadcastStartMs) / 1000
+      if (framesSeconds < 0) return null
+    }
+    const frameIndex = Math.floor(framesSeconds / (interval || 2))
     const page = Math.floor(frameIndex / framesPerPage)
     const indexInPage = frameIndex % framesPerPage
     const col = indexInPage % c
@@ -496,7 +512,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
       bgWidth: c * (width || 160),
       bgHeight: r * (height || 90),
     }
-  }, [storyboard])
+  }, [storyboard, pb.isLive, pb.isPostLive, pb.broadcastStartMs, pb.liveEdgeMs, pb.duration])
 
   // Use a ref to capture the latest seekPos for the pointerup handler
   const seekPosRef = useRef(seekPos)

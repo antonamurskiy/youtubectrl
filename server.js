@@ -2301,7 +2301,38 @@ app.post("/api/stop", async (_req, res) => {
 // Caller is responsible for: clearing playbackAnchor/subProxyAnchor and
 // setting up fresh anchors BEFORE the respawn (so WS broadcasts during
 // the ~1s gap don't flash stale state).
+//
+// Concurrency: rapid scrubbing fires /api/seek faster than the 10s
+// first-byte wait, so two respawns could race. The first sets globals
+// to null pre-await; the second pkills the in-flight streamlink,
+// spawns its own pair, and the first eventually spawns ANOTHER mpv
+// when its first-byte wait resolves — leaving two mpvs running. We
+// serialize via _respawnInFlight + coalesce the latest target into
+// _respawnLatestTarget so a burst of scrub events collapses into one
+// final respawn.
+let _respawnInFlight = null;
+let _respawnLatestTarget = null;
 async function respawnLivePipeline(offsetSec) {
+  if (_respawnInFlight) {
+    // Already respawning — record the latest target and let the
+    // in-flight loop pick it up after the current respawn finishes.
+    _respawnLatestTarget = offsetSec;
+    return _respawnInFlight;
+  }
+  _respawnInFlight = (async () => {
+    let target = offsetSec;
+    while (target !== null) {
+      const next = target;
+      _respawnLatestTarget = null;
+      await _doRespawnLivePipeline(next);
+      target = _respawnLatestTarget;
+    }
+  })();
+  try { await _respawnInFlight; }
+  finally { _respawnInFlight = null; _respawnLatestTarget = null; }
+}
+
+async function _doRespawnLivePipeline(offsetSec) {
   if (!nowPlaying) throw new Error("respawnLivePipeline: nothing playing");
   // Set liveOffsetSec synchronously, BEFORE any await — WS broadcast
   // ticks during the 250ms kill gap + 10s first-byte wait read this
@@ -4848,7 +4879,15 @@ app.get("/api/findmy-friend", async (req, res) => {
     // keep response time bounded.
     const needsRefresh = /paused/i.test(pass.timeFragment || "") || !pass.distance;
     if (needsRefresh) {
-      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate']).catch(() => {});
+      // Hide → activate forces FM to pull fresh iCloud location.
+      // Activate alone is a no-op for the network refresh because FM
+      // considers itself already visible; the visibility flip is what
+      // drives the re-poll.
+      await execFileP("osascript",
+        ["-e", 'tell application "System Events" to set visible of (first process whose name is "FindMy") to false'],
+        { timeout: 2000 }).catch(() => {});
+      await execFileP("osascript", ["-e", 'tell application "FindMy" to activate'],
+        { timeout: 2000 }).catch(() => {});
       // Brief settle so the window is up and the AX hierarchy is live
       // before we post a click event into it.
       await new Promise(r => setTimeout(r, 500));
@@ -5299,16 +5338,24 @@ app.get("/api/findmy-stealth", (_req, res) => res.json({ on: findmyStealth }));
 // from scratch).
 app.post("/api/refresh-findmy", async (_req, res) => {
   try {
-    await execFileP("osascript", ["-e",
-      'tell application "FindMy" to activate']).catch(() => {});
+    // Force a hide → show transition. macOS FindMy only pulls fresh
+    // iCloud location data when its visibility flips — activate alone
+    // (without a prior hide) doesn't trigger the re-poll because the
+    // app considers itself already visible. Setting visible=false then
+    // activate is the cheapest way to drive that transition; works
+    // even when the window is parked off-screen on a non-focused
+    // aerospace workspace.
+    await execFileP("osascript",
+      ["-e", 'tell application "System Events" to set visible of (first process whose name is "FindMy") to false'],
+      { timeout: 2000 }).catch(() => {});
+    await execFileP("osascript",
+      ["-e", 'tell application "FindMy" to activate'],
+      { timeout: 2000 }).catch(() => {});
     if (findmyStealth) {
-      // Activate re-fits the corner window to fit fully on LG; we
-      // give FM ~3s to actually pull fresh location data from
-      // iCloud (300ms isn't enough — re-park before network refresh
-      // completes leaves the displayed time-fragment stale). Then
-      // re-park to the corner sliver. AWAIT the whole cycle so the
-      // frontend's follow-up /api/findmy-friend hits a parked +
-      // refreshed window, not the in-flight activated one.
+      // Wait for FM to pull fresh location data from iCloud after the
+      // visibility flip. 300ms / 1500ms isn't enough — a 3s window
+      // matches the empirical refresh round-trip; re-park earlier and
+      // the displayed time-fragment stays stale.
       await new Promise(r => setTimeout(r, 3000));
       const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
       const line = stdout.split("\n").find(l => /find\s*my/i.test(l));
@@ -6012,6 +6059,9 @@ function startWsSync() {
           // loadfile) and `scrubDur` at `histDur` (= 0 for fresh live),
           // and the client sees position=0 / duration=0 → scrubber thumb
           // snaps to the left edge for a tick.
+          // Hoisted out of the live-only block so the WS state object
+          // below can reference it without a ReferenceError on VOD.
+          let liveEdgeNow = null;
           if (lastManifestFullDuration > 0 && (onLiveProxy || onSubProxy)) {
             scrubDur = lastManifestFullDuration;
             // post_live: finite VOD, position = liveOffsetSec + timePos
@@ -6021,7 +6071,7 @@ function startWsSync() {
             if (isPostLiveStream) {
               scrubPos = Math.max(0, Math.min(scrubDur, liveOffsetSec + timePos));
             }
-            const liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
+            liveEdgeNow = lastManifestEdgeEpochMs ? lastManifestEdgeEpochMs + (Date.now() - lastManifestFetchedAt) : null;
             if (onLiveProxy && playbackAnchor) {
               userPdt = playbackAnchor.userPdtAtAnchor + (timePos - playbackAnchor.mpvPosAtAnchor) * 1000;
             } else if (onSubProxy && subProxyAnchor && subProxyAnchor.mpvPosAtAnchor != null && subProxyAnchor.userPdtAtAnchor != null) {
@@ -6089,6 +6139,12 @@ function startWsSync() {
             paused: pause?.data || false,
             phoneSyncOk: !effectiveIsLive || !!mpvAbsoluteMs,
             absoluteMs: mpvAbsoluteMs,
+            // Used by the frontend storyboard preview to map
+            // scrubber-space → seconds-from-broadcast-start. For VOD
+            // / post_live these are null and the existing "position
+            // == seconds from start" math applies directly.
+            liveEdgeMs: liveEdgeNow || null,
+            broadcastStartMs: mpvPdtEpochMs || null,
             url: nowPlaying, serverTs: Date.now(),
             title: (() => {
               const t = historyMap.get(nowPlaying)?.title || "";
