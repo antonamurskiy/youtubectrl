@@ -211,7 +211,7 @@ for y in 0..<H {
 // radius 2 is a mask pixel. Two horizontal+vertical passes give a
 // box dilation of effective radius 2.
 var dilated = rawMask
-let R_DILATE = 2
+let R_DILATE = 3
 // Horizontal pass.
 var tmp = [UInt8](repeating: 0, count: pixCount)
 for y in 0..<H {
@@ -295,7 +295,7 @@ if let dumpPath = ProcessInfo.processInfo.environment["ROADWALK_DEBUG_VISITED"] 
 // For each label, scan a 100×100 window around the label center and
 // take the minimum reachable distance. Labels whose entire window has
 // dist=-1 are unreachable from the pin (across a barrier) and drop out.
-struct LabelDist { let name: String; let d: Int32 }
+struct LabelDist { let name: String; let d: Int32; let aspect: Double }
 var ranked: [LabelDist] = []
 for l in labels {
     var minD: Int32 = .max
@@ -309,7 +309,8 @@ for l in labels {
         }
     }
     if minD != .max {
-        ranked.append(LabelDist(name: l.name, d: minD))
+        let aspect = l.h > 0 ? Double(l.w) / Double(l.h) : 1.0
+        ranked.append(LabelDist(name: l.name, d: minD, aspect: aspect))
     }
 }
 if ranked.isEmpty {
@@ -318,7 +319,7 @@ if ranked.isEmpty {
 }
 if ProcessInfo.processInfo.environment["ROADWALK_DEBUG"] != nil {
     for r in ranked.sorted(by: { $0.d < $1.d }) {
-        FileHandle.standardError.write("  \(r.name): dist=\(r.d)\n".data(using: .utf8)!)
+        FileHandle.standardError.write("  \(r.name): dist=\(r.d) aspect=\(String(format: "%.2f", r.aspect)) family=\(r.aspect > 1.6 ? "parallel" : "cross")\n".data(using: .utf8)!)
     }
 }
 ranked.sort { $0.d < $1.d }
@@ -331,8 +332,31 @@ for r in ranked {
     seen.insert(r.name)
     unique.append(r)
 }
-let streetOnPin = unique[0].name
-let crossStreet = unique.dropFirst().first(where: { $0.name != streetOnPin })?.name
+
+// Family-aware ranking. Pin is typically addressed ON a parallel-
+// family street (wide+short bbox = text along grid = residential
+// street running through the block). Cross-family streets (squareish
+// or tall+narrow bbox = text rotated more = perpendicular avenues)
+// are the intersections, not the location proper.
+//
+// At an intersection of Smaller St (parallel) and Bigger Ave (cross),
+// raw BFS distance often picks the Bigger Ave first because its
+// label is closer in road-network terms. Override: pick the closest
+// PARALLEL street whose distance is within 2x of the absolute closest,
+// even if a cross-family street is technically closer.
+func family(_ aspect: Double) -> String { aspect > 1.6 ? "parallel" : "cross" }
+let absClosest = unique[0]
+var streetOnPin = absClosest.name
+let parallelCandidates = unique.filter { family($0.aspect) == "parallel" && $0.d <= absClosest.d * 2 }
+if let p = parallelCandidates.first { streetOnPin = p.name }
+
+// Cross-street: closest different-name reachable label that prefers
+// the OPPOSITE family from streetOnPin (so we get Smaller St & Bigger
+// Ave rather than two parallel streets).
+let pinFamily = unique.first { $0.name == streetOnPin }.map { family($0.aspect) } ?? "parallel"
+let crossStreet =
+    unique.first(where: { $0.name != streetOnPin && family($0.aspect) != pinFamily })?.name
+    ?? unique.first(where: { $0.name != streetOnPin })?.name
 
 var result: [String: String] = ["streetOnPin": streetOnPin]
 if let c = crossStreet { result["crossStreet"] = c }

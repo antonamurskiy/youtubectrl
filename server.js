@@ -4738,9 +4738,16 @@ app.get("/api/findmy-friend", async (req, res) => {
       }
       let crossStreet = null;
       if (pinLabel) {
+        // Apple Maps friend pins are a circle (silhouette / photo)
+        // with a pointer tail extending below — the TAIL TIP is the
+        // actual map location, not the circle center. find-pin.swift
+        // returns the silhouette centroid; the visible pin extends
+        // ~1.4 × the synthesized bbox height below the centroid before
+        // hitting actual road pixels. Empirically tuned against the
+        // Ridgewood/Queens map view.
         const pinCenter = {
           cx: pinLabel.x + pinLabel.w / 2,
-          cy: pinLabel.y + pinLabel.h / 2,
+          cy: pinLabel.y + pinLabel.h / 2 + Math.round(pinLabel.h * 1.4),
         };
         // Try road-network reachability first (respects train tracks,
         // water, and buildings as barriers). Fall back to the
