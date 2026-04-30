@@ -225,6 +225,21 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             CATransaction.setDisableActions(true)
             layer.frame = container.bounds
             CATransaction.commit()
+            // Mirror auto-PiP eligibility to inline visibility. In
+            // computer mode the AVPlayer is intentionally left
+            // playing-but-hidden (warm for fast re-engage of sync),
+            // and the still-true canStartPictureInPictureAutomaticallyFromInline
+            // would fire PiP on background showing the STALE item
+            // because computer-mode video switches only update mpv,
+            // not the AVPlayer. Disable when hidden, re-enable when
+            // visible. Don't touch during active PiP — that'd kill
+            // the live session.
+            if !pipActive, #available(iOS 14.2, *), let ctrl = self.pipController {
+                ctrl.canStartPictureInPictureAutomaticallyFromInline = wantVisible
+                NSLog("[NativePlayer] auto-PiP enabled=\(wantVisible) (visibility=\(wantVisible ? "shown" : "hidden"))")
+            } else {
+                NSLog("[NativePlayer] auto-PiP unchanged (pipActive=\(pipActive) ctrl=\(self.pipController != nil))")
+            }
             // Reinstall the PiP controller on hidden→visible transitions.
             // iOS treats canStartPictureInPictureAutomaticallyFromInline
             // as one-shot — after the layer was hidden, auto-PiP doesn't

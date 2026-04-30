@@ -1957,14 +1957,25 @@ app.post("/api/play", async (req, res) => {
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
-        // No window-mode re-apply on warm-mpv loadfile. mpv with
-        // --no-keepaspect-window stays put across video switches, and
-        // re-running `aerospace fullscreen --no-outer-gaps on` on a
-        // window that's already aerospace-fullscreen could toggle it
-        // off in some aerospace builds (user reported maximize→
-        // floating on switch). Mode persists in module-scope
-        // `windowMode`; if aerospace state actually drifted, the
-        // user can manually re-maximize via the UI.
+        // Maximize re-apply ladder. mpv's loadfile triggers a render
+        // refresh that aerospace can latch onto AFTER our first
+        // re-apply, dropping the window out of fullscreen ~500ms-2s
+        // later (user reported "randomly goes to floating"). We hit
+        // it three times across the redraw window so the final state
+        // is stable. `aerospace fullscreen on` is idempotent — won't
+        // toggle off if already fullscreen.
+        if (windowMode === "maximize") {
+          const reapply = async () => {
+            try {
+              const wid = await getMpvWindowId();
+              if (!wid) return;
+              await execFileP("aerospace", ["fullscreen", "on", "--window-id", wid]);
+            } catch {}
+          };
+          setTimeout(reapply, 200);
+          setTimeout(reapply, 1500);
+          setTimeout(reapply, 3500);
+        }
         res.json({ ok: true });
         const expectedUrl = url;
         const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
@@ -3810,7 +3821,7 @@ app.post("/api/watch-on-phone", async (req, res) => {
   if (req.query.warm === "1" && activePlayer === "mpv") {
     routeAudio("mac");
     phoneActive = true;
-    execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false'], () => {});
+    hideMpvWithRetry();
     mpvCommand(["set_property", "mute", false]).catch(() => {});
     return res.json({ ok: true, warm: true });
   }
@@ -3831,10 +3842,11 @@ app.post("/api/watch-on-phone", async (req, res) => {
 
     if (activePlayer === "mpv") {
       phoneActive = true;
-      // Fire-and-forget — was execSync blocking the response.
-      execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false'], () => {});
-      // Restore mpv audio (transitioning from phone-only). Don't
-      // await — the unmute IPC isn't on the response critical path.
+      // Multi-attempt hide via osascript. A single fire-and-forget
+      // call sometimes silently no-op'd (System Events queue contention,
+      // mpv process state mid-transition), leaving the mpv window
+      // visible behind the phone player UI.
+      hideMpvWithRetry();
       mpvCommand(["set_property", "mute", false]).catch(() => {});
     }
 
@@ -4251,19 +4263,31 @@ app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
   phoneActive = false;
   if (activePlayer === "mpv") {
-    // Restore mpv: unmute, show window (each step independent so one failure doesn't block rest)
+    // Restore mpv: unmute, show window. Each step independent so one
+    // failure doesn't block the rest. Async + execFileP to avoid
+    // blocking the event loop with osascript/aerospace shell-outs.
     try { await mpvCommand(["set_property", "mute", false]); } catch {}
     try { await mpvCommand(["set_property", "pause", false]); } catch {}
-    try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to true'`, { stdio: "ignore" }); } catch {}
-    try {
-      if (windowMode === "maximize") {
-        const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-        if (wid) {
-          execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-          execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
-        }
-      }
-    } catch {}
+    try { await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true']); } catch {}
+    if (windowMode === "maximize") {
+      // Re-apply aerospace fullscreen ladder. mpv just got unhidden +
+      // resumed; aerospace's tracked state may be stale from when it
+      // was hidden. Hit it three times across the visibility-restore
+      // window so the final state is stable. `fullscreen on` is
+      // idempotent. Don't await — fire-and-forget so the response
+      // doesn't block on aerospace.
+      const reapply = async () => {
+        try {
+          const wid = await getMpvWindowId();
+          if (!wid) return;
+          await execFileP("aerospace", ["focus", "--window-id", wid]);
+          await execFileP("aerospace", ["fullscreen", "on", "--window-id", wid]);
+        } catch {}
+      };
+      setTimeout(reapply, 100);
+      setTimeout(reapply, 1000);
+      setTimeout(reapply, 2500);
+    }
   }
   res.json({ ok: true });
 });
@@ -4556,6 +4580,19 @@ function schedulePauseVisibility(paused) {
       _pauseVisInFlight = false;
     }
   }, 400);
+}
+
+// Hide mpv with retry. A single fire-and-forget osascript sometimes
+// silently no-op's: System Events automation gets queued behind
+// other operations, the mpv process is mid-transition, or the
+// AppleScript bridge briefly returns "process not found." Three
+// attempts at 0/300/1200ms catches almost all of those cases.
+function hideMpvWithRetry() {
+  const cmd = ["-e", 'tell application "System Events" to set visible of process "mpv" to false'];
+  const fire = () => execFile("osascript", cmd, () => {});
+  fire();
+  setTimeout(fire, 300);
+  setTimeout(fire, 1200);
 }
 
 // Async aerospace mpv-window lookup. Was a `execSync(...|grep|awk|head)`

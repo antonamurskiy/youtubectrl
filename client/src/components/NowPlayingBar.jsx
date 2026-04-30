@@ -443,6 +443,11 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   const [formatList, setFormatList] = useState(null) // null = not fetched, [] = empty, [...] = list
   const longPressTimer = useRef(null)
   const longPressTriggered = useRef(false)
+  // View-mode button: short tap cycles sync↔computer, long-press
+  // (≥450ms) opens the full picker.
+  const modeLongPressTimer = useRef(null)
+  const modeLongPressFiredRef = useRef(false)
+  const modeMoveCancel = useRef(null)
   const touchStartPos = useRef(null)
 
   const barRef = useRef(null)
@@ -778,15 +783,16 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
       // a torn-down state). Hiding leaves the player in standby for
       // a fast re-mount when the user toggles back to sync.
       if (isNativeIOS) {
-        // Just hide the AVPlayer's inline layer — don't pause or clear
-        // now-playing. Pausing set `expectedPaused=true` on the native
-        // side; the next NativePlayer.load() (when user re-engages
-        // sync) calls play() but autoplay then races with the rate
-        // observer's expectedPaused mismatch, sometimes leaving the
-        // player paused. Leaving it muted-and-running in sync mode is
-        // free — no audio leaks (muted) and no visible video (layer
-        // hidden), and the next mode flip re-uses the warm player.
         NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
+        // Also pause the AVPlayer. Belt-and-braces against iOS auto-
+        // PiP: the layer-hidden + canStartPictureInPicture-
+        // AutomaticallyFromInline=false in setLayerFrame should be
+        // enough, but a paused player can't auto-PiP either, so this
+        // guarantees the user never sees STALE-video PiP when they
+        // switch videos in computer mode and then background. The
+        // warm-cache re-engage path explicitly calls
+        // NativePlayer.play() to resume.
+        NativePlayer.pause().catch(() => {})
       }
       sync.setPhoneOpen(false)
       return
@@ -1008,10 +1014,45 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
         <button
           className={`np-btn${phoneOpen ? ' active' : ''}`}
           style={pb.phoneSyncOk === false ? { opacity: 0.3 } : undefined}
-          onClick={(e) => {
-            hapticThump()
-            const r = e.currentTarget.getBoundingClientRect()
-            setModeMenu({ x: r.left + r.width / 2, y: r.top })
+          // Tap toggles between the two common modes (sync ↔ computer).
+          // Long-press surfaces the full mode picker including phone-only.
+          onPointerDown={(e) => {
+            const target = e.currentTarget
+            const startX = e.clientX
+            const startY = e.clientY
+            modeLongPressFiredRef.current = false
+            modeLongPressTimer.current = setTimeout(() => {
+              modeLongPressFiredRef.current = true
+              hapticThump()
+              const r = target.getBoundingClientRect()
+              setModeMenu({ x: r.left + r.width / 2, y: r.top })
+            }, 450)
+            modeMoveCancel.current = (ev) => {
+              if (Math.hypot(ev.clientX - startX, ev.clientY - startY) > 8) {
+                clearTimeout(modeLongPressTimer.current)
+                modeLongPressTimer.current = null
+              }
+            }
+            window.addEventListener('pointermove', modeMoveCancel.current)
+          }}
+          onPointerUp={() => {
+            if (modeLongPressTimer.current) {
+              clearTimeout(modeLongPressTimer.current)
+              modeLongPressTimer.current = null
+            }
+            if (modeMoveCancel.current) {
+              window.removeEventListener('pointermove', modeMoveCancel.current)
+              modeMoveCancel.current = null
+            }
+            if (modeLongPressFiredRef.current) return
+            // Short tap: cycle. phone-only stays in the long-press menu.
+            hapticTick()
+            const cur = phoneOnlyUrl ? 'phone-only' : phoneOpen ? 'sync' : 'computer'
+            switchMode(cur === 'computer' ? 'sync' : 'computer')
+          }}
+          onPointerLeave={() => {
+            if (modeLongPressTimer.current) { clearTimeout(modeLongPressTimer.current); modeLongPressTimer.current = null }
+            if (modeMoveCancel.current) { window.removeEventListener('pointermove', modeMoveCancel.current); modeMoveCancel.current = null }
           }}
           title={phoneOnlyUrl ? 'Phone only' : phoneOpen ? 'Sync mode' : 'Computer mode'}
         >
