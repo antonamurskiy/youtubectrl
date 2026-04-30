@@ -5747,6 +5747,84 @@ async function refreshTmuxWindows() {
 // Refresh on its own 3s timer, not inside the broadcast loop.
 setInterval(() => { refreshTmuxWindows(); }, 3000);
 
+// APNs: server-driven push notifications for the kill feed when the
+// iOS app is backgrounded. Configured via .env:
+//   APNS_KEY_PATH   — path to the .p8 auth key
+//   APNS_KEY_ID     — 10-char Key ID from developer.apple.com
+//   APNS_TEAM_ID    — 10-char Team ID
+//   APNS_TOPIC      — bundle id (e.g. com.antonamurskiy.ytctl1289)
+//   APNS_PRODUCTION — "true" once shipping; "false" / unset for dev
+// Device tokens land via POST /api/apns-register from AppDelegate.
+// Persisted to .apns-tokens.json so they survive server restarts.
+const APNS_TOKENS_FILE = path.join(__dirname, ".apns-tokens.json");
+let apnsProvider = null;
+let apnsTokens = new Set();
+try {
+  const v = JSON.parse(fs.readFileSync(APNS_TOKENS_FILE, "utf8"));
+  if (Array.isArray(v)) apnsTokens = new Set(v);
+} catch {}
+function saveApnsTokens() {
+  try { fs.writeFileSync(APNS_TOKENS_FILE, JSON.stringify([...apnsTokens])); } catch {}
+}
+function initApns() {
+  if (apnsProvider) return;
+  if (!process.env.APNS_KEY_PATH || !process.env.APNS_KEY_ID || !process.env.APNS_TEAM_ID) return;
+  try {
+    const apn = require("@parse/node-apn");
+    apnsProvider = new apn.Provider({
+      token: {
+        key: process.env.APNS_KEY_PATH,
+        keyId: process.env.APNS_KEY_ID,
+        teamId: process.env.APNS_TEAM_ID,
+      },
+      production: String(process.env.APNS_PRODUCTION).toLowerCase() === "true",
+    });
+    console.log(`  APNs: provider ready (production=${apnsProvider.client.config.production})`);
+  } catch (e) {
+    console.warn(`  APNs: init failed — ${e.message}`);
+    apnsProvider = null;
+  }
+}
+initApns();
+function pushApnsFeedLines(lines) {
+  if (!apnsProvider || apnsTokens.size === 0 || !lines.length) return;
+  const apn = require("@parse/node-apn");
+  const note = new apn.Notification();
+  note.alert = { title: "Claude", body: lines[lines.length - 1] };
+  note.topic = process.env.APNS_TOPIC || "com.antonamurskiy.ytctl1289";
+  // Silent (no audible chime) — node-apn rejects `null` here; "" is
+  // the right way to say "no sound" without breaking the setter.
+  note.sound = "";
+  // Coalesce on the iOS side — same id replaces the previous banner.
+  note.collapseId = "claude-feed";
+  // 1h TTL. Old feed lines aren't useful when delivery was delayed.
+  note.expiry = Math.floor(Date.now() / 1000) + 3600;
+  apnsProvider.send(note, [...apnsTokens]).then((r) => {
+    if (r.sent && r.sent.length) console.log(`  APNs: sent ${r.sent.length}`);
+    for (const f of r.failed || []) {
+      const reason = f.response?.reason || f.error?.message || "";
+      const status = f.status;
+      console.warn(`  APNs: failed [${status}] ${reason} for ${String(f.device).slice(0, 8)}…`);
+      if (/BadDeviceToken|Unregistered/i.test(reason)) {
+        apnsTokens.delete(f.device);
+        saveApnsTokens();
+      }
+    }
+  }).catch((e) => { console.warn(`  APNs: send error: ${e.message}`); });
+}
+app.post("/api/apns-register", (req, res) => {
+  const { token } = req.body || {};
+  if (!token || typeof token !== "string" || !/^[a-f0-9]{40,}$/i.test(token)) {
+    return res.status(400).json({ error: "bad token" });
+  }
+  if (!apnsTokens.has(token)) {
+    apnsTokens.add(token);
+    saveApnsTokens();
+    console.log(`  APNs: registered token (${token.slice(0, 8)}…)`);
+  }
+  res.json({ ok: true });
+});
+
 // "Kill feed" of Claude pane output. Polls `tmux capture-pane -p`
 // (the rendered visible state — what the user actually sees) every
 // 500ms, filters to high-signal lines (⏺/⎿ bullets and tool-name
@@ -5760,6 +5838,7 @@ function broadcastClaudeFeed(lines) {
   if (!lines.length) return;
   const msg = JSON.stringify({ type: "claude-feed", lines });
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+  pushApnsFeedLines(lines);
 }
 function pollClaudeFeed() {
   let pane;

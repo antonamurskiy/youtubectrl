@@ -13,3 +13,5 @@ bin/brightness
 bin/audio-mute
 .now-playing.json
 .findmy-stealth.json
+.apns-tokens.json
+.apns-key.p8

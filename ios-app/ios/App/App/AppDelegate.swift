@@ -1,5 +1,6 @@
 import UIKit
 import AVFoundation
+import UserNotifications
 import Capacitor
 
 @UIApplicationMain
@@ -25,7 +26,36 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
         } catch {
             print("Audio session setup failed: \(error)")
         }
+        // Register for APNs. UNUserNotificationCenter authorization is
+        // requested on a separate path (the local-notifications plugin
+        // handles it on first schedule). registerForRemoteNotifications
+        // is what actually triggers iOS to mint a device token and
+        // call back into didRegisterForRemoteNotificationsWithDeviceToken.
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+            if granted {
+                DispatchQueue.main.async {
+                    application.registerForRemoteNotifications()
+                }
+            }
+        }
         return true
+    }
+
+    // APNs handed us a device token. Hex-encode and POST to the server
+    // so the kill-feed pusher knows where to send notifications.
+    func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        let hex = deviceToken.map { String(format: "%02x", $0) }.joined()
+        print("APNs token: \(hex)")
+        guard let url = URL(string: "http://yuzu.local:3000/api/apns-register") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["token": hex])
+        URLSession.shared.dataTask(with: req).resume()
+    }
+
+    func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        print("APNs registration failed: \(error)")
     }
 
     func applicationWillResignActive(_ application: UIApplication) {

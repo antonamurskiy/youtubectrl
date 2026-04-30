@@ -132,16 +132,30 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 .tabs {
   display: flex;
   gap: 4px;
+  /* Keep tabs from sharing a touchable boundary with the search
+   * input directly to their left. A small dead-zone (margin-left)
+   * means a slightly-mistapped tab doesn't fall through to the
+   * input's flex-1 hit area. */
+  margin-left: 8px;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .tab {
-  padding: 4px 8px;
+  /* Bumped vertical padding so the tap target is closer to Apple's
+   * 44pt HIG minimum. Smaller tabs were getting mistapped onto the
+   * search input below/behind them. */
+  padding: 10px 10px;
   background: none;
   color: var(--text-dim);
   font-family: var(--font);
   font-weight: 400;
   font-size: var(--font-lg);
   cursor: pointer;
+  /* Explicit touch hint — tabs handle their own taps; iOS shouldn't
+   * synthesize a click on the search input behind them. */
+  touch-action: manipulation;
 }
 
 .tab.active {
