@@ -6,6 +6,7 @@ import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
 import { useClaudeNotification } from './hooks/useClaudeNotification'
+import { useFeedNotification } from './hooks/useFeedNotification'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useVolumeButtons } from './hooks/useVolumeButtons'
 import { useMariaProximity } from './hooks/useMariaProximity'
@@ -122,6 +123,7 @@ function App() {
   useRouting()
   useNativeNowPlaying({ send })
   useClaudeNotification()
+  useFeedNotification()
   useVolumeButtons()
   useMariaProximity()
 
