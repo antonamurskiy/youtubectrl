@@ -21,6 +21,7 @@ import SearchBar from './components/SearchBar'
 import VolumeHud from './components/VolumeHud'
 import { useRouting } from './hooks/useRouting'
 import Toast from './components/Toast'
+import ClaudeFeed from './components/ClaudeFeed'
 import { lazy, Suspense } from 'react'
 const Terminal = lazy(() => import('./components/Terminal'))
 const PhonePlayer = lazy(() => import('./components/PhonePlayer'))
@@ -434,6 +435,7 @@ function App() {
 
       <Toast />
       <VolumeHud />
+      <ClaudeFeed />
     </>
   )
 }

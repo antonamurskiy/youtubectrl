@@ -31,5 +31,19 @@ export const useSyncStore = create((set) => ({
   setSilentAudioRef: (ref) => set({ silentAudioRef: ref }),
   setTerminalOpen: (open) => set({ terminalOpen: open }),
   setTerminalSendKey: (fn) => set({ terminalSendKey: fn }),
+  // "Kill feed" of recent Claude pane lines. Each entry { id, text,
+  // ts }. Capped at 12 entries; ClaudeFeed prunes by age.
+  claudeFeed: [],
+  pushClaudeFeed: (lines) => set((s) => {
+    const now = Date.now()
+    const fresh = lines.map((text, i) => ({ id: `${now}-${i}-${Math.random().toString(36).slice(2, 6)}`, text, ts: now }))
+    const next = [...s.claudeFeed, ...fresh]
+    return { claudeFeed: next.slice(-12) }
+  }),
+  pruneClaudeFeed: () => set((s) => {
+    const cutoff = Date.now() - 5000
+    const kept = s.claudeFeed.filter((l) => l.ts > cutoff)
+    return kept.length === s.claudeFeed.length ? {} : { claudeFeed: kept }
+  }),
   resetSync: () => set({ drift: 0, baseline: null, settling: false, settleUntil: 0 }),
 }))

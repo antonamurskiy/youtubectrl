@@ -5643,6 +5643,74 @@ function broadcastClaude() {
   const msg = JSON.stringify({ type: 'claude', claudeState, claudeOptions: claudeOptions.length ? claudeOptions : undefined, claudeQuestion: claudeQuestion || undefined });
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
 }
+// Parse tmux capture-pane output for the option block above the
+// "Enter to select / Esc to cancel" footer. Returns { options, question }
+// or null if no usable option block found. Walks backward from the
+// footer line; merges indented continuation lines into the option
+// they belong to so wrapped option text isn't truncated or
+// misclassified as the question.
+function parseClaudeOptionsFromPane(paneText) {
+  const lines = paneText.split('\n');
+  let selectIdx = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^Enter to select|^Esc to cancel/.test(lines[i].trim())) { selectIdx = i; break; }
+  }
+  if (selectIdx <= 0) return null;
+  const opts = [];
+  let question = '';
+  // Continuations seen before the option line they belong to. Backward
+  // iteration encounters wrap-line N+1 before option-line N, so we
+  // queue them and apply when we hit the option.
+  let pendingCont = [];
+  // Lenient: punctuation after the digit (`.` `:` `)`) is optional
+  // because Claude's compact mode at narrow tmux width sometimes
+  // renders "2.Yes" or even "2Yes". We're already walking *inside*
+  // the options block (above "Esc to cancel" and below the question),
+  // so any digit 1-4 here is an option marker. Require a letter
+  // start in the text so we don't match digits inside prose.
+  const optRe = /^\s*[❯►]?\s*(\d)[.:)]?\s*([A-Za-z].{0,90})/;
+  for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 25); i--) {
+    const line = lines[i];
+    const trimmed = line.trim();
+    const m = line.match(optRe);
+    if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 &&
+        !/^Type something/.test(m[2].trim()) && !/^Other$/.test(m[2].trim())) {
+      let text = m[2].trim();
+      if (pendingCont.length) {
+        // pendingCont is in backward order — reverse for natural reading.
+        text = (text + ' ' + pendingCont.slice().reverse().join(' ')).trim();
+        pendingCont = [];
+      }
+      opts.unshift({ n: m[1], text });
+      continue;
+    }
+    if (!m && opts.length === 0) {
+      const h = line.match(/^\s*[❯►]\s+(\S.{1,80})/);
+      if (h) { opts.unshift({ n: '1', text: h[1].trim() }); continue; }
+    }
+    const q = line.match(/[☐●☑]\s+(.+)/);
+    if (q) { question = q[1].trim(); break; }
+    // Indented continuation of an option — line wrap. tmux indents
+    // wrap-continuation by ~4 spaces. Capture and apply to the next
+    // option we encounter (going backward = the one above this).
+    if (opts.length > 0 && /^\s{3,}/.test(line) && trimmed.length > 0 &&
+        !/^[❯►⏺⎿●─]/.test(trimmed) &&
+        !/Enter to select|Esc to cancel|Tab to amend|Type something/.test(line)) {
+      pendingCont.push(trimmed);
+      continue;
+    }
+    // Non-indented free text — likely the question line above options.
+    if (opts.length > 0 && trimmed.length > 2 &&
+        !/^[❯►⏺⎿●─]/.test(trimmed) &&
+        !/^Enter|^Esc to/.test(trimmed) && !/Chat about/.test(line) &&
+        !/Type something/.test(line) && !/Tab to amend/.test(line)) {
+      question = trimmed;
+      break;
+    }
+  }
+  if (opts.length < 2) return null;
+  return { options: opts.slice(0, 4), question };
+}
 let _tmuxSwitchAt = 0;
 let _tmuxSwitchTimer = null;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
@@ -5674,6 +5742,82 @@ async function refreshTmuxWindows() {
 }
 // Refresh on its own 3s timer, not inside the broadcast loop.
 setInterval(() => { refreshTmuxWindows(); }, 3000);
+
+// "Kill feed" of Claude pane output. Polls `tmux capture-pane -p`
+// (the rendered visible state — what the user actually sees) every
+// 500ms, filters to high-signal lines (⏺/⎿ bullets and tool-name
+// prefixes), dedupes against recently-emitted lines, and broadcasts
+// new ones to /ws/sync. Replaced an earlier pipe-pane approach that
+// read the raw byte stream and couldn't reconstruct cursor-positioned
+// partial redraws cleanly.
+let _tmuxFeedRecent = [];
+let _tmuxFeedReady = false;
+function broadcastClaudeFeed(lines) {
+  if (!lines.length) return;
+  const msg = JSON.stringify({ type: "claude-feed", lines });
+  wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+}
+function pollClaudeFeed() {
+  let pane;
+  try {
+    pane = execSync("tmux capture-pane -p -t 0 -S -50", { encoding: "utf8", timeout: 1000 });
+  } catch { return; }
+  if (!_tmuxFeedReady) {
+    // First successful capture: prime the dedupe with what's already
+    // on screen so we don't replay it as if it were new.
+    for (const line of pane.split("\n").map(l => l.trim())) {
+      if (!line) continue;
+      const cleaned = line.replace(/^[⏺⎿]\s*/, "").trim();
+      if (cleaned) _tmuxFeedRecent.push(cleaned);
+    }
+    if (_tmuxFeedRecent.length > 200) _tmuxFeedRecent = _tmuxFeedRecent.slice(-200);
+    _tmuxFeedReady = true;
+    console.log("  Claude feed: capture-pane primed");
+    return;
+  }
+  // Walk line-by-line; when we hit a ⏺ bullet (Claude action/message)
+  // or a Tool-name line, merge any indented continuation lines that
+  // immediately follow into a single logical line. Without this,
+  // Claude's prose responses appear truncated to just the first
+  // wrapped line and tool-arg lines lose their wrapped tail.
+  const lines = pane.split("\n");
+  const out = [];
+  const TOOL_RE = /^(Bash|Read|Write|Edit|Grep|Glob|Tool|MultiEdit|TodoWrite|Task|WebFetch|WebSearch)\b/;
+  let i = 0;
+  while (i < lines.length) {
+    const raw = lines[i];
+    const trimmed = raw.trim();
+    i++;
+    if (!trimmed || trimmed.length < 3) continue;
+    if (/^[─━┃┏┓┗┛│╭╮╯╰┌┐└┘╱╲]/.test(trimmed)) continue;
+    if (/^[?↑↓>❯]\s*$/.test(trimmed)) continue;
+    const isBullet = /^[⏺⎿]/.test(trimmed);
+    const isToolLine = TOOL_RE.test(trimmed);
+    if (!isBullet && !isToolLine) continue;
+    let merged = trimmed.replace(/^[⏺⎿]\s*/, "").trim();
+    // Pull in indented continuation lines (≥2 leading spaces, not
+    // empty, not a new bullet/tool line).
+    while (i < lines.length) {
+      const next = lines[i];
+      const nextTrim = next.trim();
+      if (!nextTrim) break;
+      if (/^[⏺⎿]/.test(nextTrim)) break;
+      if (TOOL_RE.test(nextTrim)) break;
+      if (!/^\s{2,}/.test(next)) break;
+      merged += " " + nextTrim;
+      i++;
+    }
+    merged = merged.trim();
+    if (!merged || merged.length > 600) continue;
+    if (_tmuxFeedRecent.includes(merged)) continue;
+    _tmuxFeedRecent.push(merged);
+    if (_tmuxFeedRecent.length > 200) _tmuxFeedRecent.shift();
+    out.push(merged);
+  }
+  if (out.length) broadcastClaudeFeed(out);
+}
+// Poll every 500ms — once tmux session 0 exists (boot or first WS).
+setInterval(pollClaudeFeed, 500);
 
 app.post("/api/tmux-send", (req, res) => {
   const { keys } = req.body;
@@ -5717,34 +5861,11 @@ app.post("/api/tmux-select", (req, res) => {
         const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
         if (/Enter to select|Esc to cancel/.test(pane)) {
           claudeState = 'waiting';
-          const lines = pane.split('\n');
-          let selectIdx = -1;
-          for (let i = lines.length - 1; i >= 0; i--) {
-            if (/^Enter to select|^Esc to cancel/.test(lines[i].trim())) { selectIdx = i; break; }
-          }
-          if (selectIdx > 0) {
-            const opts = [];
-            let question = '';
-            for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
-              const line = lines[i];
-              const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{0,40})/);
-              if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
-              if (!m && opts.length === 0) {
-                const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
-                if (h) opts.unshift({ n: '1', text: h[1].trim() });
-              }
-              const q = line.match(/[☐●☑]\s+(.+)/);
-              if (q) { question = q[1].trim(); break; }
-              if (opts.length > 0 && !m && line.trim().length > 2 && !/^\s{4,}/.test(line) && !/^[❯►⏺⎿●─]/.test(line.trim()) && !/^Enter|^Esc to/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line) && !/Tab to amend/.test(line)) {
-                question = line.trim();
-                break;
-              }
-            }
-            if (opts.length >= 2) {
-              claudeOptions = opts.slice(0, 4);
-              if (question) claudeQuestion = question;
-              broadcastClaude();
-            }
+          const parsed = parseClaudeOptionsFromPane(pane);
+          if (parsed) {
+            claudeOptions = parsed.options;
+            if (parsed.question) claudeQuestion = parsed.question;
+            broadcastClaude();
           }
         }
       } catch {}
@@ -5814,36 +5935,12 @@ wssTerm.on("connection", (ws) => {
       claudeQuestion = '';
       try {
         const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
-        const lines = pane.split('\n');
-        let selectIdx = -1;
-        for (let i = lines.length - 1; i >= 0; i--) {
-          if (/^Enter to select|^Esc to cancel/.test(lines[i].trim())) { selectIdx = i; break; }
-        }
-        if (selectIdx > 0) {
-          const opts = [];
-          let question = '';
-          for (let i = selectIdx - 1; i >= Math.max(0, selectIdx - 15); i--) {
-            const line = lines[i];
-            const m = line.match(/^\s*[❯►]?\s*(\d)[.:]\s+(\S.{0,40})/);
-            if (m && parseInt(m[1]) >= 1 && parseInt(m[1]) <= 4 && !/^Type something/.test(m[2].trim()) && !/^Other$/.test(m[2].trim())) opts.unshift({ n: m[1], text: m[2].trim() });
-            if (!m && opts.length === 0) {
-              const h = line.match(/^\s*[❯►]\s+(\S.{1,40})/);
-              if (h) opts.unshift({ n: '1', text: h[1].trim() });
-            }
-            const q = line.match(/[☐●☑]\s+(.+)/);
-            if (q) { question = q[1].trim(); break; }
-            // Non-option, non-description text line above options = question
-            if (opts.length > 0 && !m && line.trim().length > 2 && !/^\s{4,}/.test(line) && !/^[❯►⏺⎿●─]/.test(line.trim()) && !/^Enter|^Esc to/.test(line.trim()) && !/Chat about/.test(line) && !/Type something/.test(line) && !/Tab to amend/.test(line)) {
-              question = line.trim();
-              break;
-            }
-          }
-          if (opts.length >= 2) {
-            claudeOptions = opts.slice(0, 4);
-            if (question) claudeQuestion = question;
-            if (_claudeWaitingTimer) { clearTimeout(_claudeWaitingTimer); _claudeWaitingTimer = null; }
-            broadcastClaude();
-          }
+        const parsed = parseClaudeOptionsFromPane(pane);
+        if (parsed) {
+          claudeOptions = parsed.options;
+          if (parsed.question) claudeQuestion = parsed.question;
+          if (_claudeWaitingTimer) { clearTimeout(_claudeWaitingTimer); _claudeWaitingTimer = null; }
+          broadcastClaude();
         }
       } catch {}
     }

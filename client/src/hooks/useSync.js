@@ -47,6 +47,10 @@ export function useSync() {
           }
         } else if (data.type === 'claude') {
           usePlaybackStore.getState().update(data)
+        } else if (data.type === 'claude-feed') {
+          if (Array.isArray(data.lines) && data.lines.length) {
+            useSyncStore.getState().pushClaudeFeed(data.lines)
+          }
         } else if (data.type === 'pong') {
           handlePong(data, ws, pingState.current)
         }

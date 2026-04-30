@@ -1531,6 +1531,52 @@ body.keyboard-open .fab-stack { bottom: 408px; }
 }
 .fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--surface-hover); }
 
+/* Top-of-screen "kill feed" of recent Claude pane lines. Renders
+ * while the terminal panel is closed so the user can keep tabs on
+ * what Claude is doing while scrolling videos. Each line fades over
+ * its 5s lifespan; .claude-feed-line is removed by the component
+ * once stale. pointer-events:none — never intercepts taps. */
+.claude-feed {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0) + 4px);
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 0 12px;
+  pointer-events: none;
+}
+.claude-feed-line {
+  /* Match the VolumeHud aesthetic: solid dark surface, dim border,
+   * cream text. Magenta-on-dark from the previous version was hard
+   * to read against video thumbnails. */
+  background: rgba(21, 21, 21, 0.95);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  letter-spacing: 1px;
+  padding: 6px 10px;
+  border: 1px solid var(--text-dim);
+  max-width: 92vw;
+  white-space: normal;
+  word-break: break-word;
+  text-align: left;
+  animation: claude-feed-in 200ms ease-out, claude-feed-fade 5s linear forwards;
+}
+@keyframes claude-feed-in {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes claude-feed-fade {
+  0%, 60% { opacity: 1; }
+  100%    { opacity: 0; }
+}
+
 .claude-quick-reply {
   position: fixed;
   right: 16px;
@@ -1546,13 +1592,16 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
 .claude-quick-reply button {
   min-height: 56px;
   padding: 8px 18px;
+  max-width: min(320px, 80vw);
   background: rgba(26,26,46,0.7);
   border: 1px solid rgba(177,98,134,0.6);
   color: #f0c0e0;
   font-family: var(--font);
   font-size: var(--font-sm);
   cursor: pointer;
-  white-space: nowrap;
+  white-space: normal;
+  text-align: right;
+  word-break: break-word;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
