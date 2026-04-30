@@ -47,6 +47,10 @@ export const NativePlayer = {
   async setLayerFrame({ x, y, w, h, visible = true }) {
     if (plugin) return plugin.setLayerFrame({ x, y, w, h, visible })
   },
+  async getPendingPushTap() {
+    if (!plugin) return { tmuxWindow: -1, answer: '' }
+    return plugin.getPendingPushTap()
+  },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }
     return plugin.addListener(event, handler)

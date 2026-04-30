@@ -5,8 +5,7 @@ import { tick as hapticTick, thump as hapticThump } from './haptics'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
 import { useNativeNowPlaying } from './hooks/useNativeNowPlaying'
-import { useClaudeNotification } from './hooks/useClaudeNotification'
-import { useFeedNotification } from './hooks/useFeedNotification'
+import { usePushTap } from './hooks/usePushTap'
 import { usePullToRefresh } from './hooks/usePullToRefresh'
 import { useVolumeButtons } from './hooks/useVolumeButtons'
 import { useMariaProximity } from './hooks/useMariaProximity'
@@ -122,8 +121,7 @@ function App() {
   useMediaSession()
   useRouting()
   useNativeNowPlaying({ send })
-  useClaudeNotification()
-  useFeedNotification()
+  usePushTap()
   useVolumeButtons()
   useMariaProximity()
 

@@ -37,6 +37,17 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                        name: UIApplication.willEnterForegroundNotification, object: nil)
         nc.addObserver(self, selector: #selector(onForeground),
                        name: UIApplication.didBecomeActiveNotification, object: nil)
+        // AppDelegate posts this when a kill-feed/prompt notification is
+        // tapped. Forward the tmux-window index to JS so it opens the
+        // terminal panel + (the server has already switched the pane).
+        nc.addObserver(self, selector: #selector(onPushTap(_:)),
+                       name: Notification.Name("YTCtrlPushTap"), object: nil)
+    }
+
+    @objc private func onPushTap(_ note: Notification) {
+        let idx = (note.userInfo?["tmuxWindow"] as? Int) ?? -1
+        let answer = (note.userInfo?["answer"] as? String) ?? ""
+        self.notifyListeners("pushTap", data: ["tmuxWindow": idx, "answer": answer])
     }
 
     @objc private func onForeground() {
@@ -83,7 +94,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "endLiveActivity", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "setLayerFrame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getLiveState", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "seekToDate", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "seekToDate", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getPendingPushTap", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -712,6 +724,24 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 call.resolve(["ok": false, "reason": "no PDT"])
             }
         }
+    }
+
+    /// Returns and CLEARS any pending push-tap action stashed by
+    /// AppDelegate when the user tapped a notification before the
+    /// WebView was ready to receive the live `pushTap` event.
+    /// Called by JS once on app foreground.
+    @objc func getPendingPushTap(_ call: CAPPluginCall) {
+        let idx = AppDelegate.pendingTmuxFocusIndex
+        let answer = AppDelegate.pendingAnswer
+        let dbg = AppDelegate.pendingDebugAction
+        AppDelegate.pendingTmuxFocusIndex = nil
+        AppDelegate.pendingAnswer = nil
+        AppDelegate.pendingDebugAction = nil
+        call.resolve([
+            "tmuxWindow": idx ?? -1,
+            "answer": answer ?? "",
+            "debug": dbg ?? ""
+        ])
     }
 
     @objc func setNowPlaying(_ call: CAPPluginCall) {

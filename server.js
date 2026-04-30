@@ -106,6 +106,11 @@ async function exportCookies() {
     return true;
   } catch (err) {
     console.error("  Failed to export cookies:", err.message);
+    // Cookies failing is the leading indicator of "Firefox isn't
+    // logged in / Mac is locked / yt-dlp got rate-limited". Ping the
+    // phone so you don't discover it the next time you try to play.
+    const tail = (err.stderr || err.message || "").slice(-200);
+    if (typeof pushApnsHealth === "function") pushApnsHealth("Cookie export failed", tail);
     return false;
   }
 }
@@ -156,6 +161,14 @@ function saveTokens() {
 }
 
 app.use(express.json());
+// Debug: log every POST/PUT for tracing the APNs action-button flow.
+app.use((req, _res, next) => {
+  if (req.method !== "GET") {
+    const ua = (req.headers["user-agent"] || "").slice(0, 30);
+    console.log(`[req] ${req.method} ${req.url} ua=${ua}`);
+  }
+  next();
+});
 
 // Track file modification time for live reload
 let lastModified = Date.now();
@@ -2242,6 +2255,14 @@ app.post("/api/play", async (req, res) => {
         if (tail) console.error(`mpv stderr tail:\n${tail}`);
         // Persist the tail to a file for post-mortem debugging.
         try { fs.writeFileSync("/tmp/ytctl-mpv-crash.log", `${new Date().toISOString()} code=${code} signal=${signal}\n${tail}\n`); } catch {}
+        // Lock-screen ping so an mpv crash doesn't go unnoticed when
+        // you're not at the Mac. Skip for short normal-quit intervals
+        // — only ping when the exit is unexpected (signal-killed, or
+        // crashed quickly with a non-zero code).
+        if (signal || elapsed < 5000) {
+          const firstStderrLine = (tail.split("\n").find(l => l.trim()) || "").slice(0, 120);
+          pushApnsHealth("mpv crashed", `${signal ? `signal=${signal}` : `code=${code}`}${firstStderrLine ? `\n${firstStderrLine}` : ""}`);
+        }
       }
       if (mpvProcess === child) {
         // If mpv exited within 5 seconds, it probably failed — remove from history
@@ -5639,6 +5660,16 @@ let claudeQuestion = '';
 let _claudeWaitingTimer = null;
 let _lastCapture = 0;
 let _lastActiveWindow = '';
+// Recently-pushed waiting keys → expiry timestamp. Time-based so
+// transient state flips (waiting→idle→waiting from the parser
+// oscillating during a multi-pass capture) don't trigger duplicate
+// pushes. 60s window is well past any realistic re-prompt latency.
+const _waitingPushKeysSeen = new Map();
+let _lastClaudeStateForDone = 'idle';
+let _lastDonePushAt = 0;
+// Track the most recent feed line so the "done" push has something
+// useful to show. Updated by pollClaudeFeed when it broadcasts.
+let _lastFeedLine = '';
 function broadcastClaude() {
   // Always include claudeOptions and claudeQuestion (even when empty)
   // so the client's shallow-merge zustand store actually CLEARS stale
@@ -5646,6 +5677,39 @@ function broadcastClaude() {
   // keys, leaving the previous prompt's options stuck on screen.
   const msg = JSON.stringify({ type: 'claude', claudeState, claudeOptions, claudeQuestion });
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+  // Real-time APNs banner when Claude is asking — gated to a single
+  // push per unique (question + options) so the multi-pass parser
+  // doesn't double-send as it discovers more options.
+  if (claudeState === 'waiting' && claudeOptions.length > 0) {
+    const key = `${claudeQuestion}::${claudeOptions.length}::${claudeOptions.map(o => o.n).join(',')}`;
+    const now = Date.now();
+    // Drop expired entries.
+    for (const [k, exp] of _waitingPushKeysSeen) if (exp < now) _waitingPushKeysSeen.delete(k);
+    if (!_waitingPushKeysSeen.has(key)) {
+      _waitingPushKeysSeen.set(key, now + 60_000);
+      console.log(`[claude] pushing waiting (key=${key})`);
+      pushApnsClaudeWaiting(claudeQuestion, claudeOptions);
+    }
+  }
+  // "Done" push: when Claude finishes a turn (state transitions to
+  // idle from thinking/waiting). Throttled so a chatty resolution
+  // doesn't spam. Body is the most recent feed line — usually the
+  // last tool call or message Claude emitted.
+  const prev = _lastClaudeStateForDone;
+  _lastClaudeStateForDone = claudeState;
+  if (claudeState === 'idle' && prev !== 'idle' && prev !== '' && (Date.now() - _lastDonePushAt) > 60_000) {
+    _lastDonePushAt = Date.now();
+    if (_lastFeedLine) {
+      const active = (Array.isArray(tmuxWindows) ? tmuxWindows.find(w => w.active) : null);
+      const prefix = active && active.name ? `[${active.name}] ` : '';
+      pushApns({
+        title: 'Claude done',
+        body: prefix + _lastFeedLine,
+        collapseId: 'claude-done',
+        sound: '',
+      });
+    }
+  }
 }
 // Parse tmux capture-pane output for the option block above the
 // "Enter to select / Esc to cancel" footer. Returns { options, question }
@@ -5786,31 +5850,76 @@ function initApns() {
   }
 }
 initApns();
-function pushApnsFeedLines(lines) {
-  if (!apnsProvider || apnsTokens.size === 0 || !lines.length) return;
+// Unified APNs send. Caller passes title/body, an optional iOS
+// notification `category` (used for action buttons later in Phase
+// 2), a `collapseId` so iOS replaces prior banners with the same
+// kind, optional `sound` ("" = silent, "default" = chime), and
+// arbitrary `payload` (made available to the iOS app via
+// userInfo). Failure handling: prune dead tokens.
+function pushApns({ title, body, category, collapseId, sound = "", payload = {} }) {
+  if (!apnsProvider || apnsTokens.size === 0 || !body) return;
   const apn = require("@parse/node-apn");
   const note = new apn.Notification();
-  note.alert = { title: "Claude", body: lines[lines.length - 1] };
+  note.alert = title ? { title, body } : { body };
   note.topic = process.env.APNS_TOPIC || "com.antonamurskiy.ytctl1289";
-  // Silent (no audible chime) — node-apn rejects `null` here; "" is
-  // the right way to say "no sound" without breaking the setter.
-  note.sound = "";
-  // Coalesce on the iOS side — same id replaces the previous banner.
-  note.collapseId = "claude-feed";
-  // 1h TTL. Old feed lines aren't useful when delivery was delayed.
+  note.sound = sound;
+  if (category) note.category = category;
+  if (collapseId) note.collapseId = collapseId;
+  // Augment payload with the active tmux window so the iOS app can
+  // jump straight there on tap (Phase 2 wiring on the native side).
+  const active = (Array.isArray(tmuxWindows) ? tmuxWindows.find(w => w.active) : null);
+  note.payload = {
+    ...payload,
+    tmuxWindow: active ? active.index : null,
+    tmuxName: active ? active.name : null,
+  };
   note.expiry = Math.floor(Date.now() / 1000) + 3600;
   apnsProvider.send(note, [...apnsTokens]).then((r) => {
-    if (r.sent && r.sent.length) console.log(`  APNs: sent ${r.sent.length}`);
+    if (r.sent && r.sent.length) console.log(`  APNs: sent ${r.sent.length} (${category || collapseId || "feed"})`);
     for (const f of r.failed || []) {
       const reason = f.response?.reason || f.error?.message || "";
-      const status = f.status;
-      console.warn(`  APNs: failed [${status}] ${reason} for ${String(f.device).slice(0, 8)}…`);
+      console.warn(`  APNs: failed [${f.status}] ${reason} for ${String(f.device).slice(0, 8)}…`);
       if (/BadDeviceToken|Unregistered/i.test(reason)) {
         apnsTokens.delete(f.device);
         saveApnsTokens();
       }
     }
   }).catch((e) => { console.warn(`  APNs: send error: ${e.message}`); });
+}
+function pushApnsFeedLines(lines) {
+  if (!lines.length) return;
+  // Prefix the latest line with the tmux window name so a glance at
+  // the lock screen tells you which Claude is doing what.
+  const active = (Array.isArray(tmuxWindows) ? tmuxWindows.find(w => w.active) : null);
+  const prefix = active && active.name ? `[${active.name}] ` : "";
+  pushApns({
+    title: "Claude",
+    body: prefix + lines[lines.length - 1],
+    collapseId: "claude-feed",
+    sound: "",
+  });
+}
+function pushApnsClaudeWaiting(question, options) {
+  if (!Array.isArray(options) || options.length < 1) return;
+  const lines = options.map(o => `${o.n}. ${o.text}`).join("\n");
+  const title = question ? `Claude: ${question}` : "Claude is waiting";
+  pushApns({
+    title,
+    body: lines,
+    category: `CLAUDE_PROMPT_${options.length}`,
+    collapseId: "claude-waiting",
+    sound: "default",
+    payload: { kind: "prompt", options },
+  });
+}
+function pushApnsHealth(title, body) {
+  pushApns({
+    title,
+    body,
+    collapseId: "health",
+    sound: "default",
+    payload: { kind: "health" },
+  });
 }
 app.post("/api/apns-register", (req, res) => {
   const { token } = req.body || {};
@@ -5838,7 +5947,9 @@ function broadcastClaudeFeed(lines) {
   if (!lines.length) return;
   const msg = JSON.stringify({ type: "claude-feed", lines });
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
-  pushApnsFeedLines(lines);
+  // No APNs per-line push. Phone only buzzes on prompt (waiting)
+  // and turn-done transitions — see broadcastClaude. Per-line was
+  // too noisy: every Bash/Read/Edit fired a notification.
 }
 function pollClaudeFeed() {
   let pane;
@@ -5897,7 +6008,35 @@ function pollClaudeFeed() {
     if (_tmuxFeedRecent.length > 200) _tmuxFeedRecent.shift();
     out.push(merged);
   }
-  if (out.length) broadcastClaudeFeed(out);
+  if (out.length) {
+    broadcastClaudeFeed(out);
+    _lastFeedLine = out[out.length - 1];
+  }
+  // Piggyback prompt-state detection. shell.onData's plain-stream
+  // approach misses the Esc-to-cancel footer when Claude Code uses
+  // tmux's alt-screen for Inquirer-style prompts; capture-pane has
+  // the rendered visible state regardless. Diff parsed result vs
+  // the last broadcast so we only push on real transitions.
+  const hasFooter = /Esc to cancel|Enter to select|Tab to amend/.test(pane);
+  if (hasFooter) {
+    const parsed = parseClaudeOptionsFromPane(pane);
+    if (parsed && parsed.options.length) {
+      const sigOpts = parsed.options.map(o => o.n + ":" + o.text).join("|");
+      const prevSigOpts = claudeOptions.map(o => o.n + ":" + o.text).join("|");
+      if (claudeState !== "waiting" || sigOpts !== prevSigOpts || (parsed.question || "") !== claudeQuestion) {
+        claudeState = "waiting";
+        claudeOptions = parsed.options;
+        claudeQuestion = parsed.question || "";
+        broadcastClaude();
+      }
+    }
+  } else if (claudeState === "waiting") {
+    // Footer disappeared → user answered or prompt cleared.
+    claudeState = "idle";
+    claudeOptions = [];
+    claudeQuestion = "";
+    broadcastClaude();
+  }
 }
 // Poll every 500ms — once tmux session 0 exists (boot or first WS).
 setInterval(pollClaudeFeed, 500);
@@ -5905,6 +6044,7 @@ setInterval(pollClaudeFeed, 500);
 app.post("/api/tmux-send", (req, res) => {
   const { keys } = req.body;
   if (!keys) return res.status(400).json({ error: "No keys" });
+  console.log(`[tmux-send] ${JSON.stringify(keys)}`);
   try {
     execSync(`tmux send-keys -t 0 "${keys}" Enter`, { stdio: "ignore" });
     res.json({ ok: true });
