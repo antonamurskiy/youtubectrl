@@ -161,14 +161,6 @@ function saveTokens() {
 }
 
 app.use(express.json());
-// Debug: log every POST/PUT for tracing the APNs action-button flow.
-app.use((req, _res, next) => {
-  if (req.method !== "GET") {
-    const ua = (req.headers["user-agent"] || "").slice(0, 30);
-    console.log(`[req] ${req.method} ${req.url} ua=${ua}`);
-  }
-  next();
-});
 
 // Track file modification time for live reload
 let lastModified = Date.now();
@@ -1904,7 +1896,7 @@ app.post("/api/play", async (req, res) => {
       if (pingResp === "__timeout__" || !pingResp || pingResp.error !== "success") {
         console.error(`mpv IPC unresponsive (ping=${JSON.stringify(pingResp)}) — killing and respawning`);
         try { process.kill(mpvProcess.pid, 9); } catch {}
-        try { execSync("pkill -9 mpv", { stdio: "ignore" }); } catch {}
+        try { await execFileP("pkill", ["-9", "mpv"]); } catch {}
         _mpvCleanup();
         mpvProcess = null;
         await new Promise(r => setTimeout(r, 200));
@@ -1962,14 +1954,19 @@ app.post("/api/play", async (req, res) => {
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
-        // Re-apply window mode immediately after loadfile (don't wait for video to load)
-        try {
-          const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
-          if (wid && windowMode === "maximize") {
-            execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-            execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
-          }
-        } catch {}
+        // Re-apply window mode immediately after loadfile (don't wait
+        // for video to load). Async + parallel — was 3 execSync calls
+        // blocking the event loop.
+        if (windowMode === "maximize") {
+          (async () => {
+            try {
+              const wid = await getMpvWindowId();
+              if (!wid) return;
+              await execFileP("aerospace", ["focus", "--window-id", wid]);
+              await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]);
+            } catch {}
+          })();
+        }
         res.json({ ok: true });
         const expectedUrl = url;
         const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
@@ -2024,23 +2021,23 @@ app.post("/api/play", async (req, res) => {
           } catch {}
           // Re-apply window mode again after video loads (aspect ratio change can disrupt it)
           try {
-            const wid = execSync("aerospace list-windows --all | grep mpv | awk -F'|' '{print $1}' | tr -d ' ' | head -1", { encoding: "utf8" }).trim();
+            const wid = await getMpvWindowId();
             if (wid) {
               if (windowMode === "maximize") {
-                execSync(`aerospace focus --window-id ${wid}`, { stdio: "ignore" });
-                execSync(`aerospace fullscreen --no-outer-gaps on --window-id ${wid}`, { stdio: "ignore" });
+                await execFileP("aerospace", ["focus", "--window-id", wid]);
+                await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]);
               } else if (windowMode === "floating") {
                 try {
-                  const posStr = execSync(`osascript -e 'tell application "System Events" to get position of first window of process "mpv"'`, { encoding: "utf8" }).trim();
-                  const [wx] = posStr.split(", ").map(Number);
+                  const { stdout: posStr } = await execFileP("osascript", ["-e", 'tell application "System Events" to get position of first window of process "mpv"']);
+                  const [wx] = posStr.trim().split(", ").map(Number);
                   const screens = getScreenOrigins();
                   const screen = screens.find(s => wx >= s.x && wx < s.x + s.w) || screens.find(s => s.isMain) || screens[0];
                   const w = Math.round(screen.w * 0.38);
                   const h = Math.round(w * 9 / 16);
                   const posX = screen.x + screen.w - w - 12;
                   const posY = screen.y + 38;
-                  execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}'`, { stdio: "ignore" });
-                  execSync(`osascript -e 'tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}'`, { stdio: "ignore" });
+                  await execFileP("osascript", ["-e", `tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}`]);
+                  await execFileP("osascript", ["-e", `tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}`]);
                 } catch {}
                 await floatTopRight(wid);
               }
@@ -3372,9 +3369,17 @@ app.post("/api/set-quality", async (req, res) => {
   }
 });
 
-// Parse cookies.txt (Netscape format) into a cookie string and extract specific values
+// Parse cookies.txt (Netscape format) into a cookie string and
+// extract specific values. Cached in-memory keyed on file mtime so
+// hot YouTube-API paths don't re-read + re-parse the file on every
+// request (was running once per /api/home, /api/history, /api/live,
+// /api/subscriptions, /api/channel, /api/youtubei calls).
+let _cookieCache = null;
+let _cookieCacheMtime = 0;
 function parseCookieFile() {
   try {
+    const stat = fs.statSync(COOKIES_FILE);
+    if (_cookieCache && stat.mtimeMs === _cookieCacheMtime) return _cookieCache;
     const text = fs.readFileSync(COOKIES_FILE, "utf8");
     const cookies = [];
     const cookieMap = {};
@@ -3386,7 +3391,9 @@ function parseCookieFile() {
         cookieMap[parts[5]] = parts[6];
       }
     }
-    return { cookieStr: cookies.join("; "), cookieMap };
+    _cookieCache = { cookieStr: cookies.join("; "), cookieMap };
+    _cookieCacheMtime = stat.mtimeMs;
+    return _cookieCache;
   } catch { return { cookieStr: "", cookieMap: {} }; }
 }
 
@@ -3790,61 +3797,71 @@ async function pollMpvVisible() {
 setInterval(() => { pollMpvVisible().catch(() => {}); }, 2000);
 pollMpvVisible().catch(() => {});
 
-app.post("/api/watch-on-phone", async (_req, res) => {
+app.post("/api/watch-on-phone", async (req, res) => {
   if (!nowPlaying) return res.status(400).json({ error: "Nothing playing" });
+  // Warm-cache short-circuit: client passed ?warm=1 to indicate it
+  // already has a valid AVPlayer state and just needs server-side
+  // phoneActive=true + mpv hidden. Skip the yt-dlp resolve entirely.
+  if (req.query.warm === "1" && activePlayer === "mpv") {
+    routeAudio("mac");
+    phoneActive = true;
+    execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false'], () => {});
+    mpvCommand(["set_property", "mute", false]).catch(() => {});
+    return res.json({ ok: true, warm: true });
+  }
   // Sync mode: mpv is the audio source → keep AirPods on the Mac.
   routeAudio("mac");
   try {
-    let seconds = 0;
-    const pos = await mpvCommand(["get_property", "time-pos"]);
-    seconds = Math.floor(pos?.data || 0);
+    // Read mpv state in parallel — was 5 round-trips serialized,
+    // each ~3-15ms against the IPC socket.
+    const [posR, fmtR, durR, spR] = await Promise.all([
+      mpvCommand(["get_property", "time-pos"]).catch(() => null),
+      mpvCommand(["get_property", "file-format"]).catch(() => null),
+      mpvCommand(["get_property", "duration"]).catch(() => null),
+      mpvCommand(["get_property", "stream-path"]).catch(() => null),
+    ]);
+    const seconds = Math.floor(posR?.data || 0);
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
     if (activePlayer === "mpv") {
       phoneActive = true;
-      // Hide mpv window when playing on phone (don't use vid=no, it can drop audio)
-      try { execSync(`osascript -e 'tell application "System Events" to set visible of process "mpv" to false'`, { stdio: "ignore" }); } catch {}
-      // If we're transitioning from phone-only mode (where mpv was muted
-      // as a silent progress tracker), restore audio — in sync mode mpv
-      // is the authoritative audio source.
-      try { await mpvCommand(["set_property", "mute", false]); } catch {}
+      // Fire-and-forget — was execSync blocking the response.
+      execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false'], () => {});
+      // Restore mpv audio (transitioning from phone-only). Don't
+      // await — the unmute IPC isn't on the response critical path.
+      mpvCommand(["set_property", "mute", false]).catch(() => {});
     }
 
-    // Live detection: try mpv's file-format first, fall back to yt-dlp.
-    // With streamlink-piped mpv (live / post_live), file-format is
-    // "mpegts" not "hls", so also check server-side state.
-    const fmt = await mpvCommand(["get_property", "file-format"]).catch(() => null);
-    let isLiveStream = (fmt?.data || "").includes("hls") || !!currentLiveHlsUrl;
+    let isLiveStream = (fmtR?.data || "").includes("hls") || !!currentLiveHlsUrl;
     let hlsUrl = null;
     if (isLiveStream) {
-      // Prefer the server-side currentLiveHlsUrl (set by /api/play when
-      // streamlink was spawned) — mpv's stream-path for streamlink-piped
-      // stdin is just "-" and has no googlevideo URL to regex out.
       if (currentLiveHlsUrl) hlsUrl = currentLiveHlsUrl;
       else {
-        try {
-          const sp = await mpvCommand(["get_property", "stream-path"]);
-          const edl = sp?.data || "";
-          const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
-          if (hlsMatch) hlsUrl = hlsMatch[1];
-        } catch {}
+        const edl = spR?.data || "";
+        const hlsMatch = edl.match(/(https:\/\/manifest\.googlevideo\.com\/[^\s;]+)/);
+        if (hlsMatch) hlsUrl = hlsMatch[1];
       }
     }
-    // Fallback: check via yt-dlp — only if mpv's file-format already
-    // suggested HLS. On a plain VOD (file-format="mov,mp4,..."),
-    // isLiveStream is definitively false and running a second yt-dlp
-    // call here just to confirm burns ~5-8s of user-visible latency
-    // before we even start resolving the VOD formats below.
+    // Fallback: check via yt-dlp — only if mpv reports HLS but we
+    // don't have currentLiveHlsUrl yet. Skip when the cache already
+    // tells us this URL was a VOD (avoids 5-8s yt-dlp probe).
     if (isLiveStream && !hlsUrl) {
-      try {
-        const { stdout: ltest } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", "--get-url", "-f", "best", nowPlaying], { timeout: 15000 });
-        const lines = ltest.trim().split("\n");
-        if (lines.some(l => l.trim() === "True")) {
-          isLiveStream = true;
-          hlsUrl = lines.find(l => l.startsWith("http"));
-        }
-      } catch {}
+      const cachedFlag = _watchOnPhoneCache.get(nowPlaying);
+      if (cachedFlag && cachedFlag.isLive === false) {
+        isLiveStream = false;
+      } else {
+        try {
+          const { stdout: ltest } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "is_live", "--get-url", "-f", "best", nowPlaying], { timeout: 15000 });
+          const lines = ltest.trim().split("\n");
+          if (lines.some(l => l.trim() === "True")) {
+            isLiveStream = true;
+            hlsUrl = lines.find(l => l.startsWith("http"));
+          } else {
+            isLiveStream = false;
+          }
+        } catch {}
+      }
     }
     if (isLiveStream && hlsUrl) {
       currentLiveHlsUrl = hlsUrl;
@@ -3859,12 +3876,7 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       });
     }
 
-    // Cached yt-dlp resolution. The DASH URLs returned by yt-dlp stay
-    // valid on YouTube's CDN for hours, so a short server-side cache
-    // collapses the 5-15s yt-dlp call into a few-ms cache hit on
-    // re-engages of sync mode. 5 min TTL balances "fast enough that
-    // toggling modes doesn't sting" against "old enough that any
-    // googlevideo invalidation has already played out."
+    // Cached yt-dlp resolution. Stays valid for ~5 min server-side.
     const cached = _watchOnPhoneCache.get(nowPlaying);
     let urls;
     if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
@@ -3872,25 +3884,23 @@ app.post("/api/watch-on-phone", async (_req, res) => {
     } else {
       const { stdout } = await execFileP(
         "yt-dlp",
-        // Prefer DASH 1080p (composed client-side on native iOS) — the
-        // generic "bestvideo ≤ 1080p mp4 + bestaudio m4a" selector picks
-        // whichever itag is available (137 for 1080p30, 299 for 1080p60,
-        // or 136 for 720p-only videos). Falls back to progressive 22 for
-        // older videos without DASH. Composition is crash-guarded on the
-        // native side (see NativePlayerPlugin.buildCompositionItem).
         ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", nowPlaying],
         { timeout: 15000 }
       );
       urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
-      _watchOnPhoneCache.set(nowPlaying, { urls, at: Date.now() });
-      // Bound the cache to keep memory tame across long sessions.
+      // Cache isLive=false alongside URLs — the format-string we used
+      // to resolve only matches non-live videos, so a successful
+      // resolution proves it's VOD. This skips the 5-8s `--print
+      // is_live` probe on next sync re-engage.
+      _watchOnPhoneCache.set(nowPlaying, { urls, at: Date.now(), isLive: false });
       if (_watchOnPhoneCache.size > 50) {
         const oldest = _watchOnPhoneCache.keys().next().value;
         _watchOnPhoneCache.delete(oldest);
       }
     }
-    const mpvDur = await mpvCommand(["get_property", "duration"]).catch(() => null);
-    const durationSec = mpvDur?.data || historyMap.get(nowPlaying)?.duration || 0;
+    // Use the duration we already read in parallel above; fall back
+    // to history when mpv is between sources.
+    const durationSec = durR?.data || historyMap.get(nowPlaying)?.duration || 0;
     if (urls.length >= 2) {
       res.json({
         streamUrl: urls[0],
@@ -4502,6 +4512,60 @@ app.post("/api/move-monitor", async (req, res) => {
     windowLock = false;
   }
 });
+
+// Debounced auto-show/hide on external pause transitions
+// (AirPods, media keys). Without this, rapid pause/resume toggles
+// would stack 4-6 osascript/aerospace calls per WS broadcast tick
+// and clobber each other. Last-write-wins with a 400ms window;
+// in-flight runs are gated so a new event during execution gets
+// queued and runs once the prior pass completes.
+let _pauseVisDebounce = null;
+let _pauseVisInFlight = false;
+let _pauseVisPending = null;
+function schedulePauseVisibility(paused) {
+  _pauseVisPending = paused;
+  if (_pauseVisDebounce) clearTimeout(_pauseVisDebounce);
+  _pauseVisDebounce = setTimeout(async () => {
+    _pauseVisDebounce = null;
+    if (_pauseVisInFlight) return; // a fresh schedule will re-arm us when this finishes
+    _pauseVisInFlight = true;
+    try {
+      while (_pauseVisPending !== null) {
+        const wantPaused = _pauseVisPending;
+        _pauseVisPending = null;
+        if (wantPaused) {
+          await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false']).catch(() => {});
+        } else if (!phoneActive) {
+          await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true']).catch(() => {});
+          await execFileP("osascript", ["-e", 'tell application "System Events" to set frontmost of process "mpv" to true']).catch(() => {});
+          if (windowMode === "maximize") {
+            const wid = await getMpvWindowId();
+            if (wid) {
+              await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
+              await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
+            }
+          }
+        }
+      }
+    } finally {
+      _pauseVisInFlight = false;
+    }
+  }, 400);
+}
+
+// Async aerospace mpv-window lookup. Was a `execSync(...|grep|awk|head)`
+// shell pipeline blocking the event loop on every /api/play.
+async function getMpvWindowId() {
+  try {
+    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]);
+    for (const line of stdout.split("\n")) {
+      if (!/\bmpv\b/.test(line)) continue;
+      const id = line.split("|")[0].trim();
+      if (id) return id;
+    }
+  } catch {}
+  return null;
+}
 
 // Get screen origins from displayplacer
 let _screenOriginsCache = null;
@@ -5687,7 +5751,6 @@ function broadcastClaude() {
     for (const [k, exp] of _waitingPushKeysSeen) if (exp < now) _waitingPushKeysSeen.delete(k);
     if (!_waitingPushKeysSeen.has(key)) {
       _waitingPushKeysSeen.set(key, now + 60_000);
-      console.log(`[claude] pushing waiting (key=${key})`);
       pushApnsClaudeWaiting(claudeQuestion, claudeOptions);
     }
   }
@@ -5974,6 +6037,7 @@ function extractClaudeFeedLines(pane, dedupeKeyPrefix) {
     const isToolLine = TOOL_RE.test(trimmed);
     if (!isBullet && !isToolLine) continue;
     let merged = trimmed.replace(/^[⏺⎿]\s*/, "").trim();
+    let contMergeCount = 0;
     while (i < lines.length) {
       const next = lines[i];
       const nextTrim = next.trim();
@@ -5981,11 +6045,19 @@ function extractClaudeFeedLines(pane, dedupeKeyPrefix) {
       if (/^[⏺⎿]/.test(nextTrim)) break;
       if (TOOL_RE.test(nextTrim)) break;
       if (!/^\s{2,}/.test(next)) break;
+      // Skip Claude Code's agent picker / status footer — re-renders
+      // every second with fresh elapsed time + tokens, defeats dedupe.
+      if (/↑\/↓ to select|to view|tokens|Enter to/.test(nextTrim)) break;
+      // Cap continuation merge depth — long Task tool headers were
+      // pulling in the agent's status UI as continuation lines.
+      if (contMergeCount++ >= 3) break;
       merged += " " + nextTrim;
       i++;
     }
     merged = merged.trim();
-    if (!merged || merged.length > 600) continue;
+    if (!merged || merged.length > 400) continue;
+    // Skip the agent-status pattern itself if it slipped through.
+    if (/↑\/↓ to select|tokens · ↓/.test(merged)) continue;
     const dedupeKey = `${dedupeKeyPrefix}::${merged}`;
     if (_tmuxFeedRecent.has(dedupeKey)) continue;
     _tmuxFeedRecent.add(dedupeKey);
@@ -5999,41 +6071,51 @@ function extractClaudeFeedLines(pane, dedupeKeyPrefix) {
   }
   return out;
 }
-function pollClaudeFeed() {
-  // Default to single-window pane=0 if tmuxWindows hasn't populated yet.
-  const windows = (Array.isArray(tmuxWindows) && tmuxWindows.length)
-    ? tmuxWindows
-    : [{ index: 0, name: "", active: true }];
-  let activePane = "";
-  for (const win of windows) {
-    let pane;
-    try {
-      pane = execSync(`tmux capture-pane -p -t 0:${win.index} -S -50`, { encoding: "utf8", timeout: 1000 });
-    } catch { continue; }
-    if (win.active) activePane = pane;
-    const winKey = win.name || `0:${win.index}`;
-    if (!_tmuxFeedReady.has(winKey)) {
-      // Prime per-window dedupe with what's already on screen so
-      // existing content doesn't replay as new.
-      for (const line of pane.split("\n").map(l => l.trim())) {
-        if (!line) continue;
-        const cleaned = line.replace(/^[⏺⎿]\s*/, "").trim();
-        if (cleaned) _tmuxFeedRecent.add(`${winKey}::${cleaned}`);
+let _pollInFlight = false;
+async function pollClaudeFeed() {
+  // execFileP is async — without an in-flight guard, slow tmux
+  // captures on multiple windows could overlap and step on each
+  // other's parsing.
+  if (_pollInFlight) return;
+  _pollInFlight = true;
+  try {
+    const windows = (Array.isArray(tmuxWindows) && tmuxWindows.length)
+      ? tmuxWindows
+      : [{ index: 0, name: "", active: true }];
+    // Capture all panes in parallel so the wall-clock cost is one
+    // capture-pane, not N. async exec also yields the event loop
+    // between captures, unlike the previous execSync chain.
+    const captures = await Promise.all(windows.map(async (win) => {
+      try {
+        const { stdout } = await execFileP("tmux", [
+          "capture-pane", "-p", "-t", `0:${win.index}`, "-S", "-50"
+        ], { timeout: 1000 });
+        return { win, pane: stdout };
+      } catch { return { win, pane: null }; }
+    }));
+    let activePane = "";
+    for (const { win, pane } of captures) {
+      if (!pane) continue;
+      if (win.active) activePane = pane;
+      const winKey = win.name || `0:${win.index}`;
+      if (!_tmuxFeedReady.has(winKey)) {
+        for (const line of pane.split("\n").map(l => l.trim())) {
+          if (!line) continue;
+          const cleaned = line.replace(/^[⏺⎿]\s*/, "").trim();
+          if (cleaned) _tmuxFeedRecent.add(`${winKey}::${cleaned}`);
+        }
+        _tmuxFeedReady.add(winKey);
+        console.log(`  Claude feed: primed window ${winKey}`);
+        continue;
       }
-      _tmuxFeedReady.add(winKey);
-      console.log(`  Claude feed: primed window ${winKey}`);
-      continue;
+      const out = extractClaudeFeedLines(pane, winKey);
+      if (out.length) {
+        const prefix = win.name ? `[${win.name}] ` : "";
+        const prefixed = out.map(l => prefix + l);
+        broadcastClaudeFeed(prefixed);
+        _lastFeedLine = prefixed[prefixed.length - 1];
+      }
     }
-    const out = extractClaudeFeedLines(pane, winKey);
-    if (out.length) {
-      // Prefix every line with the window name so the user can
-      // tell which Claude session generated it.
-      const prefix = win.name ? `[${win.name}] ` : "";
-      const prefixed = out.map(l => prefix + l);
-      broadcastClaudeFeed(prefixed);
-      _lastFeedLine = prefixed[prefixed.length - 1];
-    }
-  }
   // Prompt-state detection runs ONLY against the active window —
   // a waiting prompt in an inactive pane isn't actionable from the
   // iOS quick-reply UI which is bound to whatever pane is active.
@@ -6056,6 +6138,9 @@ function pollClaudeFeed() {
     claudeQuestion = "";
     broadcastClaude();
   }
+  } finally {
+    _pollInFlight = false;
+  }
 }
 // Poll every 500ms — once tmux session 0 exists (boot or first WS).
 setInterval(pollClaudeFeed, 500);
@@ -6063,7 +6148,6 @@ setInterval(pollClaudeFeed, 500);
 app.post("/api/tmux-send", (req, res) => {
   const { keys } = req.body;
   if (!keys) return res.status(400).json({ error: "No keys" });
-  console.log(`[tmux-send] ${JSON.stringify(keys)}`);
   try {
     execSync(`tmux send-keys -t 0 "${keys}" Enter`, { stdio: "ignore" });
     res.json({ ok: true });
@@ -6354,26 +6438,7 @@ function startWsSync() {
           const paused = !!pause?.data;
           // Auto-hide/show on external pause (AirPods, media keys) — same logic as /api/playpause
           if (_lastPolledPaused !== null && paused !== _lastPolledPaused && windowMode !== "fullscreen") {
-            // Fire-and-forget to avoid blocking the 1Hz WS broadcast loop
-            (async () => {
-              try {
-                if (paused) {
-                  await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to false']).catch(() => {});
-                } else if (!phoneActive) {
-                  await execFileP("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true']).catch(() => {});
-                  await execFileP("osascript", ["-e", 'tell application "System Events" to set frontmost of process "mpv" to true']).catch(() => {});
-                  if (windowMode === "maximize") {
-                    const { stdout } = await execFileP("aerospace", ["list-windows", "--all"]).catch(() => ({ stdout: "" }));
-                    const line = stdout.split("\n").find(l => /mpv/i.test(l));
-                    const wid = line ? line.split("|")[0].trim() : "";
-                    if (wid) {
-                      await execFileP("aerospace", ["focus", "--window-id", wid]).catch(() => {});
-                      await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]).catch(() => {});
-                    }
-                  }
-                }
-              } catch {}
-            })();
+            schedulePauseVisibility(paused);
           }
           _lastPolledPaused = paused;
           const histDur = historyMap.get(nowPlaying)?.duration || 0;

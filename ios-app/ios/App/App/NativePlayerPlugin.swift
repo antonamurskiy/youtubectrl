@@ -167,12 +167,24 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         self.playerLayer = layer
     }
 
+    // Cache of the last applied (x, y, w, h, visible) signature.
+    // Short-circuits redundant work on the JS rAF tick — even with
+    // a 30Hz JS-side throttle, identical frames arrive constantly
+    // when the panel is stationary.
+    private var lastSetLayerSig: String = ""
     @objc func setLayerFrame(_ call: CAPPluginCall) {
         let x = call.getDouble("x") ?? 0
         let y = call.getDouble("y") ?? 0
         let w = call.getDouble("w") ?? 1
         let h = call.getDouble("h") ?? 1
         let visible = call.getBool("visible") ?? true
+        // Round to 1px precision and compare; identical frames skip
+        // the main-queue dispatch entirely.
+        let sig = "\(Int(x.rounded())),\(Int(y.rounded())),\(Int(w.rounded())),\(Int(h.rounded())),\(visible)"
+        if sig == self.lastSetLayerSig {
+            call.resolve(["ok": true]); return
+        }
+        self.lastSetLayerSig = sig
         DispatchQueue.main.async {
             self.ensureLayer()
             guard let container = self.playerContainer, let layer = self.playerLayer,
@@ -518,8 +530,14 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
 
         let composition = AVMutableComposition()
 
+        // Kick off ALL four loads concurrently — both durations AND
+        // both track lists. Was: durations awaited first, then track
+        // loads serial. Each load is an HTTP probe RTT; doing them
+        // in parallel cuts startup by 1-2 RTTs on the DASH path.
         async let videoDuration: CMTime = videoAsset.load(.duration)
         async let audioDuration: CMTime = audioAsset.load(.duration)
+        async let videoTracksAsync = videoAsset.loadTracks(withMediaType: .video)
+        async let audioTracksAsync = audioAsset.loadTracks(withMediaType: .audio)
         let (vd, ad) = try await (videoDuration, audioDuration)
         NSLog("[NativePlayer] composition video dur=\(vd.seconds) audio dur=\(ad.seconds) hint=\(durationHint)")
 
@@ -540,8 +558,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         }
         let range = CMTimeRange(start: .zero, duration: duration)
 
-        let videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
-        let audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
+        let videoTracks = try await videoTracksAsync
+        let audioTracks = try await audioTracksAsync
         NSLog("[NativePlayer] loaded videoTracks=\(videoTracks.count) audioTracks=\(audioTracks.count)")
         guard let videoTrack = videoTracks.first, let audioTrack = audioTracks.first else {
             throw NSError(domain: "NativePlayer", code: -11, userInfo: [NSLocalizedDescriptionKey: "missing tracks: video=\(videoTracks.count) audio=\(audioTracks.count)"])

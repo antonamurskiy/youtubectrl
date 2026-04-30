@@ -65,6 +65,7 @@ export default function PhonePlayer({ send }) {
   const steadyDriftAtRef = useRef(0) // timestamp when drift entered the steady band
   const driftAtSteadyRef = useRef(0) // drift value when steady started
   const lastSeekRef = useRef(0) // timestamp of last live seek (cooldown)
+  const seekCountRef = useRef(0) // # of seeks since loading; first few use a tighter cooldown
   // Self-calibrating seek bias (ms). After each seek, AVPlayer's actual
   // landing point tends to undershoot the requested Date by a consistent
   // amount (HLS segment granularity + buffering). We learn the offset
@@ -153,9 +154,13 @@ export default function PhonePlayer({ send }) {
       readyAtRef.current = Date.now()
       // Re-trigger the play() since the native player was paused-or-
       // muted while hidden. Server bumps phoneActive + hides mpv.
-      NativePlayer.play().catch(() => {})
-      fetch('/api/watch-on-phone', { method: 'POST' }).catch(() => {})
-      autoStartPip()
+      NativePlayer.play().then(() => {
+        // Chain PiP autostart after play resolves so
+        // isPictureInPicturePossible has had a chance to flip true.
+        // Was firing immediately and falling into the 6s retry loop.
+        autoStartPip()
+      }).catch(() => {})
+      fetch('/api/watch-on-phone?warm=1', { method: 'POST' }).catch(() => {})
       setLoading(false)
       return
     }
@@ -217,13 +222,21 @@ export default function PhonePlayer({ send }) {
               // avoid a doubled audio track.
               muted: !phoneOnlyRef.current,
             }).then(() => {
-              // On native iOS AVPlayer is the real player; the HTML <video>
-              // is just a sized placeholder with no src and never fires
-              // loadedmetadata/play. Mark sync-ready once AVPlayer.load
-              // resolves so the drift loop can run.
               if (!phoneOnlyRef.current) {
                 readyRef.current = true
                 readyAtRef.current = Date.now()
+                // Seed _nativePdtMs immediately. Without this, the
+                // 250ms polling interval's first sample arrives
+                // 0–250ms after load resolves, deferring the first
+                // drift correction by that amount.
+                if (data.isLive) {
+                  NativePlayer.getLiveState().then((s) => {
+                    if (s && s.currentDateMs && s.currentDateMs > 0) {
+                      _nativePdtMs = s.currentDateMs
+                      _nativePdtAt = Date.now()
+                    }
+                  }).catch(() => {})
+                }
               }
               // Stamp the warm-player cache so a subsequent computer-
               // mode flip + sync flip can skip the yt-dlp re-fetch.
@@ -481,6 +494,7 @@ export default function PhonePlayer({ send }) {
         readyRef.current = false
         readyAtRef.current = 0
         lastSeekRef.current = 0
+        seekCountRef.current = 0
         calibOffsetRef.current = null
         driftSamplesRef.current = []
         fetch('/api/watch-on-phone', { method: 'POST' })
@@ -540,9 +554,13 @@ export default function PhonePlayer({ send }) {
       if (!syncUrlRef.current) syncUrlRef.current = pb.url
 
       const settleMs = Date.now() - readyAtRef.current
-      if (settleMs < 5000) {
-        setDrift(`settling ${((5000 - settleMs) / 1000).toFixed(0)}s...`)
-        return // don't interfere during first 5s
+      // 1.5s instead of 5s — the original 5s was overkill, blocking
+      // any drift correction for the first half of "tap → in-sync."
+      // 1.5s still lets the AVPlayer first frame land + PDT bind
+      // before we start seeking.
+      if (settleMs < 1500) {
+        setDrift(`settling ${((1500 - settleMs) / 1000).toFixed(1)}s...`)
+        return
       }
       if (!pb.playing || pb.paused) {
         if (isNativeIOS) {
@@ -679,7 +697,12 @@ export default function PhonePlayer({ send }) {
             // settle at a 0.3s residual forever because that's below
             // the old 0.5s trigger but above the 0.05s calibration
             // floor, so seekBias never updates.
-            const shouldSeek = (calibrated || Math.abs(smoothed) > 0.2) && sinceLastSeek > 2500
+            // First 3 seeks get a tighter 1s cooldown — the bias-
+            // learning loop converges faster when initial corrections
+            // can fire close together. After that, 2.5s prevents
+            // bouncing inside the AVPlayer jitter floor.
+            const cooldown = seekCountRef.current < 3 ? 1000 : 2500
+            const shouldSeek = (calibrated || Math.abs(smoothed) > 0.2) && sinceLastSeek > cooldown
             if (tick % 3 === 0 || shouldSeek || calibrated) {
               logTick({
                 state: 'drift',
@@ -710,6 +733,7 @@ export default function PhonePlayer({ send }) {
                 }).catch(() => {})
               })
               lastSeekRef.current = now
+              seekCountRef.current = (seekCountRef.current || 0) + 1
               driftSamplesRef.current = []
               calibPendingRef.current = true
               // Kick the local PDT cache forward so the next tick doesn't
@@ -1008,8 +1032,13 @@ export default function PhonePlayer({ send }) {
         NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
       }
     }
+    // 30Hz instead of 60Hz — every other rAF. The Swift side will
+    // also short-circuit on identical args, so this just halves the
+    // getBoundingClientRect-induced layout reflows from the React
+    // side. 30Hz tracking is plenty for human-eye smoothness.
+    let parity = 0
     const tick = () => {
-      sync()
+      if ((parity++ & 1) === 0) sync()
       if (alive) requestAnimationFrame(tick)
     }
     const id = requestAnimationFrame(tick)

@@ -101,12 +101,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterD
         UNUserNotificationCenter.current().setNotificationCategories(cats)
     }
 
-    // Foreground delivery — show the banner even while the app is in
-    // front, otherwise notifications silently route to history.
+    // Foreground delivery: SUPPRESS banners while the app is open.
+    // The user is already looking at the in-app feed / quick-reply
+    // UI, so a duplicate iOS banner is just noise. Background and
+    // lock-screen pushes still display normally because willPresent
+    // only fires when the app is in front.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
-        completionHandler([.banner, .sound, .list])
+        completionHandler([])
     }
 
     // Tap or action-button selection. Two flows:

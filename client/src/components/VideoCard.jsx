@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
 import { useUIStore } from '../stores/ui'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
@@ -87,7 +87,7 @@ function timeAgo(dateStr) {
   return `${Math.floor(months / 12)}y ago`
 }
 
-export default function VideoCard({ video, isPlaying, isActive, onHide }) {
+function VideoCardImpl({ video, isPlaying, isActive, onHide }) {
   const addToast = useUIStore(s => s.addToast)
   const gridStyle = useUIStore(s => s.gridStyle)
   const terminalOpen = useSyncStore(s => s.terminalOpen)
@@ -470,3 +470,11 @@ export default function VideoCard({ video, isPlaying, isActive, onHide }) {
     </>
   )
 }
+
+// Memoize so the grid's per-tick re-render (triggered by WS playback
+// broadcasts that touch `url`/`paused`) doesn't re-render all 24 cards.
+// React.memo with default shallow prop comparison is sufficient since
+// `video` is identity-stable from the fetch result and isPlaying/
+// isActive are scalars.
+const VideoCard = memo(VideoCardImpl)
+export default VideoCard
