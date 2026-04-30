@@ -154,6 +154,75 @@ Symptom of missing keepalive: "I paused from lock screen and mpv
 didn't hide on the Mac." (Server never saw the pause → mpv kept
 playing → auto-hide-on-pause never fired.)
 
+### APNs push (Claude prompts + kill-feed + health)
+
+Real-time push from the Mac to the iPhone for:
+- **Waiting prompts** — Claude asked a 1-of-N question. APNs banner
+  with the question as title, numbered options as body, and N action
+  buttons (`CLAUDE_PROMPT_2/3/4` categories registered at app
+  launch). Long-press the banner → tap a digit → answer lands in
+  Claude's prompt without bringing the app forward.
+- **Turn done** — Claude finished a turn (state idle from non-idle).
+  Throttled to one per 60s, body is the most recent feed line. Body
+  is prefixed with the source tmux window name (`[main] Bash(...)`).
+- **Health pings** — mpv crash with a known-bad reason
+  (`Members-only video`, `Age-restricted`, etc.) or cookie-export
+  failure. Title `Playback failed`.
+- **Per-line kill-feed pushes were dropped** — too noisy. The phone
+  only buzzes for things that need attention, not every Bash/Read.
+
+#### Setup
+
+- `.env` keys: `APNS_KEY_PATH`, `APNS_KEY_ID`, `APNS_TEAM_ID`,
+  `APNS_TOPIC` (bundle id), `APNS_PRODUCTION` (`false` for dev).
+- The .p8 auth key sits at `.apns-key.p8` (gitignored).
+- `App.entitlements` declares `aps-environment=development`.
+  `CODE_SIGN_ENTITLEMENTS = App/App.entitlements;` is set on both
+  Debug + Release in `project.pbxproj`. Free Personal Teams can't
+  sign Push Notifications — paid Apple Developer Program required.
+- Server uses `@parse/node-apn`. Tokens persist to
+  `.apns-tokens.json` (gitignored). Bad/Unregistered tokens
+  auto-purge.
+- See `APNS_SETUP.md` for the full activation checklist.
+
+#### Action-button delivery flow
+
+Action buttons use `options: [.foreground]` — iOS launches the app,
+JS does the actual `/api/tmux-select` + `/api/tmux-send` fetches via
+the live network context. **Tried `options: []` (silent) twice; both
+failed:**
+- `URLSession.shared` from `didReceive`: iOS killed the in-flight
+  request before reaching the local server.
+- `URLSessionConfiguration.background` (BackgroundTransferService):
+  the upload completed, but iOS retried it on app foreground (the
+  response wasn't delivered to the suspended app, so iOS treated
+  it as in-flight), double-sending the digit.
+
+The reliable path is `.foreground` action + JS fetch + a 5-second
+key-based dedupe in `usePushTap.js`'s `handleTap` so the
+`getPendingPushTap` cold-launch drain and the live `pushTap` event
+can't both submit. AppDelegate stashes `(tmuxWindow, answer)` in
+static vars + posts NSNotification `YTCtrlPushTap`; the plugin
+forwards as a `pushTap` event to JS; `getPendingPushTap` is the
+mount-time drain.
+
+#### Capacitor delegate war
+
+Capacitor's `@capacitor/local-notifications` plugin claims the
+`UNUserNotificationCenter.delegate` slot AND replaces our registered
+categories on plugin load, AFTER our `didFinishLaunchingWithOptions`
+returns. Without reclaiming, our `didReceive` never fires and the
+`CLAUDE_PROMPT_*` action buttons aren't shown. We re-set both in
+`applicationDidBecomeActive` — runs after all Capacitor plugins
+initialize, so we win the race.
+
+#### Foreground UX
+
+`willPresent` returns `[]` so APNs banners don't double up with the
+in-app feed/quick-reply when the app is in front. Background and
+lock-screen pushes still display normally (`willPresent` only fires
+when the app is foreground).
+
 ### Capacitor / Xcode project gotchas
 
 - **Plugin discovery in Capacitor 7 SPM mode**: plugins living inside a
@@ -248,7 +317,10 @@ YouTube Data API quota is 10,000 units/day. Search costs 100 units per call. Alw
 
 ### mpv Playback
 
-- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies=cookies.txt` + `--audio-samplerate=48000` + `--autosync=30` (prevents A/V drift on long playback)
+- Spawned with `--input-ipc-server=/tmp/mpv-socket` + `--keep-open` + `--ytdl-raw-options=cookies=cookies.txt` + `--autosync=30` + `--no-keepaspect-window` + `--auto-window-resize=no`
+- **Window stays put across loadfile.** `--no-keepaspect-window` + `--auto-window-resize=no` prevent mpv from resizing the window when a new video has a different aspect ratio. Without these flags, switching from a 16:9 to a 21:9 (or vertical short) made the mpv window snap to the new aspect, looking like a "jump". Aerospace state would also drift if we re-applied `aerospace fullscreen --no-outer-gaps on` after every loadfile (some builds toggled fullscreen off on the second invocation), so /api/play no longer touches window state on warm-mpv loadfile — `windowMode` persists in module scope and the user re-applies via the UI if drift happens.
+- **`/api/play` skips the live-status probe** when the frontend explicitly passes `isLive` (always does — `playVideo.js` sends `!!(video.isLive || video.live)`). Was running `yt-dlp --print live_status URL` (~3-8s) on every video click, dominating perceived latency. Now only runs when `clientIsLive === undefined && !knownVod && !isRumble`. `knownVod` = `historyMap.get(url)?.duration > 0` (already played to completion, so VOD).
+- **mpv crash detection** parses yt-dlp/mpv stderr in the exit handler for known-bad failure modes (`Members-only video`, `Age-restricted`, `Region-blocked`, `Rate-limited`, etc.) and emits both an APNs `Playback failed` push and an in-app `claude-feed` toast. Was previously only pushing on signal-killed or <5s exits, missing the common "loaded for 60s then yt-dlp errored" case.
 - Unix domain socket sends JSON commands: `{"command": ["get_property", "time-pos"]}`
 - mpv keeps the socket open — read first complete JSON line with `request_id`, then close
 - New videos loaded via `loadfile` IPC command (reuses existing window/position) — only spawns new mpv if no existing player
@@ -442,6 +514,15 @@ For `isLive: true` (or `post_live`):
 ### Phone Mode (Watch on Phone)
 
 - Phone plays the same video as the desktop player, synced via mpv position
+- **Startup latency** has been heavily tuned — the loop from "tap sync" to "in-sync with mpv" was ~12s, now ~3s warm / ~6s cold:
+  - Server `/api/watch-on-phone` reads mpv state in parallel (Promise.all over `time-pos`/`file-format`/`duration`/`stream-path`); was 5 serial IPC round-trips.
+  - `?warm=1` query param short-circuits the server-side yt-dlp resolve when the JS warm cache already has a valid AVPlayer item — server just flips `phoneActive=true` + hides mpv.
+  - `_watchOnPhoneCache` stores `isLive=false` alongside resolved URLs so re-engages skip the ~5-8s `yt-dlp --print is_live` fallback probe.
+  - PhonePlayer settle gate cut from 5s to 1.5s — the original was overkill, blocking the first drift correction.
+  - First-3-seek cooldown tightened from 2.5s to 1s — initial bias-learning needs to fire close together to converge.
+  - `_nativePdtMs` seeded immediately on `NativePlayer.load().then(...)` for live streams instead of waiting for the 250ms polling interval's first sample.
+  - `autoStartPip()` chained after `play().then(...)` so it doesn't fall into the 6s `isPictureInPicturePossible` retry loop.
+  - DASH composition track loads run parallel with duration loads via `async let` (was 2 RTTs serial).
 - **All streams: Mac uses mpv** — VODs play directly; live + post_live play via streamlink piped into mpv (see Live stream DVR section). Phone gets the upstream YouTube manifest URL directly (no proxy).
 - **Unified sync path (VOD + live)**:
   - Phone gets direct YouTube URL from `yt-dlp --get-url` (MP4 for VODs, HLS for live)

@@ -1801,16 +1801,19 @@ app.post("/api/play", async (req, res) => {
   }
   const isRumble = url.startsWith("https://rumble.com/");
 
-  // Detect live streams server-side if frontend didn't flag it.
-  // Also detect `post_live` — a stream that just ended but hasn't yet
-  // been re-encoded by YouTube into DASH/progressive formats. In that
-  // window (can be hours), the only available formats are HLS m3u8.
-  // mpv+ytdl_hook routes HLS through ffmpeg's single-threaded demuxer
-  // which stutters on 1s-segment streams the same way live mode did,
-  // so we route post_live through streamlink too.
   let isLive = clientIsLive;
   let isPostLive = false;
-  if (!isLive && !isRumble) {
+  // Probe yt-dlp for live_status ONLY when we're genuinely uncertain.
+  // The frontend feeds isLive from the YouTube data API (videoRenderer
+  // / lockupViewModel), so trusting clientIsLive=false is safe. History
+  // is also a safe negative proof — anything with a saved duration
+  // played to completion at some point so it's VOD.
+  // Was: ran an unconditional ~3-8s `yt-dlp --print live_status` on
+  // every video click that didn't explicitly arrive with isLive=true,
+  // dominating the user-visible play latency.
+  const knownVod = !!(historyMap.get(url)?.duration);
+  const needLiveProbe = clientIsLive === undefined && !knownVod && !isRumble;
+  if (needLiveProbe) {
     try {
       const { stdout } = await execFileP("yt-dlp", ["--cookies", COOKIES_FILE, "--print", "live_status", url], { timeout: 10000 });
       const status = stdout.trim();
@@ -1954,19 +1957,14 @@ app.post("/api/play", async (req, res) => {
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
-        // Re-apply window mode immediately after loadfile (don't wait
-        // for video to load). Async + parallel — was 3 execSync calls
-        // blocking the event loop.
-        if (windowMode === "maximize") {
-          (async () => {
-            try {
-              const wid = await getMpvWindowId();
-              if (!wid) return;
-              await execFileP("aerospace", ["focus", "--window-id", wid]);
-              await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]);
-            } catch {}
-          })();
-        }
+        // No window-mode re-apply on warm-mpv loadfile. mpv with
+        // --no-keepaspect-window stays put across video switches, and
+        // re-running `aerospace fullscreen --no-outer-gaps on` on a
+        // window that's already aerospace-fullscreen could toggle it
+        // off in some aerospace builds (user reported maximize→
+        // floating on switch). Mode persists in module-scope
+        // `windowMode`; if aerospace state actually drifted, the
+        // user can manually re-maximize via the UI.
         res.json({ ok: true });
         const expectedUrl = url;
         const oldDuration = await mpvCommand(["get_property", "duration"]).then(r => r?.data || 0).catch(() => 0);
@@ -2019,30 +2017,13 @@ app.post("/api/play", async (req, res) => {
               }
             }
           } catch {}
-          // Re-apply window mode again after video loads (aspect ratio change can disrupt it)
-          try {
-            const wid = await getMpvWindowId();
-            if (wid) {
-              if (windowMode === "maximize") {
-                await execFileP("aerospace", ["focus", "--window-id", wid]);
-                await execFileP("aerospace", ["fullscreen", "--no-outer-gaps", "on", "--window-id", wid]);
-              } else if (windowMode === "floating") {
-                try {
-                  const { stdout: posStr } = await execFileP("osascript", ["-e", 'tell application "System Events" to get position of first window of process "mpv"']);
-                  const [wx] = posStr.trim().split(", ").map(Number);
-                  const screens = getScreenOrigins();
-                  const screen = screens.find(s => wx >= s.x && wx < s.x + s.w) || screens.find(s => s.isMain) || screens[0];
-                  const w = Math.round(screen.w * 0.38);
-                  const h = Math.round(w * 9 / 16);
-                  const posX = screen.x + screen.w - w - 12;
-                  const posY = screen.y + 38;
-                  await execFileP("osascript", ["-e", `tell application "System Events" to tell process "mpv" to set size of first window to {${w}, ${h}}`]);
-                  await execFileP("osascript", ["-e", `tell application "System Events" to tell process "mpv" to set position of first window to {${posX}, ${posY}}`]);
-                } catch {}
-                await floatTopRight(wid);
-              }
-            }
-          } catch {}
+          // No re-apply on warm-mpv loadfile — with
+          // --no-keepaspect-window/--auto-window-resize=no, mpv won't
+          // resize the window for the new video's aspect, so the
+          // window stays where it was. Earlier code did an osascript
+          // resize+reposition here that caused the visible "jump"
+          // between videos. Maximize/floating state was already
+          // applied right after loadfile if needed.
           try {
             const t = await mpvCommand(["get_property", "media-title"]);
             // Live streams playing our proxy report the URL basename
@@ -2084,6 +2065,12 @@ app.post("/api/play", async (req, res) => {
     // "initializes" without DisplayLink, so it never fails to cascade.
     // displayUnavailable was computed at the top of this handler.
     const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`, `--video-sync=display-resample`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
+      // Stop mpv from resizing the window on every loadfile to match
+      // the new video's intrinsic aspect — that was the visible "jump"
+      // when switching videos. With --no-keepaspect-window the window
+      // keeps its current size + position; mpv renders inside it
+      // (with letterbox/pillarbox if the aspect differs).
+      `--no-keepaspect-window`, `--auto-window-resize=no`,
       displayUnavailable ? `--vo=null` : `--vo=gpu-next`];
     // Pin media-title so live streams don't report "hls-live.m3u8" etc.
     // See setMpvForceTitle for context — sanitize to strip control
@@ -2250,15 +2237,33 @@ app.post("/api/play", async (req, res) => {
         const tail = (child._stderr || "").slice(-2048);
         console.error(`mpv exited abnormally: code=${code} signal=${signal} after ${Math.round(elapsed/1000)}s`);
         if (tail) console.error(`mpv stderr tail:\n${tail}`);
-        // Persist the tail to a file for post-mortem debugging.
         try { fs.writeFileSync("/tmp/ytctl-mpv-crash.log", `${new Date().toISOString()} code=${code} signal=${signal}\n${tail}\n`); } catch {}
-        // Lock-screen ping so an mpv crash doesn't go unnoticed when
-        // you're not at the Mac. Skip for short normal-quit intervals
-        // — only ping when the exit is unexpected (signal-killed, or
-        // crashed quickly with a non-zero code).
-        if (signal || elapsed < 5000) {
-          const firstStderrLine = (tail.split("\n").find(l => l.trim()) || "").slice(0, 120);
-          pushApnsHealth("mpv crashed", `${signal ? `signal=${signal}` : `code=${code}`}${firstStderrLine ? `\n${firstStderrLine}` : ""}`);
+        // Extract a human-friendly cause from the yt-dlp/mpv stderr.
+        // These patterns cover the routine "video won't play" reasons
+        // (members-only, age-gated, region-blocked, takedown, private,
+        // sign-in walls). Match wins regardless of exit duration —
+        // the previous gate skipped 66s-old crashes from members-only
+        // videos because elapsed wasn't <5s.
+        let knownReason = "";
+        if (/members-only/i.test(tail)) knownReason = "Members-only video";
+        else if (/age.?restrict|sign in to confirm/i.test(tail)) knownReason = "Age-restricted (needs sign-in)";
+        else if (/Video unavailable|This video is private/i.test(tail)) knownReason = "Video unavailable";
+        else if (/Sign in to|requires payment/i.test(tail)) knownReason = "Requires sign-in / payment";
+        else if (/blocked it on copyright/i.test(tail)) knownReason = "Blocked on copyright grounds";
+        else if (/not available in your country/i.test(tail)) knownReason = "Region-blocked";
+        else if (/HTTP Error 4(?:03|29)/i.test(tail)) knownReason = "Rate-limited or forbidden";
+        // Push if signal-killed, quick crash, OR we recognized the
+        // failure mode — the user wants to know the video won't play.
+        if (signal || elapsed < 5000 || knownReason) {
+          const firstStderrLine = (tail.split("\n").find(l => /\S/.test(l)) || "").slice(0, 160);
+          const body = knownReason || (signal ? `signal=${signal}` : `code=${code}`);
+          pushApnsHealth("Playback failed", `${body}${!knownReason && firstStderrLine ? `\n${firstStderrLine}` : ""}`);
+          // Also broadcast as an in-app toast via WS — same channel
+          // the kill-feed uses. Reuses the claude-feed message type
+          // since clients already render those as fading banners.
+          if (knownReason) {
+            broadcastClaudeFeed([`Playback: ${knownReason}`]);
+          }
         }
       }
       if (mpvProcess === child) {
