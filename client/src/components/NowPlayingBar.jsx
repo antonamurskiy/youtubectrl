@@ -239,7 +239,7 @@ function AudioOutputButton() {
             })}
             {/* Volume — full-width scrubber, matches secret menu size-area
                 pattern. Mute toggle on the left, fill bar + pct label. */}
-            <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'stretch', borderTop: '1px solid rgba(255,255,255,0.35)' }}>
               <button
                 onClick={() => {
                   hapticThump()
@@ -770,6 +770,24 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
     if (target === 'computer') {
       if (sync.phoneOpen) fetch('/api/stop-phone-stream', { method: 'POST' }).catch(() => {})
       if (isNativeIOS && sync.pipActive) NativePlayer.stopPip().catch(() => {})
+      // Hide the AVPlayer's inline layer (positioned over the WebView
+      // by the rAF sync effect) so it doesn't keep showing video over
+      // the now-unmounted React panel. Don't fully stop() — that nukes
+      // the AVPlayer + remote-command targets, and the next load()
+      // after stop() goes wrong (silent audio + lock-screen tied to
+      // a torn-down state). Hiding leaves the player in standby for
+      // a fast re-mount when the user toggles back to sync.
+      if (isNativeIOS) {
+        // Just hide the AVPlayer's inline layer — don't pause or clear
+        // now-playing. Pausing set `expectedPaused=true` on the native
+        // side; the next NativePlayer.load() (when user re-engages
+        // sync) calls play() but autoplay then races with the rate
+        // observer's expectedPaused mismatch, sometimes leaving the
+        // player paused. Leaving it muted-and-running in sync mode is
+        // free — no audio leaks (muted) and no visible video (layer
+        // hidden), and the next mode flip re-uses the warm player.
+        NativePlayer.setLayerFrame({ x: 0, y: 0, w: 1, h: 1, visible: false }).catch(() => {})
+      }
       sync.setPhoneOpen(false)
       return
     }

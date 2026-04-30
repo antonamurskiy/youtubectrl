@@ -652,7 +652,13 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   flex-direction: column;
   padding: 10px 12px;
   padding-bottom: calc(8px + var(--safe-bottom));
-  background: var(--bg);
+  /* Frosted glass: translucent --bg + heavy blur on what's behind.
+   * color-mix keeps the bar tinted with the active theme (gruvbox or
+   * the maria-proximity red wash) but lets ~25% of the underlying
+   * page show through. iOS Safari needs the -webkit- prefix. */
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  -webkit-backdrop-filter: blur(24px) saturate(140%);
+  backdrop-filter: blur(24px) saturate(140%);
   position: fixed;
   bottom: 0;
   left: 0;
@@ -668,6 +674,11 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   -webkit-transform-style: preserve-3d;
   animation: np-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: transform, opacity;
+}
+/* Browsers without backdrop-filter support fall through to a solid
+ * --bg so there's no see-through-with-no-blur regression. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .now-playing { background: var(--bg); }
 }
 .now-playing.np-exit {
   animation: np-exit 180ms cubic-bezier(0.4, 0, 1, 1) both;
@@ -687,8 +698,12 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   align-items: center;
   width: calc(100% + 24px);
   margin: 0 -12px;
-  border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
+  /* Text-tinted, faded. var(--border) (#303030) was lost against the
+   * frosted bar; pure white was too loud. color-mix keeps the border
+   * tinted with the active theme's text color (cream / peach during
+   * proximity) so it doesn't fight the palette. */
+  border-top: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
+  border-bottom: 1px solid color-mix(in srgb, var(--text) 25%, transparent);
   padding: 4px 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -726,6 +741,10 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   gap: 8px;
   width: 100%;
   min-width: 0;
+  /* Breathing room between the progress bar above and the thumbnail.
+   * The bar's flex `gap: 4px` was too tight against the new frosted
+   * styling — the thumbnail looked stacked onto the scrubber. */
+  margin-top: 8px;
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;

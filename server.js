@@ -3836,18 +3836,36 @@ app.post("/api/watch-on-phone", async (_req, res) => {
       });
     }
 
-    const { stdout } = await execFileP(
-      "yt-dlp",
-      // Prefer DASH 1080p (composed client-side on native iOS) — the
-      // generic "bestvideo ≤ 1080p mp4 + bestaudio m4a" selector picks
-      // whichever itag is available (137 for 1080p30, 299 for 1080p60,
-      // or 136 for 720p-only videos). Falls back to progressive 22 for
-      // older videos without DASH. Composition is crash-guarded on the
-      // native side (see NativePlayerPlugin.buildCompositionItem).
-      ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", nowPlaying],
-      { timeout: 15000 }
-    );
-    const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
+    // Cached yt-dlp resolution. The DASH URLs returned by yt-dlp stay
+    // valid on YouTube's CDN for hours, so a short server-side cache
+    // collapses the 5-15s yt-dlp call into a few-ms cache hit on
+    // re-engages of sync mode. 5 min TTL balances "fast enough that
+    // toggling modes doesn't sting" against "old enough that any
+    // googlevideo invalidation has already played out."
+    const cached = _watchOnPhoneCache.get(nowPlaying);
+    let urls;
+    if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
+      urls = cached.urls;
+    } else {
+      const { stdout } = await execFileP(
+        "yt-dlp",
+        // Prefer DASH 1080p (composed client-side on native iOS) — the
+        // generic "bestvideo ≤ 1080p mp4 + bestaudio m4a" selector picks
+        // whichever itag is available (137 for 1080p30, 299 for 1080p60,
+        // or 136 for 720p-only videos). Falls back to progressive 22 for
+        // older videos without DASH. Composition is crash-guarded on the
+        // native side (see NativePlayerPlugin.buildCompositionItem).
+        ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", nowPlaying],
+        { timeout: 15000 }
+      );
+      urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
+      _watchOnPhoneCache.set(nowPlaying, { urls, at: Date.now() });
+      // Bound the cache to keep memory tame across long sessions.
+      if (_watchOnPhoneCache.size > 50) {
+        const oldest = _watchOnPhoneCache.keys().next().value;
+        _watchOnPhoneCache.delete(oldest);
+      }
+    }
     const mpvDur = await mpvCommand(["get_property", "duration"]).catch(() => null);
     const durationSec = mpvDur?.data || historyMap.get(nowPlaying)?.duration || 0;
     if (urls.length >= 2) {
@@ -4244,6 +4262,12 @@ app.get("/api/livechat", async (req, res) => {
 
 // Storyboard (seek preview thumbnails) — parsed from yt-dlp
 const _storyboardCache = new Map(); // videoId -> { url, cols, rows, interval } — capped at 50
+// Caches yt-dlp's resolved DASH/MP4 stream URLs for /api/watch-on-phone.
+// Hit rate matters because re-engaging sync mode otherwise re-invokes
+// yt-dlp (5-15s) on every flip. nowPlaying URL → { urls, at }, capped
+// at 50 entries with a 5-min TTL. Cleared in /api/play below to avoid
+// serving stale URLs across a video change.
+const _watchOnPhoneCache = new Map();
 const STORYBOARD_CACHE_MAX = 50;
 app.get("/api/storyboard", async (req, res) => {
   const { videoId } = req.query;

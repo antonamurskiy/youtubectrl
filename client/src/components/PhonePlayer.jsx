@@ -6,6 +6,36 @@ import { useUIStore } from '../stores/ui'
 import { isNativeIOS, NativePlayer } from '../native/player'
 import { tick as hapticTick, thump as hapticThump } from '../haptics'
 
+// Module-level cache so re-mounting PhonePlayer (toggling sync mode
+// off/on) doesn't re-run yt-dlp. Sync→computer→sync used to take
+// 5-15s round-trip on YouTube DASH because the new mount fetched
+// /api/watch-on-phone fresh. Now: if the cached entry matches the
+// current pb.url + mode and was loaded <2 min ago, reuse the in-
+// memory AVPlayer state. yt-dlp's googlevideo URLs typically stay
+// valid much longer than 2 min, but stay conservative since stale
+// URLs produce 403s that are confusing to debug.
+const NATIVE_LOAD_CACHE_TTL_MS = 2 * 60 * 1000
+let _nativeLoadCache = null  // { pbUrl, phoneOnly, at }
+
+// Auto-engage PiP after entering sync mode. Retries until the
+// AVPictureInPictureController reports isPictureInPicturePossible
+// (load + first frame must land first). Bails if PiP is already
+// active or if the user closed sync mode in the meantime.
+function autoStartPip() {
+  if (!isNativeIOS || !NativePlayer.available) return
+  let tries = 0
+  const tick = () => {
+    tries += 1
+    if (tries > 30) return  // ~6s ceiling
+    if (!useSyncStore.getState().phoneOpen) return
+    if (useSyncStore.getState().pipActive) return
+    NativePlayer.startPip().then(() => {}).catch(() => {
+      setTimeout(tick, 200)
+    })
+  }
+  setTimeout(tick, 300)
+}
+
 // Native AVPlayer position cache — polled on a separate interval so the
 // sync loop can read it without awaiting every tick.
 let _nativePos = 0
@@ -99,6 +129,36 @@ export default function PhonePlayer({ send }) {
       fetch('/api/phone-only-resume', { method: 'POST' }).catch(() => {})
       return
     }
+    // Native iOS warm-player fast path. Re-engaging sync mode within
+    // 2 min of disengaging it: the AVPlayer is still loaded with the
+    // right URL (we only hid its layer when going to computer mode),
+    // so skip the slow yt-dlp re-fetch and just unhide. Server-side
+    // we still want phoneActive=true and mpv hidden — fire that POST
+    // in the background but don't block on it.
+    const pbUrlNow = usePlaybackStore.getState().url
+    if (
+      isNativeIOS && NativePlayer.available && !phoneOnlyUrl &&
+      _nativeLoadCache &&
+      _nativeLoadCache.pbUrl === pbUrlNow &&
+      _nativeLoadCache.phoneOnly === false &&
+      (Date.now() - _nativeLoadCache.at) < NATIVE_LOAD_CACHE_TTL_MS
+    ) {
+      // Restore streamUrl + isLive so the rAF setLayerFrame loop sees
+      // a loaded state and tells iOS to show the layer. Without this,
+      // the layer stays isHidden=true and the user sees the React
+      // placeholder div with no video.
+      setStreamUrl(_nativeLoadCache.url)
+      setIsLive(_nativeLoadCache.isLive || false)
+      readyRef.current = true
+      readyAtRef.current = Date.now()
+      // Re-trigger the play() since the native player was paused-or-
+      // muted while hidden. Server bumps phoneActive + hides mpv.
+      NativePlayer.play().catch(() => {})
+      fetch('/api/watch-on-phone', { method: 'POST' }).catch(() => {})
+      autoStartPip()
+      setLoading(false)
+      return
+    }
     setLoading(true)
     phoneOnlyRef.current = !!phoneOnlyUrl
     // Clear loadedUrlRef until the fetch actually succeeds — otherwise an aborted/failed
@@ -165,6 +225,19 @@ export default function PhonePlayer({ send }) {
                 readyRef.current = true
                 readyAtRef.current = Date.now()
               }
+              // Stamp the warm-player cache so a subsequent computer-
+              // mode flip + sync flip can skip the yt-dlp re-fetch.
+              _nativeLoadCache = {
+                pbUrl: usePlaybackStore.getState().url,
+                phoneOnly: phoneOnlyRef.current,
+                url,
+                isLive: !!data.isLive,
+                at: Date.now(),
+              }
+              // Sync mode shows video via PiP, not the inline mini-
+              // player panel. Auto-engage PiP once the AVPlayer has
+              // first-frame.
+              if (!phoneOnlyRef.current) autoStartPip()
             }).catch(() => {})
           }
 

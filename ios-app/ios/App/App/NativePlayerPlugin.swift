@@ -90,6 +90,12 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private var playerLayer: AVPlayerLayer?
     private var playerContainer: UIView?
     private var pipController: AVPictureInPictureController?
+    // Set when installPipController() declined to recreate because
+    // PiP was active. The delegate's
+    // pictureInPictureControllerDidStopPictureInPicture handler reads
+    // this and triggers a deferred reinstall so auto-PiP re-engages
+    // on the next background.
+    private var pipReinstallPending: Bool = false
     private var timeObserver: Any?
     private var rateObserver: NSKeyValueObservation?
     private var currentArtworkUrl: String?
@@ -161,7 +167,25 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                   let wv = self.bridge?.webView else {
                 call.resolve(["ok": false]); return
             }
-            if visible {
+            // Use isHidden, NOT off-screen frame. Moving the container to
+            // (-9999, -9999) made iOS treat the AVPlayerLayer as no longer
+            // in-view, which disabled
+            // canStartPictureInPictureAutomaticallyFromInline. After flipping
+            // back to visible, auto-PiP didn't re-register and the user had
+            // to start PiP manually. isHidden keeps the layer registered with
+            // the PiP system; auto-PiP fires correctly the next time the
+            // app backgrounds.
+            // While PiP is active, the AVPlayerLayer's content is
+            // owned by the PiP window. Showing the inline container
+            // makes iOS auto-stop PiP and reclaim the layer. Suppress
+            // visible=true requests during active PiP so the user
+            // sees PiP, not the inline mini-player, when toggling
+            // sync mode while PiP is up.
+            let pipActive = self.pipController?.isPictureInPictureActive == true
+            let wantVisible = visible && !pipActive
+            let wasHidden = container.isHidden
+            container.isHidden = !wantVisible
+            if wantVisible {
                 // getBoundingClientRect returns coordinates in the WebView's
                 // viewport. Convert to the parent view's coordinate space by
                 // adding the WebView's origin.
@@ -172,13 +196,25 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                     width: max(1, w),
                     height: max(1, h)
                 )
-            } else {
-                container.frame = CGRect(x: -9999, y: -9999, width: 1, height: 1)
             }
             CATransaction.begin()
             CATransaction.setDisableActions(true)
             layer.frame = container.bounds
             CATransaction.commit()
+            // Reinstall the PiP controller on hidden→visible transitions.
+            // iOS treats canStartPictureInPictureAutomaticallyFromInline
+            // as one-shot — after the layer was hidden, auto-PiP doesn't
+            // re-engage on next background. Recreating fully re-registers
+            // the layer. Defer one runloop turn so the layer's frame +
+            // host visibility have actually committed before the new
+            // controller captures them — without this, auto-PiP silently
+            // refuses to fire on the next background and the user has to
+            // tap the PiP button manually.
+            if wasHidden && wantVisible {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.installPipController()
+                }
+            }
             call.resolve(["ok": true])
         }
     }
@@ -204,7 +240,22 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     private func installPipController() {
         guard let layer = playerLayer,
               AVPictureInPictureController.isPictureInPictureSupported() else { return }
-        if pipController != nil { return }
+        // Don't tear down a controller that's currently driving an
+        // active PiP session — that kills the live PiP. Defer the
+        // reinstall to when PiP ends (delegate hook) so auto-PiP
+        // still re-registers on the layer-was-hidden path.
+        if let existing = pipController, existing.isPictureInPictureActive {
+            pipReinstallPending = true
+            return
+        }
+        pipReinstallPending = false
+        // Reinstall on each call. iOS empirically treats
+        // canStartPictureInPictureAutomaticallyFromInline as
+        // one-shot per controller lifecycle — after the layer was
+        // hidden and reshown, the existing controller won't auto-PiP
+        // on next background. Recreating fully re-registers the layer.
+        pipController?.delegate = nil
+        pipController = nil
         let ctrl = AVPictureInPictureController(playerLayer: layer)
         ctrl?.delegate = self
         if #available(iOS 14.2, *) {
@@ -986,6 +1037,14 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         // PiP is still killed by onForeground.
         self.userStartedPip = false
         notifyListeners("pipStopped", data: [:])
+        // Honor a deferred reinstall request that came in while PiP
+        // was active. Without this, auto-PiP wouldn't re-engage on
+        // the next background after a sync→computer→sync flip that
+        // happened during an active PiP session.
+        if self.pipReinstallPending {
+            self.pipReinstallPending = false
+            DispatchQueue.main.async { [weak self] in self?.installPipController() }
+        }
     }
 }
 
