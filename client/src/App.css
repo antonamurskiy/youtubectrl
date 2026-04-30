@@ -1545,7 +1545,10 @@ body.keyboard-open .fab-stack { bottom: 408px; }
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 3px;
+  /* No `gap` — each line carries its own animated margin-bottom so
+   * the inter-line space can collapse along with the bubble at the
+   * end of fade-out. With `gap`, expired lines leave a residual
+   * blank gap that visually jumps when DOM removal lands. */
   padding: 0 12px;
   pointer-events: none;
 }
@@ -1563,18 +1566,33 @@ body.keyboard-open .fab-stack { bottom: 408px; }
   padding: 6px 10px;
   border: 1px solid var(--text-dim);
   max-width: 92vw;
+  margin-bottom: 3px;
+  /* Generous max-height so a 3-4 line wrapped bubble doesn't get
+   * clipped during the steady-state portion of the animation. */
+  max-height: 240px;
   white-space: normal;
   word-break: break-word;
   text-align: left;
-  animation: claude-feed-in 200ms ease-out, claude-feed-fade 5s linear forwards;
+  overflow: hidden;
+  /* Total = 3500ms.
+   *  0–57% (2000ms): steady at full opacity + size
+   *  57–86% (1000ms): opacity fades to 0 at full size — the bubble
+   *                   disappears visually before its space changes
+   *  86–100% (500ms): the now-invisible bubble's vertical space
+   *                   collapses, sliding lines below up.
+   * The user shouldn't see the bubble itself shrinking — only the
+   * column easing upward as space recovers from a transparent
+   * placeholder. */
+  animation: claude-feed-in 200ms ease-out, claude-feed-fade 3500ms ease-in-out forwards;
 }
 @keyframes claude-feed-in {
   from { opacity: 0; transform: translateY(-8px); }
   to   { opacity: 1; transform: translateY(0); }
 }
 @keyframes claude-feed-fade {
-  0%, 60% { opacity: 1; }
-  100%    { opacity: 0; }
+  0%, 57%  { opacity: 1; max-height: var(--init-h, 240px); margin-bottom: 3px; padding-top: 6px; padding-bottom: 6px; border-width: 1px; }
+  86%      { opacity: 0; max-height: var(--init-h, 240px); margin-bottom: 3px; padding-top: 6px; padding-bottom: 6px; border-width: 1px; }
+  100%     { opacity: 0; max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; border-width: 0; }
 }
 
 .claude-quick-reply {

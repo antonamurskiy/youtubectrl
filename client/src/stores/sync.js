@@ -41,7 +41,8 @@ export const useSyncStore = create((set) => ({
     return { claudeFeed: next.slice(-12) }
   }),
   pruneClaudeFeed: () => set((s) => {
-    const cutoff = Date.now() - 5000
+    // 3500ms matches the .claude-feed-line animation total.
+    const cutoff = Date.now() - 3500
     const kept = s.claudeFeed.filter((l) => l.ts > cutoff)
     return kept.length === s.claudeFeed.length ? {} : { claudeFeed: kept }
   }),
