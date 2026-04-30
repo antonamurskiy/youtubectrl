@@ -1544,8 +1544,8 @@ body.keyboard-open .fab-stack { bottom: 408px; }
 body.keyboard-open .claude-quick-reply { bottom: 498px; }
 
 .claude-quick-reply button {
-  height: 36px;
-  padding: 0 10px;
+  min-height: 56px;
+  padding: 8px 18px;
   background: rgba(26,26,46,0.7);
   border: 1px solid rgba(177,98,134,0.6);
   color: #f0c0e0;

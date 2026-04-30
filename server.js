@@ -345,34 +345,36 @@ const HEADPHONE_NAME_RE = /airpods|blackshark/i;
 let _lastAudioRoute = null;
 let _lastAudioRouteAt = 0;
 
-// When disconnecting headphones, belt-and-suspenders: mute the Mac's
-// built-in speakers + LG display audio so that if anything reroutes
-// there (macOS auto-fallback, random app), it doesn't blast through.
-// osascript's `set volume output muted true` only touches the
-// currently-selected output, so we switch to each non-headphone
-// output in turn and mute it.
+// Mute every non-headphone output device via CoreAudio's per-device
+// kAudioDevicePropertyMute. Doesn't change the active output, so it
+// can run on a heartbeat without disrupting anything routed to
+// AirPods. Handles the case where Slack / a notification picks the
+// built-in or LG display as its output independent of the system
+// default — those devices stay muted regardless.
 async function muteNonHeadphoneOutputs() {
   try {
-    const [listR, currentR] = await Promise.all([
-      execP("SwitchAudioSource -a -t output"),
-      execP("SwitchAudioSource -c -t output").catch(() => ({ stdout: "" })),
-    ]);
-    const prev = currentR.stdout.trim();
-    const outputs = listR.stdout.split("\n").map(s => s.trim()).filter(Boolean);
+    const { stdout } = await execP("SwitchAudioSource -a -t output");
+    const outputs = stdout.split("\n").map(s => s.trim()).filter(Boolean);
     const targets = outputs.filter(o => !HEADPHONE_NAME_RE.test(o));
-    for (const o of targets) {
+    for (const name of targets) {
       try {
-        await execP(`SwitchAudioSource -s ${JSON.stringify(o)}`);
-        await execP(`osascript -e 'set volume output muted true'`);
+        await execFileP(AUDIO_MUTE_BIN, [name, "true"], { timeout: 3000 });
       } catch {}
     }
-    // Leave the active output on the original (typically AirPods);
-    // if that device is gone post-disconnect, macOS auto-fallback
-    // will land on one of the targets we just muted.
-    if (prev && prev !== targets[targets.length - 1]) {
-      try { await execP(`SwitchAudioSource -s ${JSON.stringify(prev)}`); } catch {}
-    }
   } catch {}
+}
+// Heartbeat: re-assert mute on built-in + LG outputs every 15s.
+// macOS or other apps can flip kAudioDevicePropertyMute back to 0
+// (e.g. Slack ducking, BT route changes, system audio prefs).
+// Idempotent so the cost of a no-op iteration is one Swift binary
+// invocation per output (~50ms each).
+let _muteHeartbeatId = null;
+function startMuteHeartbeat() {
+  if (_muteHeartbeatId) return;
+  // First pass immediately so the user gets silence on server boot
+  // without waiting 15s.
+  muteNonHeadphoneOutputs();
+  _muteHeartbeatId = setInterval(muteNonHeadphoneOutputs, 15000);
 }
 
 async function routeAudio(target) {
@@ -4661,6 +4663,7 @@ const FINDMY_OCR_SWIFT = path.join(__dirname, "scripts", "ocr.swift");
 const FINDMY_PIN_SWIFT = path.join(__dirname, "scripts", "find-pin.swift");
 const FINDMY_ROAD_WALK_SWIFT = path.join(__dirname, "scripts", "road-walk.swift");
 const FINDMY_CLICK_SWIFT = path.join(__dirname, "scripts", "click-window-point.swift");
+const AUDIO_MUTE_SWIFT = path.join(__dirname, "scripts", "audio-mute.swift");
 // Pre-compile swift sources to native binaries on boot — `swift <src>`
 // re-JITs from source on every invocation (~5-10s) which can wedge
 // API requests under load. `swiftc` once produces a fast-launch bin.
@@ -4668,11 +4671,13 @@ const FINDMY_OCR_BIN = path.join(__dirname, "bin", "findmy-ocr");
 const FINDMY_PIN_BIN = path.join(__dirname, "bin", "findmy-pin");
 const FINDMY_ROAD_WALK_BIN = path.join(__dirname, "bin", "findmy-road-walk");
 const FINDMY_CLICK_BIN = path.join(__dirname, "bin", "findmy-click");
+const AUDIO_MUTE_BIN = path.join(__dirname, "bin", "audio-mute");
 for (const [src, bin, label] of [
   [FINDMY_OCR_SWIFT, FINDMY_OCR_BIN, "findmy-ocr"],
   [FINDMY_PIN_SWIFT, FINDMY_PIN_BIN, "findmy-pin"],
   [FINDMY_ROAD_WALK_SWIFT, FINDMY_ROAD_WALK_BIN, "findmy-road-walk"],
   [FINDMY_CLICK_SWIFT, FINDMY_CLICK_BIN, "findmy-click"],
+  [AUDIO_MUTE_SWIFT, AUDIO_MUTE_BIN, "audio-mute"],
 ]) {
   try {
     const srcStat = fs.statSync(src);
@@ -4682,6 +4687,11 @@ for (const [src, bin, label] of [
     }
   } catch (e) { console.warn(`[${label}] compile failed:`, e.message); }
 }
+// Begin per-device mute heartbeat now that the audio-mute binary is
+// guaranteed compiled. Keeps built-in speakers + LG display audio
+// silent for the lifetime of the server, regardless of which app
+// picks them as their output.
+startMuteHeartbeat();
 let _lastFindmyFriend = null; // cache so repeated calls don't re-OCR
 let _lastPinBounds = null; // used by /api/findmy-crop.png
 // Stealth mode: when true, Find My is parked on aerospace workspace 9
