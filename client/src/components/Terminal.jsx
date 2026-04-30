@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
 import { useSyncStore } from '../stores/sync'
+import { usePlaybackStore } from '../stores/playback'
 import { currentFont, currentFontSize, FONTS } from '../fonts'
 import '@xterm/xterm/css/xterm.css'
 
@@ -18,6 +19,70 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
   const touchStartXRef = useRef(null)
+  // Pane-swipe state. Captures start coords + time on touchstart;
+  // touchend reads tmuxWindows from the latest render via a ref so
+  // the handler doesn't go stale between window changes.
+  const swipeStartRef = useRef(null)
+  const tmuxWindowsRef = useRef(tmuxWindows)
+  useEffect(() => { tmuxWindowsRef.current = tmuxWindows }, [tmuxWindows])
+
+  // Switch to the tmux window N positions away from the active one.
+  // Wraps around the list. Optimistically flips the active flag in
+  // the playback store before the server confirms — without that,
+  // the tab bar lags ~500ms behind the swipe.
+  const switchTmuxByOffset = (delta) => {
+    const list = tmuxWindowsRef.current
+    if (!Array.isArray(list) || list.length < 2) return
+    const activeIdx = list.findIndex(w => w.active)
+    if (activeIdx < 0) return
+    const next = list[(activeIdx + delta + list.length) % list.length]
+    if (!next) return
+    // Optimistic local update — server will follow with an authoritative
+    // {type:'tmux'} broadcast once tmux confirms the select.
+    usePlaybackStore.getState().update({
+      tmuxWindows: list.map(w => ({ ...w, active: w.index === next.index })),
+    })
+    fetch('/api/tmux-select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ index: next.index }),
+    }).catch(() => {})
+  }
+
+  const onPaneTouchStart = (e) => {
+    // Only single-finger swipes count — two-finger touches are
+    // xterm scrolling / pinch zoom and shouldn't switch windows.
+    if (e.touches.length !== 1) { swipeStartRef.current = null; return }
+    const t = e.touches[0]
+    swipeStartRef.current = { x: t.clientX, y: t.clientY, at: Date.now() }
+  }
+  const onPaneTouchEnd = (e) => {
+    const start = swipeStartRef.current
+    swipeStartRef.current = null
+    if (!start) return
+    const t = e.changedTouches[0]
+    if (!t) return
+    const dx = t.clientX - start.x
+    const dy = t.clientY - start.y
+    const dt = Date.now() - start.at
+    // Heuristic for "horizontal swipe": ≥80px traveled, dominated
+    // by horizontal motion (>1.5x vertical), under 500ms. Keeps
+    // ordinary taps and vertical scrolls from triggering switches.
+    if (dt > 500) return
+    if (Math.abs(dx) < 80) return
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return
+    // preventDefault so iOS Safari doesn't synthesize a
+    // mousedown/mouseup pair from this touch. xterm's mouse reporter
+    // would otherwise compute NaN cell coords for the synthetic
+    // event during the layout shift caused by the optimistic tab
+    // update, encode them as `\x1b[<NaN>;<NaN>;<NaN>M`, and pipe
+    // those bytes into the tmux pane — they show up as the random
+    // `aN;NaNM`-style strings in Claude's prompt input.
+    if (e.cancelable) e.preventDefault()
+    // Swipe LEFT (finger moves left, dx<0) advances to next pane —
+    // matches the iOS Safari tab-swipe convention.
+    switchTmuxByOffset(dx < 0 ? 1 : -1)
+  }
 
   useEffect(() => {
     // Read the current palette out of CSS vars. Called both at terminal
@@ -134,7 +199,16 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       ws.onerror = () => ws.close()
 
       term.onData((data) => {
-        if (ws.readyState === WebSocket.OPEN) ws.send(data)
+        // Drop CSI escape sequences containing literal "NaN" before
+        // they reach the pty. xterm's mouse reporter sometimes
+        // computes pixel→cell coords against a zero/stale cellWidth
+        // and emits sequences like `\x1b[<NaN;NaN;NaNM`; if those
+        // hit tmux/Claude Code, partial bytes show up as typed
+        // input ("aN;NaNM" garbage in the chat box). The regex
+        // matches a CSI introducer + body + a letter terminator
+        // where the body literally contains the string "NaN".
+        const cleaned = data.replace(/\x1b\[[^a-zA-Z]*NaN[^a-zA-Z]*[a-zA-Z]/g, '')
+        if (cleaned && ws.readyState === WebSocket.OPEN) ws.send(cleaned)
       })
       term.onResize(({ cols, rows }) => {
         if (ws.readyState === WebSocket.OPEN) ws.send(`\x01r${cols},${rows}`)
@@ -225,7 +299,13 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
 
   return (
     <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
-      <div className="terminal-container" ref={termRef} />
+      <div
+        className="terminal-container"
+        ref={termRef}
+        onTouchStart={onPaneTouchStart}
+        onTouchEnd={onPaneTouchEnd}
+        onTouchCancel={() => { swipeStartRef.current = null }}
+      />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>
         <button onClick={() => sendKey('\x02')}>^B</button>

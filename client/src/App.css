@@ -1309,6 +1309,11 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   flex: 1;
   overflow: hidden;
   padding: 2px 8px;
+  /* Reserve horizontal touch motion for our swipe handler. Without
+   * this, iOS treats the horizontal drag as a scroll/pan and may
+   * still synthesize mouse events that xterm interprets, leaking
+   * NaN-coordinate mouse-position escapes into the pane. */
+  touch-action: pan-y;
 }
 
 .terminal-container .xterm {

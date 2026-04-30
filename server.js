@@ -5848,14 +5848,22 @@ app.post("/api/tmux-rename", (req, res) => {
   }
 });
 
-app.post("/api/tmux-select", (req, res) => {
+app.post("/api/tmux-select", async (req, res) => {
   const { index } = req.body;
   try {
     execSync(`tmux select-window -t 0:${index}`, { stdio: "ignore" });
-    refreshTmuxWindows();
+    // Await refresh + broadcast a focused tmux update so the iOS tab
+    // bar reflects the new active window immediately instead of
+    // waiting for the next 1Hz playback tick (~1s of stale state).
+    await refreshTmuxWindows();
+    if (tmuxWindows.length > 1) {
+      const msg = JSON.stringify({ type: "tmux", tmuxWindows });
+      wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+    }
     claudeOptions = [];
     claudeQuestion = '';
     claudeState = 'idle';
+    broadcastClaude();
     _tmuxSwitchAt = Date.now();
     if (_tmuxSwitchTimer) clearTimeout(_tmuxSwitchTimer);
     // After cooldown, check if new tab has an active prompt
