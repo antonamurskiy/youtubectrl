@@ -5941,8 +5941,11 @@ app.post("/api/apns-register", (req, res) => {
 // new ones to /ws/sync. Replaced an earlier pipe-pane approach that
 // read the raw byte stream and couldn't reconstruct cursor-positioned
 // partial redraws cleanly.
-let _tmuxFeedRecent = [];
-let _tmuxFeedReady = false;
+// Per-window dedupe — same line text can legitimately appear in
+// two tmux windows (two Claude sessions) and we want to surface
+// both. Keyed `${windowName}::${cleaned}`.
+const _tmuxFeedRecent = new Set();
+const _tmuxFeedReady = new Set();
 function broadcastClaudeFeed(lines) {
   if (!lines.length) return;
   const msg = JSON.stringify({ type: "claude-feed", lines });
@@ -5951,32 +5954,14 @@ function broadcastClaudeFeed(lines) {
   // and turn-done transitions — see broadcastClaude. Per-line was
   // too noisy: every Bash/Read/Edit fired a notification.
 }
-function pollClaudeFeed() {
-  let pane;
-  try {
-    pane = execSync("tmux capture-pane -p -t 0 -S -50", { encoding: "utf8", timeout: 1000 });
-  } catch { return; }
-  if (!_tmuxFeedReady) {
-    // First successful capture: prime the dedupe with what's already
-    // on screen so we don't replay it as if it were new.
-    for (const line of pane.split("\n").map(l => l.trim())) {
-      if (!line) continue;
-      const cleaned = line.replace(/^[⏺⎿]\s*/, "").trim();
-      if (cleaned) _tmuxFeedRecent.push(cleaned);
-    }
-    if (_tmuxFeedRecent.length > 200) _tmuxFeedRecent = _tmuxFeedRecent.slice(-200);
-    _tmuxFeedReady = true;
-    console.log("  Claude feed: capture-pane primed");
-    return;
-  }
-  // Walk line-by-line; when we hit a ⏺ bullet (Claude action/message)
-  // or a Tool-name line, merge any indented continuation lines that
-  // immediately follow into a single logical line. Without this,
-  // Claude's prose responses appear truncated to just the first
-  // wrapped line and tool-arg lines lose their wrapped tail.
+const TOOL_RE = /^(Bash|Read|Write|Edit|Grep|Glob|Tool|MultiEdit|TodoWrite|Task|WebFetch|WebSearch)\b/;
+// Extract Claude bullet/tool lines from a captured pane buffer,
+// merging indented continuation lines into their parent. Returns
+// {out, hasFooter, parsedPrompt} so callers can decide what to do
+// with state transitions.
+function extractClaudeFeedLines(pane, dedupeKeyPrefix) {
   const lines = pane.split("\n");
   const out = [];
-  const TOOL_RE = /^(Bash|Read|Write|Edit|Grep|Glob|Tool|MultiEdit|TodoWrite|Task|WebFetch|WebSearch)\b/;
   let i = 0;
   while (i < lines.length) {
     const raw = lines[i];
@@ -5989,8 +5974,6 @@ function pollClaudeFeed() {
     const isToolLine = TOOL_RE.test(trimmed);
     if (!isBullet && !isToolLine) continue;
     let merged = trimmed.replace(/^[⏺⎿]\s*/, "").trim();
-    // Pull in indented continuation lines (≥2 leading spaces, not
-    // empty, not a new bullet/tool line).
     while (i < lines.length) {
       const next = lines[i];
       const nextTrim = next.trim();
@@ -6003,23 +5986,60 @@ function pollClaudeFeed() {
     }
     merged = merged.trim();
     if (!merged || merged.length > 600) continue;
-    if (_tmuxFeedRecent.includes(merged)) continue;
-    _tmuxFeedRecent.push(merged);
-    if (_tmuxFeedRecent.length > 200) _tmuxFeedRecent.shift();
+    const dedupeKey = `${dedupeKeyPrefix}::${merged}`;
+    if (_tmuxFeedRecent.has(dedupeKey)) continue;
+    _tmuxFeedRecent.add(dedupeKey);
     out.push(merged);
   }
-  if (out.length) {
-    broadcastClaudeFeed(out);
-    _lastFeedLine = out[out.length - 1];
+  // Bound the dedupe set so it doesn't grow forever. Drop oldest
+  // ~500 entries when it crosses 1000.
+  if (_tmuxFeedRecent.size > 1000) {
+    const drop = [..._tmuxFeedRecent].slice(0, 500);
+    for (const k of drop) _tmuxFeedRecent.delete(k);
   }
-  // Piggyback prompt-state detection. shell.onData's plain-stream
-  // approach misses the Esc-to-cancel footer when Claude Code uses
-  // tmux's alt-screen for Inquirer-style prompts; capture-pane has
-  // the rendered visible state regardless. Diff parsed result vs
-  // the last broadcast so we only push on real transitions.
-  const hasFooter = /Esc to cancel|Enter to select|Tab to amend/.test(pane);
+  return out;
+}
+function pollClaudeFeed() {
+  // Default to single-window pane=0 if tmuxWindows hasn't populated yet.
+  const windows = (Array.isArray(tmuxWindows) && tmuxWindows.length)
+    ? tmuxWindows
+    : [{ index: 0, name: "", active: true }];
+  let activePane = "";
+  for (const win of windows) {
+    let pane;
+    try {
+      pane = execSync(`tmux capture-pane -p -t 0:${win.index} -S -50`, { encoding: "utf8", timeout: 1000 });
+    } catch { continue; }
+    if (win.active) activePane = pane;
+    const winKey = win.name || `0:${win.index}`;
+    if (!_tmuxFeedReady.has(winKey)) {
+      // Prime per-window dedupe with what's already on screen so
+      // existing content doesn't replay as new.
+      for (const line of pane.split("\n").map(l => l.trim())) {
+        if (!line) continue;
+        const cleaned = line.replace(/^[⏺⎿]\s*/, "").trim();
+        if (cleaned) _tmuxFeedRecent.add(`${winKey}::${cleaned}`);
+      }
+      _tmuxFeedReady.add(winKey);
+      console.log(`  Claude feed: primed window ${winKey}`);
+      continue;
+    }
+    const out = extractClaudeFeedLines(pane, winKey);
+    if (out.length) {
+      // Prefix every line with the window name so the user can
+      // tell which Claude session generated it.
+      const prefix = win.name ? `[${win.name}] ` : "";
+      const prefixed = out.map(l => prefix + l);
+      broadcastClaudeFeed(prefixed);
+      _lastFeedLine = prefixed[prefixed.length - 1];
+    }
+  }
+  // Prompt-state detection runs ONLY against the active window —
+  // a waiting prompt in an inactive pane isn't actionable from the
+  // iOS quick-reply UI which is bound to whatever pane is active.
+  const hasFooter = /Esc to cancel|Enter to select|Tab to amend/.test(activePane);
   if (hasFooter) {
-    const parsed = parseClaudeOptionsFromPane(pane);
+    const parsed = parseClaudeOptionsFromPane(activePane);
     if (parsed && parsed.options.length) {
       const sigOpts = parsed.options.map(o => o.n + ":" + o.text).join("|");
       const prevSigOpts = claudeOptions.map(o => o.n + ":" + o.text).join("|");
@@ -6031,7 +6051,6 @@ function pollClaudeFeed() {
       }
     }
   } else if (claudeState === "waiting") {
-    // Footer disappeared → user answered or prompt cleared.
     claudeState = "idle";
     claudeOptions = [];
     claudeQuestion = "";
