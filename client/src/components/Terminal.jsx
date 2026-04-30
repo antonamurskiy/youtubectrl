@@ -571,8 +571,17 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
             s.lastY = s.lastY - lines * rowH
           }
         }}
-        onTouchEnd={() => { scrollZoneRef.current = null }}
-        onTouchCancel={() => { scrollZoneRef.current = null }}
+        onTouchEnd={() => {
+          scrollZoneRef.current = null
+          // Mouse-wheel sequences leave tmux in copy-mode (the user
+          // is "stuck" — typing doesn't reach the prompt anymore).
+          // Cancel automatically on lift-off; no-op if not in a mode.
+          fetch('/api/tmux-cancel-copy-mode', { method: 'POST' }).catch(() => {})
+        }}
+        onTouchCancel={() => {
+          scrollZoneRef.current = null
+          fetch('/api/tmux-cancel-copy-mode', { method: 'POST' }).catch(() => {})
+        }}
       />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>

@@ -6267,6 +6267,23 @@ app.post("/api/tmux-rename", (req, res) => {
   }
 });
 
+// Exit tmux copy-mode in the active window. The right-edge scroll zone
+// in the WebView sends mouse-wheel escape sequences which tmux
+// interprets as scroll → enter copy-mode. The user is then "stuck"
+// (unable to type) until they hit q/Escape. Call this on scroll-end
+// to cancel copy-mode automatically — no-op if the pane isn't in a
+// mode, so safe to fire indiscriminately.
+app.post("/api/tmux-cancel-copy-mode", (_req, res) => {
+  try {
+    const active = tmuxWindows.find(w => w.active);
+    const target = active ? `0:${active.index}` : "0";
+    execSync(`tmux send-keys -t ${target} -X cancel`, { stdio: "ignore" });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get("/api/tmux-colors", (_req, res) => res.json({ colors: tmuxColors }));
 app.post("/api/tmux-color", (req, res) => {
   const { name, color } = req.body || {};
