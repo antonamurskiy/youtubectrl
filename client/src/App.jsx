@@ -352,23 +352,22 @@ function App() {
           ))}
         </div>
       )}
-      {claudeState === 'waiting' && (
+      {claudeState === 'waiting' && claudeOptions?.length > 0 && (
         <div className="claude-quick-reply">
           {claudeQuestion && <div className="claude-question">{claudeQuestion}</div>}
-          {[1,2,3].map(n => {
-            const opt = claudeOptions?.find(o => o.n === String(n))
-            const label = opt ? `${n} ${opt.text}` : String(n)
+          {claudeOptions.map((opt) => {
+            const n = parseInt(opt.n, 10)
             return (
               <button
-                key={n}
+                key={opt.n}
                 className={claudePressed === n ? 'pressed' : ''}
                 onClick={() => {
                   hapticThump()
                   setClaudePressed(n)
                   const fn = useSyncStore.getState().terminalSendKey
-                  if (fn) fn(String(n))
+                  if (fn) fn(opt.n)
                 }}
-              >{label}</button>
+              >{`${opt.n} ${opt.text}`}</button>
             )
           })}
         </div>

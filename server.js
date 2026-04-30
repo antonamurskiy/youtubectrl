@@ -5640,7 +5640,11 @@ let _claudeWaitingTimer = null;
 let _lastCapture = 0;
 let _lastActiveWindow = '';
 function broadcastClaude() {
-  const msg = JSON.stringify({ type: 'claude', claudeState, claudeOptions: claudeOptions.length ? claudeOptions : undefined, claudeQuestion: claudeQuestion || undefined });
+  // Always include claudeOptions and claudeQuestion (even when empty)
+  // so the client's shallow-merge zustand store actually CLEARS stale
+  // values. Sending `undefined` would let JSON.stringify drop the
+  // keys, leaving the previous prompt's options stuck on screen.
+  const msg = JSON.stringify({ type: 'claude', claudeState, claudeOptions, claudeQuestion });
   wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
 }
 // Parse tmux capture-pane output for the option block above the
@@ -5929,20 +5933,35 @@ wssTerm.on("connection", (ws) => {
       claudeQuestion = '';
       broadcastClaude();
     }
-    // Capture options when "Enter to select" appears (separate from state detection)
+    // Capture options when "Enter to select" / "Tab to amend" appears.
+    // Retry a few times — Claude Code streams the prompt in pieces, so
+    // the footer ("Tab to amend") often arrives BEFORE every option has
+    // finished rendering. Without retries we'd lock in the partial-
+    // option count from the first trigger and leave option 3 missing
+    // until the next state change.
     if ((/Entertoselect/.test(compact) || /Tabtoamend/.test(compact)) && Date.now() - _tmuxSwitchAt > 2000) {
+      const tryParse = () => {
+        try {
+          const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
+          const parsed = parseClaudeOptionsFromPane(pane);
+          if (parsed && (parsed.options.length > claudeOptions.length || parsed.question !== claudeQuestion)) {
+            claudeOptions = parsed.options;
+            claudeQuestion = parsed.question || '';
+            if (_claudeWaitingTimer) { clearTimeout(_claudeWaitingTimer); _claudeWaitingTimer = null; }
+            broadcastClaude();
+            return parsed.options.length;
+          }
+        } catch {}
+        return claudeOptions.length;
+      };
+      // Reset state for first parse, then poll on a short ladder so we
+      // catch options that render after the footer.
       claudeOptions = [];
       claudeQuestion = '';
-      try {
-        const pane = execSync('tmux capture-pane -p', { encoding: 'utf8', timeout: 1000 });
-        const parsed = parseClaudeOptionsFromPane(pane);
-        if (parsed) {
-          claudeOptions = parsed.options;
-          if (parsed.question) claudeQuestion = parsed.question;
-          if (_claudeWaitingTimer) { clearTimeout(_claudeWaitingTimer); _claudeWaitingTimer = null; }
-          broadcastClaude();
-        }
-      } catch {}
+      tryParse();
+      setTimeout(tryParse, 200);
+      setTimeout(tryParse, 600);
+      setTimeout(tryParse, 1500);
     }
   });
   ws.on("message", (msg) => {
