@@ -469,7 +469,16 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                         self.player = AVPlayer(playerItem: item)
                         self.installRateObserver()
                     } else {
+                        // PiP-friendly swap. replaceCurrentItem on a
+                        // playing AVPlayer while PiP is active can leave
+                        // the PiP window stuck on the old item's last
+                        // frame. Pause → swap → resume avoids that.
+                        let wasPlaying = (self.player?.rate ?? 0) > 0
+                        self.player?.pause()
                         self.player?.replaceCurrentItem(with: item)
+                        if wasPlaying || autoplay {
+                            self.player?.play()
+                        }
                     }
                     self.playerLayer?.player = self.player
                     if position > 0 {
