@@ -855,6 +855,170 @@ and wreck its sync.
 - **cmux focus toggle**: aerospace-based, exits maximize when focusing cmux, restores on mpv focus. `phoneActive` synced to keep eye icon consistent.
 - **Window resize on loadfile**: floating mode re-applies 38% width, 16:9 aspect, top-right position via AppleScript after video loads (prevents vertical shorts from stretching window). Maximize/fullscreen modes re-apply aerospace fullscreen.
 
+### Tmux window theming + scroll gating
+
+The terminal panel ties multiple UI surfaces (terminal viewport, panel
+chrome, shortcut keys, tabs strip, FAB stack, now-playing bar, iOS
+safe-area gutters under the Dynamic Island and home indicator) to a
+single per-window color picked via long-press → centered modal. The
+color is keyed by tmux window NAME (not index) so renaming a window
+to a previously-colored name picks the tint back up.
+
+#### Color storage + sync
+
+- `.tmux-colors.json` (gitignored): `{ [name]: "#RRGGBB" }`
+- `GET /api/tmux-colors` / `POST /api/tmux-color { name, color }`
+- Pushed via WS as `tmuxColors` alongside `tmuxWindows` on every focused
+  `{type:"tmux"}` broadcast and the 1Hz playback tick.
+- Optimistic update: `/api/tmux-select` flips `active` flags in the
+  cached `tmuxWindows` array and broadcasts immediately, then kicks
+  the authoritative `refreshTmuxWindows()` in the background and
+  re-broadcasts on completion. The previous in-flight guard could
+  swallow refreshes (auto-rename branch spawns git+tmux subprocesses)
+  and leave the broadcast carrying stale active flags — UI got stuck
+  on the old window.
+
+#### Default-name auto-rename
+
+`refreshTmuxWindows()` reads `pane_current_path` per window. When a
+window's name matches a default-style pattern (`^(zsh|bash|fish|sh|tmux|node|claude)$`,
+purely numeric, or equal to its cwd basename), the window is renamed
+to the first 3 lowercase letters of `git rev-parse --show-toplevel`
+basename and `automatic-rename off` is set so tmux doesn't fight it.
+Each (index, cwd) is processed once until cwd changes — `_autoNamedTmux`
+Map memoizes.
+
+#### Color application
+
+The picked color is the SAME hex everywhere, but applied at two
+brightness tiers because a 28×28 swatch on `#151515` reads dimmer than
+the same hex stretched across a tab + full-screen pane (perceptual:
+Helmholtz-Kohlrausch). Both `App.jsx` and `Terminal.jsx` carry their
+own `darkenHex(hex, factor=0.55)` helper that multiplies each RGB
+channel — picked hex stored in JSON, darkened version painted on
+every visible surface.
+
+- **Tab background**: `darkenHex(color, 0.55)`. Active tab: keeps the
+  same bg as inactive sibling and signals state with cream `--text`
+  border + text (NOT brightenHex of the color — that produced bright
+  yellow olive jumps that clashed with the muted swatches).
+- **Terminal viewport** (xterm theme.background): `darkenHex(0.55)`.
+  Re-applied via `term.options.theme = ...; term.refresh(0, rows-1)`
+  whenever active window changes — WebGL atlas is keyed on theme so
+  refresh forces glyph repaint with the new bg.
+- **Panel chrome**: same `darkenHex(0.55)`, set inline on `.terminal-panel`
+  via `--terminal-bg` CSS var. `.xterm-viewport` reads it via
+  `background: var(--terminal-bg, var(--bg)) !important`.
+- **Shortcut keys row**: reads `--terminal-key-bg` / `--terminal-key-bg-active`
+  vars set by the panel; tinted state uses `rgba(255,255,255,0.07)` /
+  `0.14` overlays so keys lift off the panel bg.
+- **Body / html / iOS safe areas**: `body.style.background` + `html.style.background`
+  set to `darkenHex(0.55)`, and `NativePlayer.setSafeAreaBackground(hex)`
+  walks every parent UIView from the WKWebView up to UIWindow + paints
+  every direct child of the window. Capacitor StatusBar inserts a
+  tinted UIView at the top of the window stack that covers the
+  WebView's bg — recoloring all window children catches it without
+  identifying it by name. `setOverlaysWebView({overlay: true})` is
+  also toggled while the terminal is open so the status bar is
+  transparent and the WebView extends behind the Dynamic Island.
+- **FAB stack** (`fab-cmux`, `fab-refresh`): reads `--fab-bg` /
+  `--fab-bg-active` / `--fab-border` vars set on `.fab-stack` inline.
+  Tinted state: raw `activeTmuxColor` (brighter than the bar bg) for
+  bg, `darkenHex(0.7)` for active, `darkenHex(0.4)` for border. Off-
+  theme `rgba(168,153,132,0.2)` cmux fallback was removed; claude
+  waiting/thinking colors still override.
+- **Now-playing bar**: subscribes to `tmuxWindows` + `tmuxColors`,
+  applies `darkenHex(0.55)` as inline `background`. Scrubber track
+  (`--np-track`) uses `darkenHex(0.4)`, fill (`--np-fill`) uses raw
+  tint, both pattern dots use `darkenHex(0.55)`. **Only when terminal
+  panel is open** — gated on `useSyncStore(s => s.terminalOpen)`.
+
+#### Setting the iOS safe-area background
+
+Capacitor's `@capacitor/status-bar` v8 `setBackgroundColor` is an
+Android-only no-op on iOS. The custom Swift `setSafeAreaBackground`
+method on `NativePlayerPlugin` is the working path — sets
+`webView.backgroundColor`, `scrollView.backgroundColor`,
+`webView.isOpaque = false`, then walks parents up to UIWindow AND
+recolors every direct child of the UIWindow. The walk is required
+because Capacitor's StatusBar plugin inserts a UIView ABOVE the
+WebView in the window stack that paints with its own configured bg
+and would otherwise hide the tint.
+
+#### Rename popover (centered portal modal)
+
+Long-press any tmux tab → `createPortal(modalNode, document.body)`
+renders a centered `.tmux-edit-overlay` with the rename input + 8
+muted swatches + `cancel` / `ok` buttons. Why portal: an inline
+edit row inside the position:fixed `.tmux-tabs` strip vanished when
+the iOS soft keyboard opened (visualViewport reflow clipped the strip
+off-screen). Centered modal is immune.
+
+There is NO outside-tap dismissal — iOS focus()→keyboard-open
+synthesizes pointer events outside the popover that were closing it.
+User dismisses explicitly via Enter / Escape / ok / cancel.
+
+#### Pane-swipe scroll suppression — READ THIS
+
+xterm's WebGL renderer + tmux mouse-mode + iOS touch all conspire to
+make swiping between tmux windows easy to mis-aim into a vertical
+"scroll up" that lands the user in tmux's copy-mode buffer 50 lines
+back. Multiple defenses stacked because each only solves part:
+
+1. **Pin loop**: persistent `setInterval(20ms)` that calls
+   `term.scrollToBottom()` whenever `Date.now() < scrollLockUntilRef`.
+   Set to `now+1200ms` on every active-window change. Bails when
+   `scrollZoneRef.current` is truthy (user is explicitly scrolling).
+2. **Horizontal touchmove extends lock**: any touchmove with
+   `dx > 30 && dx > dy*1.2` extends `scrollLockUntilRef` by another
+   1000ms so a slow cross-screen swipe stays pinned.
+3. **`pointer-events: none !important` on `.xterm` subtree**: the
+   ACTUAL cause of "I can scroll anywhere" was tmux mouse-mode —
+   xterm forwards touch-drag events as SGR mouse escape sequences
+   to the pty, and tmux scrolls its own copy-mode buffer in
+   response. CSS-only scroll fixes can't help because the scroll
+   lives in the pty, not the DOM. With pointer-events: none on
+   `.xterm`, touches never reach xterm's mouse reporter, nothing
+   forwards to tmux. Touches pass through to `terminal-container`
+   for swipe detection. `refocusOnTap` still focuses the
+   `.xterm-helper-textarea` because `.focus()` is programmatic
+   (bypasses pointer-events). Typing works because keyboard events
+   target the focused textarea, not via touch. Lost: native long-
+   press text selection on mobile (acceptable). Re-applied via
+   `MutationObserver` since xterm rebuilds internal nodes on
+   resize/theme change.
+4. **`touch-action: none !important` + `overflow: hidden !important`**
+   on `.xterm-viewport` (also via `setProperty('important')`) belt-
+   and-braces in case the browser ever generates a scroll event.
+5. **Right-edge `.terminal-scroll-zone`** (64px, `z-index:2`): the
+   ONLY way to scroll. Aligned with the FAB column visually so the
+   affordance is memorable. On touchmove computes `lines = -dy / rowH`
+   and:
+   - Sends SGR mouse-wheel sequences over the WebSocket so tmux
+     scrolls its copy-mode buffer:
+     - Up: `\x1b[<64;X;YM`
+     - Down: `\x1b[<65;X;YM`
+   - Falls through to `term.scrollLines(lines)` for non-mouse-mode
+     panes (Claude prompts etc).
+   Wheel-event count capped at 8 per touchmove tick.
+6. **`scrollToBottom()` on every active window change** (1.2s pin)
+   so even if a touch slips through, the buffer snaps back.
+7. **`refocusOnTap` skip for swipe gestures**: tracks tap start coords
+   in a paired native touchstart listener (capture phase wasn't
+   needed once pointer-events: none was added). Bails on `dx > 12`
+   / `dy > 12` / `dt > 500ms` so swipes between panes don't pop the
+   iOS keyboard via auto-focus on the helper-textarea.
+
+### Secret-menu submenu styling
+
+`.secret-menu-item.sub` adds a darker `#0a0a0a` bg (vs the menu's
+`#151515`) so nested submenu rows are visually distinct from the
+top-level menu. Applied to: audio-output picker rows, Bluetooth device
+rows, Misc submenu (Brightness, FontSize, Font, Grid toggle, Refresh
+cookies, AirPlay, Focus cmux, Font sub-options at +1 nesting level),
+and the FindMy friend info row. `GridStyleToggle` takes a `sub` prop;
+others hardcode the class.
+
 ### Find My friend lookup — `/api/findmy-friend`
 
 Maria's location pulled from the FindMy macOS app via screenshot →

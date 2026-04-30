@@ -51,6 +51,13 @@ export const NativePlayer = {
     if (!plugin) return { tmuxWindow: -1, answer: '' }
     return plugin.getPendingPushTap()
   },
+  // Paints the iOS safe-area regions (Dynamic Island gutter, home
+  // indicator strip) the given hex color. Pass empty string to revert
+  // to the default WebView background.
+  async setSafeAreaBackground(color) {
+    if (!plugin) return
+    return plugin.setSafeAreaBackground({ color: color || '' })
+  },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }
     return plugin.addListener(event, handler)

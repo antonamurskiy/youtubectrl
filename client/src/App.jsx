@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { flushSync } from 'react-dom'
+import { flushSync, createPortal } from 'react-dom'
 import { tick as hapticTick, thump as hapticThump } from './haptics'
 import { useSync } from './hooks/useSync'
 import { useMediaSession } from './hooks/useMediaSession'
@@ -27,24 +27,79 @@ const Terminal = lazy(() => import('./components/Terminal'))
 const PhonePlayer = lazy(() => import('./components/PhonePlayer'))
 import './App.css'
 
-function TmuxTabButton({ window: w }) {
+// Palette for tmux-window background tinting. First entry clears the
+// assignment. Hex picks are gruvbox-aligned so they harmonize with the
+// rest of the theme.
+// Multiply each RGB channel by `factor` so a small swatch on a dark
+// modal bg matches the perceived darkness when the same hex is
+// stretched across a tab + full-screen terminal area (large filled
+// regions read brighter than tiny ones — Helmholtz-Kohlrausch).
+// Exported so the Terminal can use the same darken on its bg.
+export function darkenHex(hex, factor = 0.55) {
+  if (!hex) return hex
+  const c = hex.replace('#', '')
+  const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+  const r = Math.round(parseInt(h.slice(0, 2), 16) * factor)
+  const g = Math.round(parseInt(h.slice(2, 4), 16) * factor)
+  const b = Math.round(parseInt(h.slice(4, 6), 16) * factor)
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')
+}
+
+// Lighten a hex toward white. mix=0 returns the input, 1 returns white.
+function brightenHex(hex, mix) {
+  if (!hex) return hex
+  const c = hex.replace('#', '')
+  const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+  const r = parseInt(h.slice(0, 2), 16)
+  const g = parseInt(h.slice(2, 4), 16)
+  const b = parseInt(h.slice(4, 6), 16)
+  const lr = Math.round(r + (255 - r) * mix)
+  const lg = Math.round(g + (255 - g) * mix)
+  const lb = Math.round(b + (255 - b) * mix)
+  return '#' + [lr, lg, lb].map(v => v.toString(16).padStart(2, '0')).join('')
+}
+
+const TMUX_COLOR_SWATCHES = [
+  { value: '', label: 'clear' },
+  { value: '#5a1f1c', label: 'red' },
+  { value: '#5e3414', label: 'orange' },
+  { value: '#5c4416', label: 'yellow' },
+  { value: '#3f4416', label: 'green' },
+  { value: '#2e4a3a', label: 'teal' },
+  { value: '#1f3d49', label: 'blue' },
+  { value: '#4a2e44', label: 'purple' },
+]
+
+function TmuxTabButton({ window: w, color }) {
   const pressStartRef = useRef(0)
   const inputRef = useRef(null)
+  const containerRef = useRef(null)
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(w.name)
+  // Local pending color while editing — committed alongside the rename
+  // so the new name immediately picks up the chosen tint.
+  const [pendingColor, setPendingColor] = useState(color || '')
 
   const commit = () => {
     const next = value.trim()
-    if (next && next !== w.name) {
+    const renamed = next && next !== w.name
+    const colorChanged = (pendingColor || '') !== (color || '')
+    if (renamed) {
       fetch('/api/tmux-rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index, name: next }) }).catch(() => {})
+    }
+    if (colorChanged || renamed) {
+      // Save under whichever name the window will end up with.
+      const targetName = renamed ? next : w.name
+      fetch('/api/tmux-color', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: targetName, color: pendingColor || null }) }).catch(() => {})
     }
     setEditing(false)
   }
-  const cancel = () => { setValue(w.name); setEditing(false) }
+  const cancel = () => { setValue(w.name); setPendingColor(color || ''); setEditing(false) }
 
   const enterEdit = () => {
     hapticTick()
     setValue(w.name)
+    setPendingColor(color || '')
     flushSync(() => setEditing(true))
     if (inputRef.current) {
       inputRef.current.focus()
@@ -66,36 +121,89 @@ function TmuxTabButton({ window: w }) {
     }
   }
 
-  if (editing) {
-    return (
-      <input
-        ref={inputRef}
-        className="tmux-tab-input"
-        value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); commit() }
-          else if (e.key === 'Escape') { e.preventDefault(); cancel() }
-        }}
-        maxLength={32}
-      />
-    )
-  }
+  // No outside-tap dismiss: on iOS, focusing the input animates the
+  // keyboard open which synthesizes pointer events outside the popover
+  // and was killing it. Instead the user dismisses explicitly via the
+  // ok button, Enter, or Escape (cancel).
 
+  // Tinting: chosen color → translucent fill so dimmed text stays
+  // readable. Active window: keep the tab bg identical to inactive
+  // tabs (so all tabs share one shade) and signal the active state
+  // with a brightened-color border + text only.
+  const tintBg = color ? darkenHex(color) : undefined
   return (
-    <button
-      style={w.active ? { color: 'var(--green)', borderColor: 'var(--green)' } : undefined}
-      onTouchStart={() => { pressStartRef.current = Date.now() }}
-      onTouchEnd={handleEnd}
-      onTouchCancel={() => { pressStartRef.current = 0 }}
-      onMouseDown={() => { pressStartRef.current = Date.now() }}
-      onMouseUp={handleEnd}
-      onMouseLeave={() => { pressStartRef.current = 0 }}
-      onContextMenu={(e) => e.preventDefault()}
-    >
-      {w.name.match(/^\d+\.\d+/) ? w.index : w.name}
-    </button>
+    <>
+      <button
+        style={{
+          ...(tintBg ? { background: tintBg } : null),
+          ...(w.active
+            ? color
+              // Color-tinted active tab: keep the same bg as inactive
+              // tabs of the same color and signal active via cream
+              // text + cream border. Avoids the bright olive-green
+              // theme accent jumping out against muted swatches.
+              ? { color: 'var(--text)', borderColor: 'var(--text)' }
+              : { color: 'var(--green)', borderColor: 'var(--green)' }
+            : null),
+        }}
+        onTouchStart={() => { pressStartRef.current = Date.now() }}
+        onTouchEnd={handleEnd}
+        onTouchCancel={() => { pressStartRef.current = 0 }}
+        onMouseDown={() => { pressStartRef.current = Date.now() }}
+        onMouseUp={handleEnd}
+        onMouseLeave={() => { pressStartRef.current = 0 }}
+        onContextMenu={(e) => e.preventDefault()}
+      >
+        {w.name.match(/^\d+\.\d+/) ? w.index : w.name}
+      </button>
+      {editing && createPortal(
+        <div className="tmux-edit-overlay">
+          <div className="tmux-edit-card" ref={containerRef}>
+            <input
+              ref={inputRef}
+              className="tmux-tab-input"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') { e.preventDefault(); commit() }
+                else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+              }}
+              maxLength={32}
+            />
+            <div className="tmux-color-swatches">
+              {TMUX_COLOR_SWATCHES.map(s => (
+                <button
+                  key={s.value || 'clear'}
+                  type="button"
+                  className={`tmux-swatch${pendingColor === s.value ? ' active' : ''}`}
+                  style={{ background: s.value || 'transparent' }}
+                  aria-label={s.label}
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); hapticTick(); setPendingColor(s.value); inputRef.current?.focus() }}
+                >
+                  {s.value ? '' : '×'}
+                </button>
+              ))}
+            </div>
+            <div className="tmux-edit-actions">
+              <button
+                type="button"
+                className="tmux-tab-cancel"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); cancel() }}
+              >cancel</button>
+              <button
+                type="button"
+                className="tmux-tab-commit"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); commit() }}
+              >ok</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+    </>
   )
 }
 
@@ -144,15 +252,24 @@ function App() {
       refreshing: s.refreshing,
     }))
   )
-  const { playing, rawClaudeState, claudeOptions, claudeQuestion, tmuxWindows } = usePlaybackStore(
+  const { playing, rawClaudeState, claudeOptions, claudeQuestion, tmuxWindows, tmuxColors } = usePlaybackStore(
     useShallow(s => ({
       playing: s.playing,
       rawClaudeState: s.claudeState,
       claudeOptions: s.claudeOptions,
       claudeQuestion: s.claudeQuestion,
       tmuxWindows: s.tmuxWindows,
+      tmuxColors: s.tmuxColors,
     }))
   )
+  // Active tmux tint for theming the FAB buttons + tab marker — only
+  // while the terminal panel is open (the tint is a terminal-context
+  // affordance, see NowPlayingBar's same rule).
+  const activeTmuxColor = (() => {
+    const list = Array.isArray(tmuxWindows) ? tmuxWindows : null
+    const active = list?.find(w => w.active)
+    return active && tmuxColors ? tmuxColors[active.name] : null
+  })()
   const { connected, phoneOpen, terminalOpen, setTerminalOpen } = useSyncStore(
     useShallow(s => ({
       connected: s.connected,
@@ -348,7 +465,7 @@ function App() {
       {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (
         <div className="tmux-tabs">
           {tmuxWindows.map(w => (
-            <TmuxTabButton key={w.index} window={w} />
+            <TmuxTabButton key={w.index} window={w} color={tmuxColors?.[w.name]} />
           ))}
         </div>
       )}
@@ -372,10 +489,20 @@ function App() {
           })}
         </div>
       )}
-      <div className="fab-stack">
+      <div
+        className="fab-stack"
+        style={(terminalOpen && activeTmuxColor) ? {
+          // Match the FAB chrome to the tmux tint while the terminal
+          // is open (raw tint is the brightest version we use, so the
+          // FABs read as "lifted" from the darker terminal/np-bar bg).
+          '--fab-bg': activeTmuxColor,
+          '--fab-bg-active': darkenHex(activeTmuxColor, 0.7),
+          '--fab-border': darkenHex(activeTmuxColor, 0.4),
+        } : undefined}
+      >
         <button
           className="fab-cmux"
-          style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)', background: terminalOpen ? 'rgba(177,98,134,0.2)' : undefined } : claudeState === 'thinking' ? { color: 'var(--yellow)', borderColor: 'var(--yellow)', background: terminalOpen ? 'rgba(229,181,103,0.2)' : undefined } : terminalOpen ? { background: 'rgba(168,153,132,0.2)' } : undefined}
+          style={claudeState === 'waiting' ? { color: 'var(--magenta)', borderColor: 'var(--magenta)', background: terminalOpen ? 'rgba(177,98,134,0.2)' : undefined } : claudeState === 'thinking' ? { color: 'var(--yellow)', borderColor: 'var(--yellow)', background: terminalOpen ? 'rgba(229,181,103,0.2)' : undefined } : undefined}
           onClick={(e) => { e.stopPropagation(); hapticTick(); setTerminalOpen(!useSyncStore.getState().terminalOpen) }}
         >
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
@@ -424,7 +551,7 @@ function App() {
       {terminalEverOpened && (
         <Suspense fallback={null}>
           <div style={{ display: terminalOpen ? '' : 'none' }}>
-            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} visible={terminalOpen} />
+            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} visible={terminalOpen} />
           </div>
         </Suspense>
       )}

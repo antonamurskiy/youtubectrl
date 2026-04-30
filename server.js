@@ -5889,7 +5889,30 @@ let _tmuxSwitchTimer = null;
 let _ptyBuffer = ''; // rolling buffer of recent pty output
 let tmuxWindows = [];
 
+// Per-window-name color picks. Keyed by window name (not index) so a color
+// follows whatever window happens to have that name — rename a window to
+// "main" and it picks up the same tint you assigned the last "main".
+// Persisted to disk so picks survive server restarts.
+const TMUX_COLORS_FILE = path.join(__dirname, ".tmux-colors.json");
+let tmuxColors = {};
+try {
+  const v = JSON.parse(fs.readFileSync(TMUX_COLORS_FILE, "utf8"));
+  if (v && typeof v === "object") tmuxColors = v;
+} catch {}
+function saveTmuxColors() {
+  try { fs.writeFileSync(TMUX_COLORS_FILE, JSON.stringify(tmuxColors)); } catch {}
+}
+function broadcastTmuxState() {
+  if (!tmuxWindows.length) return;
+  const msg = JSON.stringify({ type: "tmux", tmuxWindows, tmuxColors });
+  wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+}
+
 let _tmuxRefreshInFlight = false;
+// Track which (index, cwd) tuples we've already auto-renamed so we
+// don't keep firing git+rename on every refresh tick. Cleared if the
+// user manually renames (we'll see the new non-default name and skip).
+const _autoNamedTmux = new Map();  // index -> last cwd processed
 async function refreshTmuxWindows() {
   // Async + in-flight guard. Was `execSync` called inside the 1Hz WS
   // broadcast — with tmux's occasional 100-1000ms hitches that blocked
@@ -5898,11 +5921,43 @@ async function refreshTmuxWindows() {
   if (_tmuxRefreshInFlight) return;
   _tmuxRefreshInFlight = true;
   try {
-    const { stdout } = await execFileP("tmux", ["list-windows", "-t", "0", "-F", "#{window_index}:#{window_name}:#{window_active}"], { timeout: 2000 });
-    tmuxWindows = stdout.trim().split("\n").map(line => {
-      const [index, name, active] = line.split(":");
-      return { index: +index, name, active: active === "1" };
+    // Tab-separated so window names containing ':' don't break parsing.
+    // Includes pane_current_path so default-named windows can be
+    // auto-renamed to the first 3 letters of their git project basename.
+    const { stdout } = await execFileP("tmux", ["list-windows", "-t", "0", "-F", "#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}"], { timeout: 2000 });
+    const rows = stdout.trim().split("\n").map(line => {
+      const [index, name, active, cwd] = line.split("\t");
+      return { index: +index, name, active: active === "1", cwd: cwd || "" };
     });
+    // Auto-name any window whose tmux name still looks default
+    // (shell/repl name, numeric, or the cwd basename — i.e. tmux's
+    // automatic-rename output) to the first 3 letters of its git
+    // project. Disable automatic-rename for that window so tmux
+    // doesn't immediately overwrite it.
+    for (const w of rows) {
+      if (!w.cwd) continue;
+      if (_autoNamedTmux.get(w.index) === w.cwd) continue;
+      const cwdBase = path.basename(w.cwd);
+      const isDefaultName = /^(zsh|bash|fish|sh|tmux|node|claude)$/.test(w.name)
+        || /^\d+$/.test(w.name)
+        || w.name === cwdBase;
+      if (!isDefaultName) { _autoNamedTmux.set(w.index, w.cwd); continue; }
+      let projName = "";
+      try {
+        const { stdout: top } = await execFileP("git", ["-C", w.cwd, "rev-parse", "--show-toplevel"], { timeout: 1000 });
+        projName = path.basename(top.trim());
+      } catch { _autoNamedTmux.set(w.index, w.cwd); continue; }
+      if (!projName) { _autoNamedTmux.set(w.index, w.cwd); continue; }
+      const target = projName.slice(0, 3).toLowerCase().replace(/[^a-z0-9]/g, "");
+      if (!target || target === w.name) { _autoNamedTmux.set(w.index, w.cwd); continue; }
+      try {
+        execSync(`tmux set-window-option -t 0:${w.index} automatic-rename off`, { stdio: "ignore" });
+        execSync(`tmux rename-window -t 0:${w.index} ${JSON.stringify(target)}`, { stdio: "ignore" });
+        w.name = target;
+      } catch {}
+      _autoNamedTmux.set(w.index, w.cwd);
+    }
+    tmuxWindows = rows.map(({ index, name, active }) => ({ index, name, active }));
   } catch { tmuxWindows = []; }
   finally { _tmuxRefreshInFlight = false; }
   const active = tmuxWindows.find(w => w.active);
@@ -6205,25 +6260,46 @@ app.post("/api/tmux-rename", (req, res) => {
   if (!safe) return res.status(400).json({ error: "name empty after sanitize" });
   try {
     execSync(`tmux rename-window -t 0:${parseInt(index)} ${JSON.stringify(safe)}`, { stdio: "ignore" });
-    refreshTmuxWindows();
+    refreshTmuxWindows().then(broadcastTmuxState);
     res.json({ ok: true, name: safe });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+app.get("/api/tmux-colors", (_req, res) => res.json({ colors: tmuxColors }));
+app.post("/api/tmux-color", (req, res) => {
+  const { name, color } = req.body || {};
+  if (!name || typeof name !== "string") return res.status(400).json({ error: "name required" });
+  // Accept short hex (#fff), long hex (#ffffff), with optional 8-digit alpha.
+  // Any other input clears the entry.
+  if (color && /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(color)) {
+    tmuxColors[name] = color;
+  } else {
+    delete tmuxColors[name];
+  }
+  saveTmuxColors();
+  broadcastTmuxState();
+  res.json({ ok: true, colors: tmuxColors });
+});
+
 app.post("/api/tmux-select", async (req, res) => {
   const { index } = req.body;
   try {
     execSync(`tmux select-window -t 0:${index}`, { stdio: "ignore" });
-    // Await refresh + broadcast a focused tmux update so the iOS tab
-    // bar reflects the new active window immediately instead of
-    // waiting for the next 1Hz playback tick (~1s of stale state).
-    await refreshTmuxWindows();
-    if (tmuxWindows.length > 1) {
-      const msg = JSON.stringify({ type: "tmux", tmuxWindows });
-      wss.clients.forEach(ws => { if (ws.readyState === 1) ws.send(msg); });
+    // Optimistically flip the active flag in-cache and broadcast NOW.
+    // refreshTmuxWindows() has an in-flight guard and may early-return
+    // (a previous refresh can be slow when it spawns git+tmux for
+    // auto-rename), which used to leave the broadcast carrying the
+    // stale active flag and the UI stuck on the wrong tab.
+    const targetIdx = parseInt(index, 10);
+    if (Number.isFinite(targetIdx)) {
+      tmuxWindows = tmuxWindows.map(w => ({ ...w, active: w.index === targetIdx }));
     }
+    if (tmuxWindows.length > 1) broadcastTmuxState();
+    // Kick the authoritative refresh in the background and re-broadcast
+    // once it lands, so any other window state changes catch up too.
+    refreshTmuxWindows().then(() => { if (tmuxWindows.length > 1) broadcastTmuxState(); });
     claudeOptions = [];
     claudeQuestion = '';
     claudeState = 'idle';
@@ -6674,7 +6750,10 @@ function startWsSync() {
       if (claudeOptions.length) state.claudeOptions = claudeOptions;
       if (claudeQuestion) state.claudeQuestion = claudeQuestion;
       // tmuxWindows updated on its own 3s timer — read from cache here.
-      if (tmuxWindows.length > 1) state.tmuxWindows = tmuxWindows;
+      if (tmuxWindows.length > 1) {
+        state.tmuxWindows = tmuxWindows;
+        state.tmuxColors = tmuxColors;
+      }
       const msg = JSON.stringify(state);
       wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
     } catch {}

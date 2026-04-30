@@ -95,7 +95,8 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
         CAPPluginMethod(name: "setLayerFrame", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "getLiveState", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "seekToDate", returnType: CAPPluginReturnPromise),
-        CAPPluginMethod(name: "getPendingPushTap", returnType: CAPPluginReturnPromise)
+        CAPPluginMethod(name: "getPendingPushTap", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setSafeAreaBackground", returnType: CAPPluginReturnPromise)
     ]
 
     private var player: AVPlayer?
@@ -766,6 +767,63 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 call.resolve(["ok": false, "reason": "no PDT"])
             }
         }
+    }
+
+    /// Paint the iOS safe-area regions (Dynamic Island gutter, home
+    /// indicator) by swapping background colors on every layer that
+    /// can show through. Capacitor StatusBar's setBackgroundColor is
+    /// an Android-only no-op, and `body` bg alone doesn't reach the
+    /// status-bar UIView area. Pass null/empty to revert.
+    @objc func setSafeAreaBackground(_ call: CAPPluginCall) {
+        let hex = call.getString("color") ?? ""
+        DispatchQueue.main.async {
+            let color = NativePlayerPlugin.colorFromHex(hex) ?? UIColor(red: 33.0/255, green: 33.0/255, blue: 33.0/255, alpha: 1)
+            guard let webView = self.bridge?.webView else { return }
+            webView.backgroundColor = color
+            webView.scrollView.backgroundColor = color
+            webView.isOpaque = false
+            webView.superview?.backgroundColor = color
+            webView.window?.backgroundColor = color
+            // Walk up parents (UIViewController.view, UIWindow) and
+            // also paint EVERY direct child of the window — Capacitor's
+            // iOS status-bar plugin (when overlaysWebView=false) inserts
+            // a tinted UIView at the top of the window stack that
+            // covers our WebView's tinted bg. Recoloring all window
+            // children catches it without us having to identify it
+            // by name.
+            var v: UIView? = webView
+            while v != nil {
+                v?.backgroundColor = color
+                v = v?.superview
+            }
+            if let window = webView.window {
+                for sub in window.subviews {
+                    sub.backgroundColor = color
+                }
+            }
+        }
+        call.resolve(["ok": true])
+    }
+
+    private static func colorFromHex(_ hex: String) -> UIColor? {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s = String(s.dropFirst()) }
+        guard s.count == 6 || s.count == 8 else { return nil }
+        var v: UInt64 = 0
+        guard Scanner(string: s).scanHexInt64(&v) else { return nil }
+        let r, g, b, a: CGFloat
+        if s.count == 6 {
+            r = CGFloat((v >> 16) & 0xFF) / 255
+            g = CGFloat((v >> 8) & 0xFF) / 255
+            b = CGFloat(v & 0xFF) / 255
+            a = 1
+        } else {
+            r = CGFloat((v >> 24) & 0xFF) / 255
+            g = CGFloat((v >> 16) & 0xFF) / 255
+            b = CGFloat((v >> 8) & 0xFF) / 255
+            a = CGFloat(v & 0xFF) / 255
+        }
+        return UIColor(red: r, green: g, blue: b, alpha: a)
     }
 
     /// Returns and CLEARS any pending push-tap action stashed by

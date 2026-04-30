@@ -9,6 +9,18 @@ import { tick as hapticTick, thump as hapticThump, selection as hapticSelection,
 import { AudioOutputIcon } from './SecretMenu'
 import { isNativeIOS, NativePlayer } from '../native/player'
 
+// Same darken transform used by the tmux-tab and terminal panel so the
+// now-playing bar matches the tinted active window without re-deriving.
+function darkenHex(hex, factor = 0.55) {
+  if (!hex) return hex
+  const c = hex.replace('#', '')
+  const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+  const r = Math.round(parseInt(h.slice(0, 2), 16) * factor)
+  const g = Math.round(parseInt(h.slice(2, 4), 16) * factor)
+  const b = Math.round(parseInt(h.slice(4, 6), 16) * factor)
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')
+}
+
 // Replaces the old cmux focus button in the now-playing bar. Shows the
 // current audio output's icon; tap opens a compact picker popover.
 // PiP toggle: tap to start, tap again to stop. Listens for the
@@ -423,6 +435,17 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
     monitor: s.monitor, windowMode: s.windowMode, player: s.player, title: s.title, channel: s.channel, thumbnail: s.thumbnail, visible: s.visible, phoneSyncOk: s.phoneSyncOk,
     height: s.height, videoCodec: s.videoCodec, hwdec: s.hwdec, speed: s.speed,
   })))
+  // Pick up the active tmux window's color so the now-playing bar
+  // shares the same tint as the terminal pane / Dynamic Island gutter.
+  // Only applied while the terminal panel is open — the tint is a
+  // terminal-context affordance, not a global theme override.
+  const terminalOpen = useSyncStore(s => s.terminalOpen)
+  const activeTmuxColor = usePlaybackStore(s => {
+    const list = Array.isArray(s.tmuxWindows) ? s.tmuxWindows : null
+    const active = list?.find(w => w.active)
+    return active && s.tmuxColors ? s.tmuxColors[active.name] : null
+  })
+  const tmuxTint = terminalOpen ? activeTmuxColor : null
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
@@ -865,7 +888,22 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   const frame = seekPreview ? getStoryboardFrame(seekPreview.time) : null
 
   return (
-    <div className={`now-playing${exiting ? ' np-exit' : ''}`} ref={rootRef}>
+    <div
+      className={`now-playing${exiting ? ' np-exit' : ''}`}
+      ref={rootRef}
+      style={tmuxTint ? {
+        background: darkenHex(tmuxTint, 0.55),
+        // Scrubber track (un-played, right side): a deeper darken of
+        // the tint so it stays in the same color family as the bar bg
+        // instead of falling back to the off-theme gray --surface-hover.
+        // Pattern dots match the bar bg.
+        '--np-track': darkenHex(tmuxTint, 0.4),
+        '--np-track-pattern': darkenHex(tmuxTint, 0.55),
+        // Played portion (fill, left side): raw tint so it stands out.
+        '--np-fill': tmuxTint,
+        '--np-fill-pattern': darkenHex(tmuxTint, 0.55),
+      } : undefined}
+    >
       {/* Progress bar — on top of everything */}
       <div
         className="np-progress-bar"

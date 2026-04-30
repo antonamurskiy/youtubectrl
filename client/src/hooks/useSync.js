@@ -48,9 +48,12 @@ export function useSync() {
         } else if (data.type === 'claude') {
           usePlaybackStore.getState().update(data)
         } else if (data.type === 'tmux') {
-          // Focused update from /api/tmux-select — refresh the tab
-          // bar without waiting for the next 1Hz playback tick.
-          usePlaybackStore.getState().update({ tmuxWindows: data.tmuxWindows })
+          // Focused update from /api/tmux-select / rename / color save —
+          // refresh the tab bar without waiting for the next 1Hz tick.
+          usePlaybackStore.getState().update({
+            tmuxWindows: data.tmuxWindows,
+            ...(data.tmuxColors ? { tmuxColors: data.tmuxColors } : {}),
+          })
         } else if (data.type === 'claude-feed') {
           if (Array.isArray(data.lines) && data.lines.length) {
             useSyncStore.getState().pushClaudeFeed(data.lines)

@@ -841,9 +841,9 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   width: calc(100% + 24px);
   height: 28px;
   background:
-    repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
-    repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
-    var(--surface-hover);
+    repeating-linear-gradient(90deg, transparent, transparent 1px, var(--np-track-pattern, var(--bg)) 1px, var(--np-track-pattern, var(--bg)) 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, var(--np-track-pattern, var(--bg)) 1px, var(--np-track-pattern, var(--bg)) 2px),
+    var(--np-track, var(--surface-hover));
   background-size: 2px 2px, 2px 2px, 100% 100%;
   background-position: 0 0;
   background-repeat: repeat;
@@ -866,9 +866,9 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 .np-progress-fill {
   height: 100%;
   background:
-    repeating-linear-gradient(90deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
-    repeating-linear-gradient(0deg, transparent, transparent 1px, var(--bg) 1px, var(--bg) 2px),
-    var(--text-dim);
+    repeating-linear-gradient(90deg, transparent, transparent 1px, var(--np-fill-pattern, var(--bg)) 1px, var(--np-fill-pattern, var(--bg)) 2px),
+    repeating-linear-gradient(0deg, transparent, transparent 1px, var(--np-fill-pattern, var(--bg)) 1px, var(--np-fill-pattern, var(--bg)) 2px),
+    var(--np-fill, var(--text-dim));
   background-size: 2px 2px, 2px 2px, 100% 100%;
   background-position: 0 0;
   background-repeat: repeat;
@@ -1149,6 +1149,10 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
  * of its flex wrapper and was losing its divider). */
 .secret-menu > .secret-menu-item:last-child { border-bottom: none; }
 .secret-menu-item:active { background: var(--surface-hover); }
+/* Submenu rows get a darker tint so nested groups are visually distinct
+ * from the top-level menu (which sits on #151515). */
+.secret-menu-item.sub { background: #0a0a0a; }
+.secret-menu-item.sub:active { background: #1f1f1f; }
 
 /* ── Volume area in secret menu ── */
 .vol-area {
@@ -1335,8 +1339,29 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 }
 
 .terminal-container .xterm-viewport {
-  background: var(--bg) !important;
+  background: var(--terminal-bg, var(--bg)) !important;
+  /* Native scroll disabled — touch-driven scroll is delegated to the
+   * right-edge .terminal-scroll-zone overlay so a mis-aimed swipe
+   * can't drag the buffer up. xterm.scrollLines is called manually
+   * from that zone's touchmove handler. */
+  touch-action: none !important;
+  overflow: hidden !important;
 }
+
+/* Right-edge invisible touch zone. Captures touchstart/touchmove and
+ * drives xterm.scrollLines manually so the rest of the terminal can
+ * have native scroll fully disabled. */
+.terminal-scroll-zone {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 64px;
+  z-index: 2;
+  background: transparent;
+  touch-action: pan-y;
+}
+
 
 
 .terminal-keys {
@@ -1355,7 +1380,11 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 .terminal-keys button {
   flex-shrink: 0;
   padding: 6px 10px;
-  background: var(--surface);
+  /* When the terminal panel has a tint set via --terminal-bg, the keys
+   * blend into the panel via a translucent overlay so they read as
+   * "lifted" from the same color family. Falls back to --surface when
+   * no tint is active. */
+  background: var(--terminal-key-bg, var(--surface));
   color: var(--text);
   font-family: var(--font);
   font-size: var(--font-sm);
@@ -1365,7 +1394,7 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 }
 
 .terminal-keys button:active {
-  background: var(--surface-hover);
+  background: var(--terminal-key-bg-active, var(--surface-hover));
 }
 
 .terminal-keys button:focus {
@@ -1536,8 +1565,8 @@ body.keyboard-open .fab-stack { bottom: 408px; }
 .fab-refresh, .fab-cmux, .fab-tmux {
   width: 40px;
   height: 40px;
-  background: rgba(40,40,40,0.7);
-  border: 1px solid rgba(60,56,54,0.6);
+  background: var(--fab-bg, rgba(40,40,40,0.7));
+  border: 1px solid var(--fab-border, rgba(60,56,54,0.6));
   color: var(--text-dim);
   display: flex;
   align-items: center;
@@ -1548,7 +1577,7 @@ body.keyboard-open .fab-stack { bottom: 408px; }
   user-select: none;
   touch-action: manipulation;
 }
-.fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--surface-hover); }
+.fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--fab-bg-active, var(--surface-hover)); }
 
 /* Top-of-screen "kill feed" of recent Claude pane lines. Renders
  * while the terminal panel is closed so the user can keep tabs on
@@ -1711,6 +1740,113 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
   -webkit-appearance: none;
   appearance: none;
   caret-color: var(--green);
+}
+
+/* Rename + color-pick row that replaces the tab button while editing.
+ * Items align left-to-right alongside the rest of the tab strip. */
+.tmux-tab-edit {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 4px;
+  background: #151515;
+  border: 1px solid var(--border);
+  padding: 2px;
+}
+
+/* Centered modal portal for the rename popover. Avoids the position:fixed
+ * + iOS soft-keyboard interaction that was clipping the inline strip
+ * variant off-screen. */
+.tmux-edit-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 700;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: max(env(safe-area-inset-top, 0px), 12vh);
+  background: rgba(0, 0, 0, 0.45);
+  pointer-events: auto;
+}
+.tmux-edit-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  background: #151515;
+  border: 1px solid var(--border);
+  min-width: 240px;
+  max-width: 90vw;
+}
+.tmux-edit-card .tmux-tab-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+.tmux-edit-card .tmux-color-swatches {
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tmux-edit-card .tmux-swatch {
+  width: 28px;
+  height: 28px;
+}
+.tmux-edit-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+.tmux-edit-actions .tmux-tab-commit,
+.tmux-edit-actions .tmux-tab-cancel {
+  padding: 6px 14px;
+  font-size: var(--font-lg);
+}
+.tmux-color-swatches {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 3px;
+}
+.tmux-swatch {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid rgba(255,255,255,0.15);
+  border-radius: 0;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.tmux-swatch.active {
+  border-color: var(--green);
+  outline: 1px solid var(--green);
+}
+.tmux-tab-commit {
+  padding: 0 8px;
+  background: var(--green);
+  color: #151515;
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  border: none;
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.tmux-tab-cancel {
+  padding: 0 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: var(--font-sm);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 
 .fab-tmux {

@@ -24,6 +24,8 @@ export const usePlaybackStore = create((set) => ({
   windowMode: null,
   monitor: 'lg',
   serverTs: 0,
+  tmuxWindows: [],
+  tmuxColors: {},
 
   update: (state) => set(state),
   reset: () => set({

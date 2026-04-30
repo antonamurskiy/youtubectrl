@@ -13,14 +13,14 @@ const MAX_SIZE = 20
 // "wide" (full-width thumbnail like the official YouTube app). Persists
 // via the uiStore → localStorage. Closes the menu on tap so the change
 // is immediately visible.
-function GridStyleToggle({ onAfter, paddingLeft = 12 }) {
+function GridStyleToggle({ onAfter, paddingLeft = 12, sub = false }) {
   const gridStyle = useUIStore(s => s.gridStyle)
   const setGridStyle = useUIStore(s => s.setGridStyle)
   const next = gridStyle === 'wide' ? 'compact' : 'wide'
   const isWide = gridStyle === 'wide'
   return (
     <button
-      className="secret-menu-item"
+      className={`secret-menu-item${sub ? ' sub' : ''}`}
       style={{ display: 'flex', alignItems: 'center', gap: 8, paddingLeft }}
       onClick={() => {
         hapticTick()
@@ -306,7 +306,7 @@ function FindMyToggle({ addToast }) {
       </div>
       {friend?.ok && (
         <div
-          className="secret-menu-item"
+          className="secret-menu-item sub"
           style={{ paddingLeft: 24, display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--font-sm)', cursor: friend.cropUrl ? 'pointer' : 'default' }}
           onClick={() => {
             if (!friend.cropUrl) return
@@ -469,7 +469,7 @@ function BrightnessScrubber() {
 
   const pct = value == null ? 0 : value
   return (
-    <div className="secret-menu-item size-area" ref={ref}>
+    <div className="secret-menu-item size-area sub" ref={ref}>
       <div className="size-fill" style={{ width: `${pct}%` }} />
       <div className="size-label" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">
@@ -551,7 +551,7 @@ function FontSizeScrubber({ value, onChange }) {
 
   const pct = ((value - MIN_SIZE) / (MAX_SIZE - MIN_SIZE)) * 100
   return (
-    <div className="secret-menu-item size-area" ref={ref}>
+    <div className="secret-menu-item size-area sub" ref={ref}>
       <div className="size-fill" style={{ width: `${pct}%` }} />
       <div className="size-label">{value}px</div>
     </div>
@@ -753,7 +753,7 @@ export default function SecretMenu() {
         {showOutputs && audioOutputs.map(name => (
           <button
             key={name}
-            className="secret-menu-item"
+            className="secret-menu-item sub"
             style={{ paddingLeft: 24, color: name === currentOutput ? 'var(--accent)' : 'var(--text)' }}
             onClick={() => { hapticTick(); switchOutput(name) }}
           >
@@ -783,7 +783,7 @@ export default function SecretMenu() {
           return (
             <button
               key={d.address}
-              className="secret-menu-item"
+              className="secret-menu-item sub"
               style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
               onClick={() => {
                 hapticThump()
@@ -846,7 +846,7 @@ export default function SecretMenu() {
           <>
             <BrightnessScrubber />
             <FontSizeScrubber value={fontSize} onChange={(n) => { setFontSize(n); applyFontSize(n) }} />
-            <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
+            <button className="secret-menu-item sub" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); setShowFonts(!showFonts) }}>
               <Ico>
                 <polyline points="4 7 4 4 20 4 20 7" />
                 <line x1="9" y1="20" x2="15" y2="20" />
@@ -857,15 +857,15 @@ export default function SecretMenu() {
             {showFonts && FONTS.map(([label, family]) => (
               <button
                 key={label}
-                className="secret-menu-item"
+                className="secret-menu-item sub"
                 style={{ paddingLeft: 40, fontFamily: family, color: label === fontSel ? 'var(--green)' : 'var(--text)' }}
                 onClick={() => { hapticTick(); applyFont(label); setFontSel(label) }}
               >
                 {label === fontSel ? '● ' : '  '}{label}
               </button>
             ))}
-            <GridStyleToggle onAfter={toggleSecretMenu} paddingLeft={24} />
-            <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => {
+            <GridStyleToggle onAfter={toggleSecretMenu} paddingLeft={24} sub />
+            <button className="secret-menu-item sub" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => {
               hapticTick()
               fetch('/api/refresh-cookies', { method: 'POST' }).then(() => addToast('Cookies refreshed')).catch(() => addToast('Refresh failed'))
               toggleSecretMenu()
@@ -876,7 +876,7 @@ export default function SecretMenu() {
               Refresh cookies
             </button>
             {isNativeIOS && (
-              <button className="secret-menu-item" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
+              <button className="secret-menu-item sub" style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }} onClick={() => { hapticTick(); NativePlayer.showAirPlayPicker() }}>
                 <Ico>
                   <path d="M5 17H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-1" />
                   <polygon points="12 15 17 21 7 21 12 15" />
@@ -885,7 +885,7 @@ export default function SecretMenu() {
               </button>
             )}
             <button
-              className="secret-menu-item"
+              className="secret-menu-item sub"
               style={{ ...ICON_BTN_STYLE, paddingLeft: 24 }}
               onClick={() => {
                 hapticThump()

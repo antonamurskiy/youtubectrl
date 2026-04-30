@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl'
 import { useSyncStore } from '../stores/sync'
 import { usePlaybackStore } from '../stores/playback'
 import { currentFont, currentFontSize, FONTS } from '../fonts'
+import { NativePlayer } from '../native/player'
 import '@xterm/xterm/css/xterm.css'
 
 // xterm needs a plain family string like "'JetBrains Mono', monospace"
@@ -14,17 +15,60 @@ function xtermFontFamily() {
   return entry[1]
 }
 
-export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, visible }) {
+// Multiply each RGB channel by `factor` so a small swatch on a dark
+// modal bg matches the perceived darkness when the same hex is
+// stretched across the entire terminal pane (large filled regions
+// read brighter than tiny ones — Helmholtz-Kohlrausch). Mirrors the
+// helper in App.jsx that's applied at the tab.
+function darkenHex(hex, factor = 0.55) {
+  if (!hex) return hex
+  const c = hex.replace('#', '')
+  const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+  const r = Math.round(parseInt(h.slice(0, 2), 16) * factor)
+  const g = Math.round(parseInt(h.slice(2, 4), 16) * factor)
+  const b = Math.round(parseInt(h.slice(4, 6), 16) * factor)
+  return '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')
+}
+
+// Mix `color` (hex) toward `base` so the terminal bg gets a subtle tint
+// without going neon. mix = fraction of color in the result.
+function mixHex(color, base, mix) {
+  if (!color) return base
+  const c = color.replace('#', '')
+  const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+  const bh = base.replace('#', '').padEnd(6, '0').slice(0, 6)
+  const cr = parseInt(h.slice(0, 2), 16), cg = parseInt(h.slice(2, 4), 16), cb = parseInt(h.slice(4, 6), 16)
+  const br = parseInt(bh.slice(0, 2), 16), bg = parseInt(bh.slice(2, 4), 16), bb = parseInt(bh.slice(4, 6), 16)
+  const r = Math.round(br + (cr - br) * mix)
+  const g = Math.round(bg + (cg - bg) * mix)
+  const b = Math.round(bb + (cb - bb) * mix)
+  return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
+}
+
+export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmuxColors, visible }) {
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
+  const fitAddonRef = useRef(null)
   const touchStartXRef = useRef(null)
   // Pane-swipe state. Captures start coords + time on touchstart;
   // touchend reads tmuxWindows from the latest render via a ref so
   // the handler doesn't go stale between window changes.
   const swipeStartRef = useRef(null)
+  const scrollZoneRef = useRef(null)
+  // Set when the most recent touchend was a horizontal pane-swipe.
+  // refocusOnTap reads this and skips refocus so the iOS soft keyboard
+  // doesn't pop up every time the user swipes between tmux windows.
+  const justSwipedRef = useRef(false)
   const tmuxWindowsRef = useRef(tmuxWindows)
   useEffect(() => { tmuxWindowsRef.current = tmuxWindows }, [tmuxWindows])
+
+  // Active window's tint colour, looked up by name in the color map.
+  // null/undefined = no tint (default theme bg).
+  const activeWindow = Array.isArray(tmuxWindows) ? tmuxWindows.find(w => w.active) : null
+  const activeColor = activeWindow && tmuxColors ? tmuxColors[activeWindow.name] : null
+  const activeColorRef = useRef(activeColor)
+  useEffect(() => { activeColorRef.current = activeColor }, [activeColor])
 
   // Switch to the tmux window N positions away from the active one.
   // Wraps around the list. Optimistically flips the active flag in
@@ -81,6 +125,8 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     if (e.cancelable) e.preventDefault()
     // Swipe LEFT (finger moves left, dx<0) advances to next pane —
     // matches the iOS Safari tab-swipe convention.
+    justSwipedRef.current = true
+    setTimeout(() => { justSwipedRef.current = false }, 400)
     switchTmuxByOffset(dx < 0 ? 1 : -1)
   }
 
@@ -99,8 +145,13 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       // Green has no CSS var (hardcoded olive in default theme); during
       // proximity, swap to a peach that harmonizes with the red wash.
       const green = proximity ? '#d49b7e' : '#7e8e50'
+      // If the active tmux window has a chosen color, blend it into the
+      // base bg so the terminal pane visibly reflects which window is
+      // focused.
+      const baseBg = v('--bg') || '#282828'
+      const tintBg = activeColorRef.current ? darkenHex(activeColorRef.current) : baseBg
       return {
-        background: v('--bg'),
+        background: tintBg,
         foreground: v('--text'),
         cursor: v('--text'),
         cursorAccent: proximity ? '#2a0606' : '#151515',
@@ -146,6 +197,7 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     })
     proximityObserver.observe(document.body, { attributes: true, attributeFilter: ['class'] })
     const fitAddon = new FitAddon()
+    fitAddonRef.current = fitAddon
     term.loadAddon(fitAddon)
     term.open(termRef.current)
     fitAddon.fit()
@@ -154,11 +206,80 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     // so after the keyboard dismisses, a tap on the canvas doesn't land on the
     // textarea and iOS won't resummon the keyboard. Explicitly refocus on tap.
     const termEl = termRef.current
-    const refocusOnTap = () => {
+
+    // xterm's WebGL renderer keeps the .xterm-viewport div scrollable
+    // (it syncs scrollTop to the buffer position). External CSS
+    // !important doesn't always beat the styles xterm sets inline +
+    // scroll handlers attached at the renderer level. Forcefully
+    // remove ALL touch-driven scroll capabilities by setting inline
+    // !important properties via JS:
+    //   touch-action: none      → browser doesn't generate scroll
+    //   overflow: hidden        → scrollTop has no effect
+    //   pointer-events: none    → touches pass through to terminal-
+    //                              container (swipe detection) or our
+    //                              right-edge .terminal-scroll-zone
+    //                              overlay (explicit scroll).
+    // MutationObserver re-applies in case xterm re-creates internal
+    // nodes on resize/theme change.
+    // The actual cause of "I can scroll anywhere" was tmux's mouse mode:
+    // xterm forwards touch-drag events as mouse escape sequences to the
+    // pty, and tmux interprets them as scroll-back commands. Disabling
+    // CSS scroll on .xterm-viewport doesn't help because the scroll is
+    // happening INSIDE tmux, not in the browser.
+    //
+    // Fix: hard-disable pointer events on the entire xterm subtree so
+    // touches never reach xterm's mouse reporter. The terminal-
+    // container parent still receives touch events for swipe detection,
+    // and refocusOnTap continues to work because it listens on termEl
+    // (the parent) — touches that pass THROUGH the xterm canvas reach
+    // termEl thanks to pointer-events: none on the children. The
+    // right-edge .terminal-scroll-zone overlay sits on TOP and handles
+    // explicit scroll via xterm.scrollLines().
+    const lockSubtree = () => {
+      const xterm = termEl.querySelector('.xterm')
+      if (!xterm) return
+      xterm.style.setProperty('pointer-events', 'none', 'important')
+      // Also lock viewport just in case browser ever generates scroll.
+      const v = termEl.querySelector('.xterm-viewport')
+      if (v) {
+        v.style.setProperty('touch-action', 'none', 'important')
+        v.style.setProperty('overflow', 'hidden', 'important')
+      }
+    }
+    lockSubtree()
+    const viewportLockObserver = new MutationObserver(lockSubtree)
+    viewportLockObserver.observe(termEl, { childList: true, subtree: true })
+    // Track touch coords inside the same listener pair as refocusOnTap
+    // so we can decide BEFORE the React-side onTouchEnd has run whether
+    // the gesture was a horizontal pane-swipe. (justSwipedRef alone
+    // didn't help — the native touchend listener fires before React's
+    // delegated handler, so the swipe ref hadn't been set yet when
+    // refocusOnTap ran, and the iOS keyboard popped on every swipe.)
+    //
+    // tapStartRef tracks tap geometry so refocusOnTap can ignore swipe-
+    // length / long-hold gestures and not pop the iOS keyboard when
+    // the user swipes between panes.
+    const tapStartRef = { x: 0, y: 0, at: 0 }
+    const onTermTouchStart = (e) => {
+      if (!e.touches || e.touches.length !== 1) { tapStartRef.at = 0; return }
+      const t = e.touches[0]
+      tapStartRef.x = t.clientX; tapStartRef.y = t.clientY; tapStartRef.at = Date.now()
+    }
+    const refocusOnTap = (e) => {
+      // Skip when the touchend was a horizontal pane-swipe / long-hold.
+      if (e?.changedTouches?.length) {
+        const t = e.changedTouches[0]
+        const dx = Math.abs(t.clientX - tapStartRef.x)
+        const dy = Math.abs(t.clientY - tapStartRef.y)
+        const dt = Date.now() - tapStartRef.at
+        if (dx > 12 || dy > 12 || dt > 500) return
+      }
+      if (justSwipedRef.current) return
       const ta = termEl?.querySelector('.xterm-helper-textarea')
       if (ta) ta.focus()
       else term.focus()
     }
+    termEl.addEventListener('touchstart', onTermTouchStart, { passive: true })
     termEl.addEventListener('touchend', refocusOnTap)
     termEl.addEventListener('mousedown', refocusOnTap)
 
@@ -257,6 +378,8 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       proximityObserver.disconnect()
       window.removeEventListener('resize', handleResize)
       window.removeEventListener('app-font-change', handleFontChange)
+      viewportLockObserver.disconnect()
+      termEl?.removeEventListener('touchstart', onTermTouchStart)
       termEl?.removeEventListener('touchend', refocusOnTap)
       termEl?.removeEventListener('mousedown', refocusOnTap)
       if (wsRef.current) wsRef.current.close()
@@ -264,6 +387,90 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
       term.dispose()
     }
   }, [])
+
+  // Whenever the active tmux window changes (swipe, tab tap, native
+  // tmux key bind), pin xterm to the bottom for 1.2s. Swipes are easy
+  // to mis-aim into a vertical scroll. xterm's WebGL renderer eats
+  // touch/wheel events directly so preventDefault on touchmove alone
+  // doesn't cover everything — pin via setInterval(20ms) instead of
+  // rAF so even mid-frame scrollback shifts get yanked back. Lock is
+  // also extended on every active touch (see onTermTouchMove) so a
+  // slow swipe doesn't escape the original window.
+  const activeIdx = activeWindow?.index
+  const scrollLockUntilRef = useRef(0)
+  // Persistent pin loop — checks the lock deadline every 20ms and
+  // calls scrollToBottom whenever inside the window. Lives for the
+  // lifetime of the terminal so touchmove handlers can extend the
+  // deadline without having to restart the interval.
+  useEffect(() => {
+    const iv = setInterval(() => {
+      const term = xtermRef.current
+      if (!term) return
+      // Don't fight an active scroll-zone gesture — the user is
+      // explicitly trying to move the buffer and the pin loop kept
+      // yanking them back to bottom mid-swipe.
+      if (scrollZoneRef.current) return
+      if (Date.now() < scrollLockUntilRef.current) {
+        try { term.scrollToBottom() } catch {}
+      }
+    }, 20)
+    return () => clearInterval(iv)
+  }, [])
+  useEffect(() => {
+    scrollLockUntilRef.current = Date.now() + 1200
+  }, [activeIdx])
+
+  // Re-apply the xterm theme whenever the active window's tint changes
+  // so switching tmux windows visibly recolors the terminal pane.
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) return
+    const css = getComputedStyle(document.body)
+    const baseBg = css.getPropertyValue('--bg').trim() || '#282828'
+    const tintBg = activeColor ? darkenHex(activeColor) : baseBg
+    try {
+      term.options.theme = { ...term.options.theme, background: tintBg }
+      term.refresh(0, term.rows - 1)
+    } catch {}
+  }, [activeColor])
+
+  // Paint the iOS safe-area regions (top under the Dynamic Island,
+  // bottom under the keyboard) with the same tint by setting
+  // body+html backgrounds. Tabs strip + panel background already
+  // reflect the tint, but the safe-area gutters bleed through to
+  // the document root, leaving them gray. Restored on close.
+  useEffect(() => {
+    if (!visible) return
+    const html = document.documentElement
+    const body = document.body
+    const prevHtml = html.style.background
+    const prevBody = body.style.background
+    const baseBg = getComputedStyle(body).getPropertyValue('--bg').trim() || '#282828'
+    const tintBg = activeColor ? darkenHex(activeColor) : baseBg
+    html.style.background = tintBg
+    body.style.background = tintBg
+    // The Dynamic Island gutter is painted by the iOS status bar
+    // (overlaysWebView=false in capacitor.config.json), so body bg
+    // doesn't reach it — push the same color via the StatusBar plugin.
+    // The Dynamic Island gutter is painted by the iOS status bar.
+    // Setting it requires BOTH:
+    //   1. setOverlaysWebView({overlay: true}) so the status bar is
+    //      transparent and the WebView extends behind it.
+    //   2. Painting every UIView in the WebView's stack (window,
+    //      WebView, scrollView, superview) the tint color so the
+    //      status-bar area picks it up — body bg alone doesn't reach
+    //      that region in WKWebView. setBackgroundColor on the
+    //      StatusBar plugin is an Android-only no-op on v8.
+    const sb = window.Capacitor?.Plugins?.StatusBar
+    try { sb?.setOverlaysWebView?.({ overlay: true })?.catch?.(() => {}) } catch {}
+    NativePlayer.setSafeAreaBackground?.(tintBg)?.catch?.(() => {})
+    return () => {
+      html.style.background = prevHtml
+      body.style.background = prevBody
+      try { sb?.setOverlaysWebView?.({ overlay: false })?.catch?.(() => {}) } catch {}
+      NativePlayer.setSafeAreaBackground?.('')?.catch?.(() => {})
+    }
+  }, [visible, activeColor])
 
   // Refocus xterm on reopen ONLY if the iOS keyboard was up at the
   // moment we last closed the terminal. Focusing the xterm helper
@@ -297,14 +504,75 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, vis
     return () => useSyncStore.getState().setTerminalSendKey(null)
   }, [])
 
+  // Same tint applied to panel chrome (xterm-viewport CSS reads this
+  // var so the bg matches the renderer-painted area exactly).
+  // Shortcut keys (^A/^C/etc.) draw a translucent overlay on top of
+  // the panel bg so they stay in the same color family.
+  const panelBg = activeColor ? darkenHex(activeColor) : null
+  const panelStyle = panelBg
+    ? {
+        background: panelBg,
+        '--terminal-bg': panelBg,
+        '--terminal-key-bg': 'rgba(255,255,255,0.07)',
+        '--terminal-key-bg-active': 'rgba(255,255,255,0.14)',
+      }
+    : undefined
   return (
-    <div className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}>
+    <div
+      className={`terminal-panel${hasNowPlaying ? '' : ' terminal-full'}`}
+      style={panelStyle}
+    >
       <div
         className="terminal-container"
         ref={termRef}
         onTouchStart={onPaneTouchStart}
         onTouchEnd={onPaneTouchEnd}
         onTouchCancel={() => { swipeStartRef.current = null }}
+      />
+      <div
+        className="terminal-scroll-zone"
+        aria-hidden="true"
+        onTouchStart={(e) => {
+          const t = e.touches[0]
+          if (!t) return
+          scrollZoneRef.current = { y: t.clientY, lastY: t.clientY }
+        }}
+        onTouchMove={(e) => {
+          const s = scrollZoneRef.current
+          if (!s) return
+          const t = e.touches[0]
+          if (!t) return
+          const term = xtermRef.current
+          if (!term) return
+          const rect = term.element?.getBoundingClientRect()
+          const rowH = (rect && term.rows) ? rect.height / term.rows : 18
+          const dyPx = t.clientY - s.lastY
+          const lines = Math.trunc(-dyPx / rowH)
+          if (lines !== 0) {
+            // tmux's mouse mode is on, so the visible scroll buffer
+            // lives inside tmux (not xterm's local scrollback —
+            // tmux's alt-screen never fills it). Send mouse-wheel
+            // escape sequences so tmux scrolls its own copy-mode
+            // buffer like a real wheel scroll would. SGR mouse wheel:
+            //   up   = `\x1b[<64;X;YM`
+            //   down = `\x1b[<65;X;YM`
+            const ws = wsRef.current
+            if (ws?.readyState === WebSocket.OPEN) {
+              const cb = lines > 0 ? 65 : 64
+              const count = Math.min(Math.abs(lines), 8)
+              const cx = Math.max(1, term.cols - 2)
+              const cy = Math.max(1, Math.floor(term.rows / 2))
+              const seq = `\x1b[<${cb};${cx};${cy}M`
+              for (let i = 0; i < count; i++) ws.send(seq)
+            }
+            // Also nudge xterm's local scrollback in case mouse mode
+            // is off in the current tmux pane (Claude prompt etc.).
+            try { term.scrollLines(lines) } catch {}
+            s.lastY = s.lastY - lines * rowH
+          }
+        }}
+        onTouchEnd={() => { scrollZoneRef.current = null }}
+        onTouchCancel={() => { scrollZoneRef.current = null }}
       />
       <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
         <button onClick={() => sendKey('\x01')}>^A</button>
