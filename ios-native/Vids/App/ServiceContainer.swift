@@ -13,6 +13,8 @@ final class ServiceContainer {
     let theme: ThemeStore
     let push: PushStore
     let ui: UIStore
+    let avHost: AVPlayerHost
+    let liveSync: LiveSyncEngine
 
     init() {
         self.api = ApiClient(host: "yuzu.local:3000")
@@ -22,6 +24,8 @@ final class ServiceContainer {
         self.theme = ThemeStore()
         self.push = PushStore()
         self.ui = UIStore()
+        self.avHost = AVPlayerHost()
+        self.liveSync = LiveSyncEngine()
         self.ws = WSClient(host: "yuzu.local:3000")
         self.ws.onMessage = { [weak self] msg in
             guard let self else { return }
@@ -29,6 +33,10 @@ final class ServiceContainer {
             case .playback(let p):
                 self.playback.apply(p)
                 self.terminal.apply(windows: p.tmuxWindows, colors: p.tmuxColors)
+                if let pdt = p.absoluteMs, let ts = p.serverTs {
+                    self.liveSync.setServerPDT(pdt, serverTs: ts)
+                    self.liveSync.updateClockOffset(self.ws.clockOffset)
+                }
             case .tmux(let t):
                 self.terminal.apply(windows: t.windows, colors: t.colors)
             case .claudeFeed(let lines):
@@ -37,6 +45,20 @@ final class ServiceContainer {
                 self.playback.applyClaude(c)
             }
         }
+        // Wire AVPlayerHost callbacks to the server API.
+        self.avHost.onRemotePlayPause = { [weak self] in
+            Task { try? await self?.api.playPause() }
+        }
+        self.avHost.onRemoteSkip = { [weak self] delta in
+            Task { try? await self?.api.skip(delta) }
+        }
+        self.avHost.onRemoteSeek = { [weak self] sec in
+            Task { try? await self?.api.seek(sec) }
+        }
+        self.avHost.onVolumeButton = { [weak self] step in
+            Task { try? await self?.api.volumeBump(step) }
+        }
+        self.liveSync.attach(host: self.avHost, clockOffset: 0)
     }
 
     func start() async {

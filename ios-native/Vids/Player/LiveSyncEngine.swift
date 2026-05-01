@@ -1,51 +1,148 @@
 import Foundation
 import Observation
 
-/// Phase 6 skeleton. Self-calibrating bias loop that keeps the iPhone's
-/// AVPlayer locked to the Mac mpv's PDT for live HLS streams. Port the
-/// math from `client/src/components/PhonePlayer.jsx` line-by-line; the
-/// tunables below are validated against real lofi (5s segments) +
-/// sl4m (2s segments) streams. Don't change them blindly.
+/// Phase 6 — port from `client/src/components/PhonePlayer.jsx` sync
+/// interval. Self-calibrating bias loop keeping phone AVPlayer locked
+/// to Mac mpv's PDT for live HLS.
 ///
-/// Convergence: ~4-8 seeks, 20-30 seconds, settles |drift| < 50ms.
+/// Convergence: ~4-8 seeks, 20-30s, settles |drift| < 50ms.
 ///
-/// See CLAUDE.md > "Live Sync Architecture" for the full theory:
-/// - PDT as the only sync currency (mpv & AVPlayer agree on segment PDT)
-/// - Anchor system for stable scrubber math
-/// - Self-calibrating bias loop for AVPlayer's segment-boundary undershoot
-/// - MPV_DISPLAY_LAG_MS = 3 × TARGETDURATION (NOT a fixed constant)
+/// Tunables match PhonePlayer.jsx exactly. **Validate against real
+/// lofi (5s segments) and sl4m (2s segments) before changing.**
 @Observable
 final class LiveSyncEngine {
-    // MARK: tunables (match PhonePlayer.jsx — DO NOT change without validating on a real live stream)
-
-    /// Aggressive learning rate; smaller values converge too slowly and
-    /// the seek-threshold gate stops firing before convergence.
+    // Tunables
     let learningRate: Double = 0.7
-    /// Below this, drift sits inside AVPlayer's per-seek jitter floor.
     let seekThresholdSec: Double = 0.5
-    /// Minimum gap between seeks — HLS buffering needs to settle before
-    /// post-seek measurement is trustworthy.
     let seekCooldownSec: Double = 2.5
-    /// EMA window for displayed (smoothed) drift.
     let smoothingWindow: Int = 5
-    /// "Stable" threshold for trusting the measurement.
     let stableVarianceMs: Double = 80
+    let outlierThresholdSec: Double = 10  // drop drift > this from EMA
+    let postSeekSettleSec: Double = 2.0
+    let stableSampleCount: Int = 3
 
-    // MARK: state
-
-    var smoothedDriftMs: Double = 0
-    var biasMs: Double = 0
-    var lastSeekAt: Date? = nil
-    var calibPending: Bool = false
+    // State
+    private(set) var smoothedDriftMs: Double = 0
+    private(set) var biasMs: Double = 0
+    private(set) var rawDriftMs: Double = 0
+    private(set) var lastSeekAt: Date? = nil
+    private(set) var calibPending: Bool = false
     private var samples: [Double] = []
+    private var postSeekSamples: [Double] = []
 
-    // MARK: skeleton API
+    private weak var host: AVPlayerHost?
+    private var ticker: Timer?
+    private var clockOffsetMs: Double = 0
+    private var enabled: Bool = false
 
-    /// Phase 6: run from a 1Hz Timer when `playback.isLive && phoneActive`.
-    /// Reads mpv PDT from server (PlaybackPayload.absoluteMs) and AVPlayer's
-    /// item.currentDate(); computes drift; decides whether to seek.
-    func tick(mpvPdtMs: Double, phonePdtMs: Double?, host: AVPlayerHost) async {
-        // TODO phase 6: implement.
-        _ = mpvPdtMs; _ = phonePdtMs; _ = host
+    func attach(host: AVPlayerHost, clockOffset: Double) {
+        self.host = host
+        self.clockOffsetMs = clockOffset
+    }
+
+    func start() {
+        guard !enabled else { return }
+        enabled = true
+        // 1Hz tick — matches PhonePlayer.jsx sync interval frequency.
+        ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.tick() }
+        }
+    }
+
+    func stop() {
+        enabled = false
+        ticker?.invalidate()
+        ticker = nil
+        samples.removeAll()
+        postSeekSamples.removeAll()
+        calibPending = false
+    }
+
+    func reset() {
+        smoothedDriftMs = 0
+        biasMs = 0
+        rawDriftMs = 0
+        lastSeekAt = nil
+        calibPending = false
+        samples.removeAll()
+        postSeekSamples.removeAll()
+    }
+
+    /// Call from PlaybackStore broadcast tick to update the cached
+    /// clock offset (recalibrates every 5min via WS ping/pong).
+    func updateClockOffset(_ offset: Double) {
+        clockOffsetMs = offset
+    }
+
+    /// `mpvPdtMs` is the server's `playback.absoluteMs` — wall-clock PDT
+    /// of the frame mpv is showing right now. `serverTs` is when the
+    /// server computed it; we add the wall-clock elapsed since.
+    func setServerPDT(_ mpvPdtMs: Double, serverTs: Double) {
+        serverPdtMs = mpvPdtMs
+        self.serverTsMs = serverTs
+    }
+    private var serverPdtMs: Double = 0
+    private var serverTsMs: Double = 0
+
+    private func tick() {
+        guard enabled, let host else { return }
+        // Server's PDT now = serverPdtMs + (wall-clock since serverTs).
+        let nowMs = Date().timeIntervalSince1970 * 1000
+        // elapsed = (nowMs + clockOffsetMs - serverTsMs), clamped [0, 2000].
+        let elapsed = max(0, min(2000, nowMs + clockOffsetMs - serverTsMs))
+        let mpvPdtNow = serverPdtMs + elapsed
+
+        let liveState = host.liveState()
+        guard let phonePdt = liveState.currentDateMs else { return }
+
+        let drift = (mpvPdtNow - phonePdt) / 1000  // positive = phone behind
+        rawDriftMs = drift * 1000
+
+        // Drop outliers from EMA — AVPlayer reports stale dates while
+        // HLS first loads (drift readings of 7000+s).
+        if abs(drift) < outlierThresholdSec {
+            samples.append(drift * 1000)
+            if samples.count > smoothingWindow { samples.removeFirst() }
+            smoothedDriftMs = samples.reduce(0, +) / Double(samples.count)
+        }
+
+        let cooldownOk: Bool = {
+            guard let last = lastSeekAt else { return true }
+            return Date().timeIntervalSince(last) >= seekCooldownSec
+        }()
+
+        // Calibrate from post-seek samples once stable.
+        if calibPending, let last = lastSeekAt, Date().timeIntervalSince(last) >= postSeekSettleSec {
+            postSeekSamples.append(drift * 1000)
+            let recent = Array(postSeekSamples.suffix(stableSampleCount))
+            if recent.count >= stableSampleCount {
+                let mean = recent.reduce(0, +) / Double(recent.count)
+                let variance = recent.map { abs($0 - mean) }.max() ?? 0
+                if variance <= stableVarianceMs {
+                    biasMs += (mean * learningRate).rounded()
+                    calibPending = false
+                    postSeekSamples.removeAll()
+                    // Force a follow-up seek to apply the new bias —
+                    // without this, drift drops below threshold and
+                    // the loop stalls before converging.
+                    forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+                }
+            }
+        }
+
+        // Seek if drift exceeds threshold AND cooldown elapsed (or calibrated).
+        let shouldSeek = (abs(drift) >= seekThresholdSec) && cooldownOk
+        if shouldSeek {
+            forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+        }
+    }
+
+    private func forceSeek(targetPdtMs: Double, host: AVPlayerHost) {
+        lastSeekAt = Date()
+        calibPending = true
+        postSeekSamples.removeAll()
+        Task { @MainActor in
+            _ = await host.seek(toDate: targetPdtMs)
+        }
     }
 }

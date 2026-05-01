@@ -64,12 +64,12 @@ Vids/
 | 2 | WS + ApiClient + stores | ✅ |
 | 3 | Feed: collection view + thumbnails | ✅ (basic; pagination TODO) |
 | 4 | NowPlayingBar + scrubber | ✅ (basic; quality menu TODO) |
-| 5 | AVPlayerHost (port from Capacitor plugin) | 🟨 skeleton — full port pending; ref: `ios-app/ios/App/App/NativePlayerPlugin.swift` (1209 LOC) |
-| 6 | LiveSyncEngine (PDT anchor + bias loop) | 🟨 skeleton — port pending; ref: `client/src/components/PhonePlayer.jsx` (~300 LOC of math) |
+| 5 | AVPlayerHost (port from Capacitor plugin) | ✅ core — full port (load + DASH composition + play/pause/stop + seek + seekToDate + setLayerFrame + PiP install/start/stop + MPNowPlaying + MPRemoteCommand + AirPlay picker + volume KVO + idle-timer keep-awake). Wired to api.playPause/skip/seek/volumeBump on remote events. Phone-mode UI hookup pending. |
+| 6 | LiveSyncEngine (PDT anchor + bias loop) | ✅ port — ported from PhonePlayer.jsx including the 5-sample EMA, outlier drop (>10s), 0.7 learning rate, 2.5s cooldown, post-seek calibration with 3 stable samples within 80ms variance, force-seek-after-calibrate. **Needs validation against real lofi + sl4m streams** before declaring this phase done. |
 | 7 | SwiftTerm + tmux tabs | ✅ (PTY + tabs working; rename popover + color picker + scroll zone TODO) |
 | 8 | APNs token register + action button delivery | ✅ basic |
 | 9 | SecretMenu + ClaudeFeed + ToastHUD + VolumeHUD | ✅ shells (output picker, FindMy proximity, brightness slider TODO) |
-| 10 | Delete `ios-app/` and `client/`, archive React docs | ⏳ |
+| 10 | Delete `ios-app/` and `client/`, archive React docs | 🛑 **HELD** — won't delete until phases 5+6 are validated on real live streams. The native phone-mode UI isn't wired yet (AVPlayerHost is built but no SwiftUI mount path triggers it). React app remains the daily driver. |
 
 ## Things deliberately NOT done in phase 1
 
