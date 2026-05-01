@@ -14,7 +14,7 @@ struct AudioOutputSheet: View {
                 Text("Audio output").font(Font.app(13, weight: .semibold))
                 Spacer()
                 Button(action: { ui.audioSheetOpen = false }) {
-                    Image(systemName: "xmark").font(Font.app(13))
+                    Image(systemName: "xmark").font(.system(size: 13))
                 }
                 .buttonStyle(.plain)
             }

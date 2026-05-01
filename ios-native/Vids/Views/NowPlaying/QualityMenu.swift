@@ -13,7 +13,7 @@ struct QualityMenu: View {
                 Text("Quality").font(Font.app(13, weight: .semibold))
                 Spacer()
                 Button(action: { ui.qualityMenuOpen = false }) {
-                    Image(systemName: "xmark").font(Font.app(13))
+                    Image(systemName: "xmark").font(.system(size: 13))
                 }
                 .buttonStyle(.plain)
             }

@@ -32,7 +32,7 @@ struct CommentsPanel: View {
                 Text("Comments").font(Font.app(14, weight: .semibold))
                 Spacer()
                 Button(action: { ui.commentsOpen = false }) {
-                    Image(systemName: "xmark").font(Font.app(14))
+                    Image(systemName: "xmark").font(.system(size: 14))
                 }
                 .buttonStyle(.plain)
             }

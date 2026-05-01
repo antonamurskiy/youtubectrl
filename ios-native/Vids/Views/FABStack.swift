@@ -26,7 +26,12 @@ struct FABStack: View {
         VStack(spacing: 12) {
             Button(action: { terminal.toggle() }) {
                 Image(systemName: "terminal")
-                    .font(Font.app(14, weight: .bold))
+                    // SF Symbols MUST use the system font path —
+                    // .app() returns JetBrains Mono which has no
+                    // symbol glyphs, so the symbol fell back into an
+                    // off-center metric box (looked "crooked" while
+                    // rotating).
+                    .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(claudeColor != nil ? claudeColor!.opacity(0.18) : Self.fabBg)
                     .foregroundStyle(claudeColor ?? Self.fabFg)
@@ -44,7 +49,7 @@ struct FABStack: View {
             .task { claudePulse = (claudeColor != nil) }
             Button(action: refresh) {
                 Image(systemName: "arrow.clockwise")
-                    .font(Font.app(14, weight: .bold))
+                    .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : Self.fabBg)
                     .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : Self.fabFg)
