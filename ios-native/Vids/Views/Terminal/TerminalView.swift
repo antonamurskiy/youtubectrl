@@ -7,6 +7,7 @@ struct TerminalView: View {
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
     @State private var renaming: TmuxWindow? = nil
+    @State private var termCoordinator: TermHost.Coordinator? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -37,11 +38,19 @@ struct TerminalView: View {
             }
 
             ZStack(alignment: .trailing) {
-                TermHost(host: services.serverHost, onSwipe: switchTmuxWindow(by:))
+                TermHost(host: services.serverHost,
+                         autoFocus: terminal.wasKeyboardOpenAtClose,
+                         onSwipe: switchTmuxWindow(by:))
                     .background(theme.resolvedSurface)
                 ScrollZoneOverlay()
                     .frame(width: 56)
             }
+        }
+        .onDisappear {
+            // Capture keyboard state at the moment of close so the
+            // next open can decide whether to re-focus and bring the
+            // keyboard back (matches React's wasKbOpenAtCloseRef).
+            terminal.wasKeyboardOpenAtClose = terminal.keyboardOpen
         }
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
@@ -124,6 +133,7 @@ final class NoPasteTerminalView: SwiftTerm.TerminalView {
 /// emulator. Sends user keypresses back as bytes.
 struct TermHost: UIViewRepresentable {
     let host: String
+    let autoFocus: Bool
     let onSwipe: (Int) -> Void  // called with -1 (prev) or +1 (next)
 
     func makeCoordinator() -> Coordinator { Coordinator() }
@@ -157,6 +167,15 @@ struct TermHost: UIViewRepresentable {
         // mode on, so a one-time disable at init misses it. Use a
         // recurring 0.5s tick to keep nuking newly-added pans.
         context.coordinator.startPanKiller(on: tv, ourPan: pan)
+        if autoFocus {
+            // Restore keyboard state from previous close — slight delay
+            // so iOS's transition animation finishes before we ask for
+            // first-responder (race-y otherwise; keyboard sometimes
+            // pops then immediately dismisses).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak tv] in
+                _ = tv?.becomeFirstResponder()
+            }
+        }
         return tv
     }
 

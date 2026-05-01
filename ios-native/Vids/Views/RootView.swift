@@ -67,11 +67,6 @@ struct RootView: View {
             //   ~72 clearance) — matches React's body.keyboard-open rule
             // - NP bar visible: ~250 (bar with three rows + safe area)
             // - otherwise: 24 from bottom
-            // Wrap FABStack in a HStack/VStack of natural size so its
-            // hit area is only the buttons themselves — wrapping in a
-            // .frame(maxWidth/maxHeight: .infinity) made the entire
-            // bottom-right quadrant intercept touches, blocking feed
-            // scroll on the right side of the screen.
             VStack {
                 Spacer()
                 HStack {
@@ -79,6 +74,13 @@ struct RootView: View {
                     FABStack()
                         .padding(.trailing, 16)
                         .padding(.bottom, fabBottomPadding)
+                        // Disable any animation inherited from parent.
+                        // Parent has .animation(.easeOut, value: terminal.open)
+                        // and .animation(.easeInOut, value: theme.resolvedSurface)
+                        // which were animating FAB position on unrelated
+                        // state changes — looked like the FABs were
+                        // bouncing for no reason.
+                        .transaction { $0.animation = nil }
                 }
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
@@ -134,18 +136,15 @@ struct RootView: View {
     }
 
     private var fabBottomPadding: CGFloat {
-        // Keyboard wins — use the system-reported keyboard height + 24
-        // clearance + safe-area inset (the .ignoresSafeArea(.keyboard)
-        // below means the parent's bottom inset is the home indicator's,
-        // not the keyboard's).
         if terminal.keyboardOpen {
             return terminal.keyboardHeight + 24
         }
-        if terminal.open { return 24 }                // terminal closed-keyboard: clear of home indicator
-        if playback.playing && npBarHeight > 0 {
-            return npBarHeight + 30
-        }
-        if playback.playing { return 290 }
+        if terminal.open { return 24 }
+        // Hardcoded clearance — the measured npBarHeight was flapping
+        // between two layout passes (parent re-renders), causing the
+        // FAB stack to bounce. 280 covers the worst-case 3-row bar
+        // height with a comfortable margin.
+        if playback.playing { return 280 }
         return 70
     }
 

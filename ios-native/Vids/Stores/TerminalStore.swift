@@ -11,6 +11,11 @@ final class TerminalStore {
     var keyboardOpen: Bool = false
     /// Actual on-screen keyboard height (incl. predictive bar). Set by KeyboardObserver.
     var keyboardHeight: CGFloat = 0
+    /// Was the keyboard up the moment terminal last closed? When true, the
+    /// next open auto-focuses the SwiftTerm view to bring the keyboard back.
+    /// Matches the React app's `wasKbOpenAtCloseRef` behavior so users don't
+    /// have to re-tap to type after every toggle.
+    var wasKeyboardOpenAtClose: Bool = false
 
     var activeWindow: TmuxWindow? { windows.first(where: { $0.active }) }
 

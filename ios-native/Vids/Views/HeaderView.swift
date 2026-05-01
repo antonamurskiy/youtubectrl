@@ -39,15 +39,21 @@ struct HeaderView: View {
                 .frame(maxWidth: .infinity, minHeight: 28)
 
             // Tabs on the right.
-            HStack(spacing: 2) {
+            HStack(spacing: 4) {
                 ForEach(FeedTab.allCases) { tab in
+                    let active = feed.activeTab == tab
                     Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
                         Text(tab.label)
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.horizontal, 6)
+                            .font(.system(size: 11, weight: active ? .heavy : .semibold))
+                            .padding(.horizontal, 7)
                             .padding(.vertical, 4)
-                            .background(tabBg(tab))
-                            .foregroundStyle(feed.activeTab == tab ? .white : .white.opacity(0.55))
+                            .background(active ? Color.white.opacity(0.22) : Color.clear)
+                            .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(active ? Color(hex: "#ebdbb2") : Color.clear)
+                                    .frame(height: 2)
+                            }
                             .clipShape(RoundedRectangle(cornerRadius: 3))
                     }
                     .buttonStyle(.plain)
@@ -63,17 +69,6 @@ struct HeaderView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-    }
-
-    private func tabBg(_ tab: FeedTab) -> Color {
-        guard feed.activeTab == tab else { return Color.white.opacity(0.04) }
-        // Active pill: lightened version of the tab tint (matches React's
-        // --tab-active-bg = mix(tint, white, 15%)). Falls back to a
-        // neutral highlight when no tint is active.
-        if let tint = ThemeStore.tabTints[tab] {
-            return tint.opacity(0.85)
-        }
-        return Color.white.opacity(0.18)
     }
 
     private func home() {
