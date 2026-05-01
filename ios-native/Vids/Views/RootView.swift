@@ -162,7 +162,12 @@ struct RootView: View {
             set: { ui.secretMenuOpen = $0 }
         )) {
             SecretMenu()
-                .presentationDetents([.medium, .fraction(0.92)])
+                // Two detents: medium for quick glance, large for the
+                // full menu. .large was previously dropped because the
+                // sheet's clear-row List rendered invisibly at full
+                // detent — the new glass-card layout has its own
+                // backgrounds so .large works again.
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 // Dim backdrop behind the glass cards — without it the
                 // cards float over the bright feed with nothing for the
@@ -205,6 +210,7 @@ struct RootView: View {
         // the tint fade").
         .animation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.4), value: theme.resolvedSurface)
         .animation(.easeOut(duration: 0.25), value: terminal.open)
+        .coordinateSpace(name: "root")
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onPreferenceChange(NPBarFrameKey.self) { npBarFrame = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }

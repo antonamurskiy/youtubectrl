@@ -77,28 +77,39 @@ struct SecretMenu: View {
         VStack(alignment: .leading, spacing: 0) {
             if let header {
                 Text(header)
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(.primary)
-                    .padding(.bottom, 14)
+                    // Softer header: footnote.semibold secondary instead
+                    // of subheadline.bold primary — reads as a label,
+                    // not a billboard, which is what was making the
+                    // sections feel harsh.
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 12)
             }
-            // _VariadicView_Tree forwards each child as a Subview, letting
-            // us interleave Dividers between them — Apple's Settings card
-            // pattern, which is what gives the card its "structure."
             _VariadicView.Tree(SeparatedRows()) {
                 content()
             }
         }
     }
 
+    /// Rows separated by faint gradient hairlines that fade at the
+    /// margins instead of edge-to-edge solid dividers.
     private struct SeparatedRows: _VariadicView_MultiViewRoot {
         @ViewBuilder
         func body(children: _VariadicView.Children) -> some View {
             let last = children.last?.id
             ForEach(children) { child in
                 child
-                    .padding(.vertical, 10)
+                    .padding(.vertical, 12)
                 if child.id != last {
-                    Divider().background(Color.white.opacity(0.08))
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.0),
+                            Color.white.opacity(0.06),
+                            Color.white.opacity(0.0),
+                        ],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(height: 0.5)
                 }
             }
         }

@@ -107,10 +107,11 @@ struct TerminalView: View {
                     in: Circle()
                 )
                 .padding(.trailing, 16)
-                // Lift above the FAB stack: keyboardHeight + 16
-                // (FAB stack bottom inset) + 108 (two 48pt FABs +
-                // 12pt spacing) + 12pt gap above the terminal FAB.
-                .padding(.bottom, terminal.keyboardHeight + 16 + 108 + 12)
+                // TerminalView is already lifted by SwiftUI's keyboard
+                // avoidance; just sit above the FAB stack: 16 (FAB
+                // stack bottom inset) + 108 (two 48pt + 12pt gap) +
+                // 12 (gap above terminal toggle FAB).
+                .padding(.bottom, 16 + 108 + 12)
             }
         }
         .sheet(item: Binding(

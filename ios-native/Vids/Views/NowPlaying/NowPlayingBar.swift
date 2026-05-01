@@ -147,7 +147,7 @@ struct NowPlayingBar: View {
         // a descendant) can place its floating tile above us.
         .background(GeometryReader { geo in
             Color.clear.preference(key: NPBarFrameKey.self,
-                                   value: geo.frame(in: .global))
+                                   value: geo.frame(in: .named("root")))
         })
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
