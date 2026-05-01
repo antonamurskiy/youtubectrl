@@ -14,10 +14,15 @@ struct TerminalView: View {
         VStack(spacing: 0) {
             // Tmux tab strip — only shows when server reports >1 window.
             if terminal.windows.count > 1 {
-                HStack(spacing: 6) {
-                    Spacer(minLength: 0)
+                // Right-align via a GeometryReader-backed min-width
+                // frame inside a horizontal ScrollView. When tabs fit
+                // within the screen, Spacer pushes them to the trailing
+                // edge; when they overflow, the ScrollView lets them
+                // scroll left.
+                GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
+                            Spacer(minLength: 0)
                             ForEach(terminal.windows) { w in
                                 Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
                                     Text(w.name)
@@ -41,8 +46,12 @@ struct TerminalView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
+                        // Force HStack to be at least the available
+                        // width so Spacer has room to push tabs right.
+                        .frame(minWidth: geo.size.width, alignment: .trailing)
                     }
                 }
+                .frame(height: 38)
                 .background(theme.resolvedSurface)
             }
 
