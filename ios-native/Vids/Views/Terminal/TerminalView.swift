@@ -133,9 +133,21 @@ struct TermHost: UIViewRepresentable {
         var onSwipe: ((Int) -> Void)?
         private var swipeStart: CGPoint?
 
+        // Don't run simultaneously with SwiftTerm's gestures — its
+        // selection-pan was activating on every swipe, copying whatever
+        // was under the finger to the pasteboard, then iOS Universal
+        // Clipboard would auto-paste it back into the PTY.
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                                shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            true
+            false
+        }
+
+        // Only begin if the initial motion is dominantly horizontal —
+        // vertical pans go to SwiftTerm (selection / native scroll).
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let pan = g as? UIPanGestureRecognizer, let view = pan.view else { return false }
+            let v = pan.velocity(in: view)
+            return abs(v.x) > abs(v.y) * 1.5 && abs(v.x) > 200
         }
 
         @objc func onSwipePan(_ g: UIPanGestureRecognizer) {
@@ -148,7 +160,6 @@ struct TermHost: UIViewRepresentable {
                 let end = g.location(in: view)
                 let dx = end.x - start.x, dy = end.y - start.y
                 swipeStart = nil
-                // Require: |dx| > 60, dominant horizontal motion.
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5 else { return }
                 onSwipe?(dx > 0 ? -1 : 1)  // swipe right = previous window
             case .cancelled, .failed:
