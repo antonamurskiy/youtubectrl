@@ -119,7 +119,7 @@ struct TerminalView: View {
                 // => 16 + 108 + 12 = 136. But empirically the avoid
                 // lift differs from explicit padding when terminal bg
                 // ignores .container — so add a safety bump of 24pt.
-                .padding(.bottom, 16 + 108 + 12 + 24)
+                .padding(.bottom, 16 + 108 + 12 + 48)
             }
         }
         .sheet(item: Binding(
