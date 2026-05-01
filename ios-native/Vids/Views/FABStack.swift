@@ -5,6 +5,7 @@ struct FABStack: View {
     @Environment(ThemeStore.self) private var theme
     @Environment(FeedStore.self) private var feed
     @Environment(ServiceContainer.self) private var services
+    @Environment(UIStore.self) private var ui
 
     var body: some View {
         VStack(spacing: 12) {
@@ -24,6 +25,10 @@ struct FABStack: View {
                     .foregroundStyle(.white)
                     .clipShape(Circle())
             }
+            .simultaneousGesture(
+                LongPressGesture(minimumDuration: 0.5)
+                    .onEnded { _ in ui.secretMenuOpen = true }
+            )
         }
     }
 

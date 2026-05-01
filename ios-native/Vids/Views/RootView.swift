@@ -6,6 +6,7 @@ struct RootView: View {
     @Environment(FeedStore.self) private var feed
     @Environment(TerminalStore.self) private var terminal
     @Environment(ThemeStore.self) private var theme
+    @Environment(UIStore.self) private var ui
 
     @State private var searchFocused = false
 
@@ -39,7 +40,18 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .allowsHitTesting(true)
                 .zIndex(20)
+
+            ToastHUD().zIndex(30)
+            VolumeHUD().zIndex(31)
+            ClaudeFeedView().zIndex(25)
+
+            if ui.secretMenuOpen {
+                SecretMenu()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(40)
+            }
         }
+        .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
         .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
@@ -49,7 +61,22 @@ struct RootView: View {
     private var feedView: some View {
         VStack(spacing: 0) {
             HeaderView(searchFocused: $searchFocused)
-            FeedListView()
+            ZStack(alignment: .top) {
+                FeedListView()
+                if feed.currentVideos.isEmpty {
+                    VStack(spacing: 6) {
+                        Text(feed.lastError ?? "Loading…")
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.6))
+                            .multilineTextAlignment(.center)
+                            .lineLimit(6)
+                            .padding(20)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.top, 40)
+                }
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }

@@ -12,6 +12,7 @@ final class ServiceContainer {
     let terminal: TerminalStore
     let theme: ThemeStore
     let push: PushStore
+    let ui: UIStore
 
     init() {
         self.api = ApiClient(host: "yuzu.local:3000")
@@ -20,6 +21,7 @@ final class ServiceContainer {
         self.terminal = TerminalStore()
         self.theme = ThemeStore()
         self.push = PushStore()
+        self.ui = UIStore()
         self.ws = WSClient(host: "yuzu.local:3000")
         self.ws.onMessage = { [weak self] msg in
             guard let self else { return }
@@ -38,6 +40,7 @@ final class ServiceContainer {
     }
 
     func start() async {
+        PushHandler.shared.services = self
         ws.connect()
         await feed.loadInitial(api: api)
     }

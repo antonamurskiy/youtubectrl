@@ -9,15 +9,20 @@
 /* Begin PBXBuildFile section */
 		0AFD226C3495A4B16FACED63 /* VidsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7DB4C9E774298C79886938 /* VidsApp.swift */; };
 		1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA16E099AF62AF37E5C3C310 /* WSClient.swift */; };
+		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
+		29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581FDCC94E632C0CBFD956B7 /* UIStore.swift */; };
 		2CEB249AFD0ABD0A09F3570F /* PushStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */; };
 		3463517DD905E7E0B8DBA979 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBC8B0D72054C178C9628EA /* RootView.swift */; };
 		452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */; };
 		464D5B4427C251EDAD0D2E3B /* FABStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA7931C65256F257CD6A648 /* FABStack.swift */; };
 		4CE0E213E8A41ED4612F1E47 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E521EA57B7C296650D408D49 /* ServiceContainer.swift */; };
 		4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667FED20226B2EBA1AAF4E7D /* VideoCellView.swift */; };
+		568654DF62B029B6DBEC956A /* SecretMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */; };
 		7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47049B680884787ECFCBCA84 /* HeaderView.swift */; };
 		808F678B00F087DDDBF0F586 /* ThemeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C139362AE9711907AB564BA /* ThemeStore.swift */; };
+		812143033AA83C738F988B98 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = 9283416A88C3DC498ECAE853 /* SwiftTerm */; };
+		8BF0E6C212EC9797757DEB25 /* AVPlayerHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */; };
 		8E92BC457ECE29753485A29E /* ScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7A60F533EA88740A8701DF /* ScrubberView.swift */; };
 		92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01B92142190D3825B2F82AE /* FeedListView.swift */; };
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
@@ -28,13 +33,17 @@
 		CD42B7C824BA8122439A88E2 /* ApiTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE012FEFD2349F3E85379D /* ApiTypes.swift */; };
 		E40BA8E9B1FF19AB78BD3214 /* PushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B7CFE15E3082B8C87ABCBB /* PushHandler.swift */; };
 		E77C9A0A21504CCE3D4217BC /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0C52D6101F3F7D06A77584 /* ThumbnailCache.swift */; };
+		F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretMenu.swift; sourceTree = "<group>"; };
 		1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBar.swift; sourceTree = "<group>"; };
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
+		55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSyncEngine.swift; sourceTree = "<group>"; };
+		581FDCC94E632C0CBFD956B7 /* UIStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIStore.swift; sourceTree = "<group>"; };
 		5A0C52D6101F3F7D06A77584 /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
 		65572894BBBB3AB5F3216CEA /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		667FED20226B2EBA1AAF4E7D /* VideoCellView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoCellView.swift; sourceTree = "<group>"; };
@@ -44,16 +53,29 @@
 		8E7DB4C9E774298C79886938 /* VidsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VidsApp.swift; sourceTree = "<group>"; };
 		8FA7931C65256F257CD6A648 /* FABStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FABStack.swift; sourceTree = "<group>"; };
 		9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStore.swift; sourceTree = "<group>"; };
+		9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastHUD.swift; sourceTree = "<group>"; };
 		AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 		BA16E099AF62AF37E5C3C310 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		C01B92142190D3825B2F82AE /* FeedListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedListView.swift; sourceTree = "<group>"; };
 		C0B7CFE15E3082B8C87ABCBB /* PushHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushHandler.swift; sourceTree = "<group>"; };
 		DBBC8B0D72054C178C9628EA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
+		DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerHost.swift; sourceTree = "<group>"; };
 		E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedStore.swift; sourceTree = "<group>"; };
 		E521EA57B7C296650D408D49 /* ServiceContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceContainer.swift; sourceTree = "<group>"; };
 		EACE012FEFD2349F3E85379D /* ApiTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiTypes.swift; sourceTree = "<group>"; };
 		F728C5D3839372BE65C948DD /* Vids.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Vids.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		ED55E2031EC38698C28C70E5 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				812143033AA83C738F988B98 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
 		148E8EBEC62C4A3930398261 /* Feed */ = {
@@ -96,6 +118,7 @@
 			children = (
 				D8C659B7DA3B480158B320CB /* App */,
 				8F7A6D83E010966BAB3D1A1D /* Networking */,
+				D3D7AB10CFC0761FB2847084 /* Player */,
 				48A23DBDD7E989904205FDD0 /* Push */,
 				F13091BF7F00E18BAEE7A479 /* Stores */,
 				F4F8809B3C4EE6F81C85BCAB /* Views */,
@@ -121,6 +144,23 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		BFEE1F56F52D6C68567DCFAA /* Misc */ = {
+			isa = PBXGroup;
+			children = (
+				9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */,
+			);
+			path = Misc;
+			sourceTree = "<group>";
+		};
+		D3D7AB10CFC0761FB2847084 /* Player */ = {
+			isa = PBXGroup;
+			children = (
+				DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */,
+				55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */,
+			);
+			path = Player;
+			sourceTree = "<group>";
+		};
 		D4C7F9E874C463A1E4B6EA2A = {
 			isa = PBXGroup;
 			children = (
@@ -139,6 +179,14 @@
 			path = App;
 			sourceTree = "<group>";
 		};
+		E7C921C4C2D7051F75874DD6 /* SecretMenu */ = {
+			isa = PBXGroup;
+			children = (
+				0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */,
+			);
+			path = SecretMenu;
+			sourceTree = "<group>";
+		};
 		F13091BF7F00E18BAEE7A479 /* Stores */ = {
 			isa = PBXGroup;
 			children = (
@@ -147,6 +195,7 @@
 				7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */,
 				346B82D17260E7978B885929 /* TerminalStore.swift */,
 				6C139362AE9711907AB564BA /* ThemeStore.swift */,
+				581FDCC94E632C0CBFD956B7 /* UIStore.swift */,
 			);
 			path = Stores;
 			sourceTree = "<group>";
@@ -158,7 +207,9 @@
 				47049B680884787ECFCBCA84 /* HeaderView.swift */,
 				DBBC8B0D72054C178C9628EA /* RootView.swift */,
 				148E8EBEC62C4A3930398261 /* Feed */,
+				BFEE1F56F52D6C68567DCFAA /* Misc */,
 				33C1257F7A2BF6C25B449983 /* NowPlaying */,
+				E7C921C4C2D7051F75874DD6 /* SecretMenu */,
 				1878D6997F9B5A3F03FD3DF7 /* Terminal */,
 			);
 			path = Views;
@@ -172,6 +223,7 @@
 			buildConfigurationList = 8E54F70AB3775B14580C7A9D /* Build configuration list for PBXNativeTarget "Vids" */;
 			buildPhases = (
 				91EA0EDF0A5207A6A01A90A6 /* Sources */,
+				ED55E2031EC38698C28C70E5 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -179,6 +231,7 @@
 			);
 			name = Vids;
 			packageProductDependencies = (
+				9283416A88C3DC498ECAE853 /* SwiftTerm */,
 			);
 			productName = Vids;
 			productReference = F728C5D3839372BE65C948DD /* Vids.app */;
@@ -207,6 +260,9 @@
 			);
 			mainGroup = D4C7F9E874C463A1E4B6EA2A;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4031FBCD55D0A70AE4F69073 /* XCRemoteSwiftPackageReference "SwiftTerm" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = A8BF51B56FEAAD36C47DDA1B /* Products */;
 			projectDirPath = "";
@@ -222,6 +278,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8BF0E6C212EC9797757DEB25 /* AVPlayerHost.swift in Sources */,
 				27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */,
 				CD42B7C824BA8122439A88E2 /* ApiTypes.swift in Sources */,
 				C3B59EFA6E8035C00EB557DA /* AppDelegate.swift in Sources */,
@@ -229,17 +286,21 @@
 				92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */,
 				C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */,
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
+				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
 				452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */,
 				9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */,
 				E40BA8E9B1FF19AB78BD3214 /* PushHandler.swift in Sources */,
 				2CEB249AFD0ABD0A09F3570F /* PushStore.swift in Sources */,
 				3463517DD905E7E0B8DBA979 /* RootView.swift in Sources */,
 				8E92BC457ECE29753485A29E /* ScrubberView.swift in Sources */,
+				568654DF62B029B6DBEC956A /* SecretMenu.swift in Sources */,
 				4CE0E213E8A41ED4612F1E47 /* ServiceContainer.swift in Sources */,
 				BBF6D487F7176B512230EC73 /* TerminalStore.swift in Sources */,
 				B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */,
 				808F678B00F087DDDBF0F586 /* ThemeStore.swift in Sources */,
 				E77C9A0A21504CCE3D4217BC /* ThumbnailCache.swift in Sources */,
+				1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */,
+				29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */,
 				4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */,
 				0AFD226C3495A4B16FACED63 /* VidsApp.swift in Sources */,
 				1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */,
@@ -444,6 +505,25 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4031FBCD55D0A70AE4F69073 /* XCRemoteSwiftPackageReference "SwiftTerm" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/migueldeicaza/SwiftTerm";
+			requirement = {
+				kind = exactVersion;
+				version = 1.13.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		9283416A88C3DC498ECAE853 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4031FBCD55D0A70AE4F69073 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 4FA762E4B53EADAA19A11DC9 /* Project object */;
 }

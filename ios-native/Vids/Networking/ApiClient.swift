@@ -75,6 +75,10 @@ actor ApiClient {
     func tmuxRename(index: Int, name: String) async throws { try await post("/api/tmux-rename", body: ["index": index, "name": name]) }
     func tmuxColor(name: String, color: String) async throws { try await post("/api/tmux-color", body: ["name": name, "color": color]) }
 
+    func registerAPNS(token: String) async throws {
+        try await post("/api/apns-register", body: ["token": token])
+    }
+
     func previewURL(videoId: String, isLive: Bool = false) async throws -> String? {
         var q = [URLQueryItem(name: "id", value: videoId)]
         if isLive { q.append(URLQueryItem(name: "live", value: "1")) }

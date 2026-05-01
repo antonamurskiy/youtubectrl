@@ -42,7 +42,10 @@ struct FeedListView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UICollectionView, context: Context) {
-        context.coordinator.refresh(uiView)
+        // Read videos/shorts here so SwiftUI tracks them as deps of this view.
+        let videos = feed.currentVideos
+        let shorts = feed.currentShorts
+        context.coordinator.refresh(uiView, videos: videos, shorts: shorts)
     }
 
     final class Coordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
@@ -85,10 +88,8 @@ struct FeedListView: UIViewRepresentable {
         }
 
         @MainActor
-        func refresh(_ cv: UICollectionView) {
+        func refresh(_ cv: UICollectionView, videos: [Video], shorts: [Short]) {
             var snap = NSDiffableDataSourceSnapshot<Section, Item>()
-            let videos = feed.currentVideos
-            let shorts = feed.currentShorts
             if !videos.isEmpty {
                 snap.appendSections([.videos])
                 snap.appendItems(videos.map { .video($0) }, toSection: .videos)

@@ -61,14 +61,14 @@ Vids/
 | # | Phase | Status |
 |--:|---|---|
 | 1 | Scaffold | ✅ |
-| 2 | WS + ApiClient + stores | ✅ (skeleton) |
+| 2 | WS + ApiClient + stores | ✅ |
 | 3 | Feed: collection view + thumbnails | ✅ (basic; pagination TODO) |
 | 4 | NowPlayingBar + scrubber | ✅ (basic; quality menu TODO) |
-| 5 | AVPlayerHost (port from Capacitor plugin) | ⏳ |
-| 6 | LiveSyncEngine (PDT anchor + bias loop) | ⏳ |
-| 7 | SwiftTerm + tmux tabs + color picker | ⏳ |
-| 8 | Push + Now Playing + volume buttons + AirPlay | ⏳ (push categories registered) |
-| 9 | SecretMenu + ClaudeFeed + ToastHUD + VolumeHUD | ⏳ |
+| 5 | AVPlayerHost (port from Capacitor plugin) | 🟨 skeleton — full port pending; ref: `ios-app/ios/App/App/NativePlayerPlugin.swift` (1209 LOC) |
+| 6 | LiveSyncEngine (PDT anchor + bias loop) | 🟨 skeleton — port pending; ref: `client/src/components/PhonePlayer.jsx` (~300 LOC of math) |
+| 7 | SwiftTerm + tmux tabs | ✅ (PTY + tabs working; rename popover + color picker + scroll zone TODO) |
+| 8 | APNs token register + action button delivery | ✅ basic |
+| 9 | SecretMenu + ClaudeFeed + ToastHUD + VolumeHUD | ✅ shells (output picker, FindMy proximity, brightness slider TODO) |
 | 10 | Delete `ios-app/` and `client/`, archive React docs | ⏳ |
 
 ## Things deliberately NOT done in phase 1

@@ -20,10 +20,17 @@ settings:
     INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
     INFOPLIST_KEY_UIBackgroundModes: "audio remote-notification"
 
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    exactVersion: 1.13.0
+
 targets:
   Vids:
     type: application
     platform: iOS
+    dependencies:
+      - package: SwiftTerm
     sources:
       - path: Vids
         excludes:
@@ -36,6 +43,9 @@ targets:
       properties:
         CFBundleDisplayName: Vids
         UIBackgroundModes: [audio, remote-notification]
+        NSLocalNetworkUsageDescription: "Vids talks to your Mac at yuzu.local on the local network to control mpv playback."
+        NSBonjourServices:
+          - _http._tcp
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
           NSExceptionDomains:

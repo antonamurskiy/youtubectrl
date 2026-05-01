@@ -1,7 +1,6 @@
 import Foundation
 
 struct Video: Codable, Hashable, Identifiable {
-    var id: String { videoId ?? url ?? UUID().uuidString }
     let videoId: String?
     let url: String?
     let title: String?
@@ -15,14 +14,87 @@ struct Video: Codable, Hashable, Identifiable {
     let live: Bool?
     let upcoming: Bool?
     let startPercent: Double?
+
+    // Server uses `id`, `videoId` is what client computes locally —
+    // accept both. Identifiable id falls through to derived URL.
+    var id: String { videoId ?? url ?? UUID().uuidString }
+
+    enum CodingKeys: String, CodingKey {
+        case videoId, id, url, title, channel, channelId, thumbnail
+        case duration, views, uploadedAt, isLive, live, upcoming, startPercent
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        videoId = (try? c.decode(String.self, forKey: .videoId)) ?? (try? c.decode(String.self, forKey: .id))
+        url = try? c.decode(String.self, forKey: .url)
+        title = try? c.decode(String.self, forKey: .title)
+        channel = try? c.decode(String.self, forKey: .channel)
+        channelId = try? c.decode(String.self, forKey: .channelId)
+        thumbnail = try? c.decode(String.self, forKey: .thumbnail)
+        duration = Self.decodeFlexibleString(c, key: .duration)
+        views = Self.decodeFlexibleString(c, key: .views)
+        uploadedAt = try? c.decode(String.self, forKey: .uploadedAt)
+        isLive = try? c.decode(Bool.self, forKey: .isLive)
+        live = try? c.decode(Bool.self, forKey: .live)
+        upcoming = try? c.decode(Bool.self, forKey: .upcoming)
+        startPercent = try? c.decode(Double.self, forKey: .startPercent)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(videoId, forKey: .videoId)
+        try c.encodeIfPresent(url, forKey: .url)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(channel, forKey: .channel)
+        try c.encodeIfPresent(channelId, forKey: .channelId)
+        try c.encodeIfPresent(thumbnail, forKey: .thumbnail)
+        try c.encodeIfPresent(duration, forKey: .duration)
+        try c.encodeIfPresent(views, forKey: .views)
+        try c.encodeIfPresent(uploadedAt, forKey: .uploadedAt)
+        try c.encodeIfPresent(isLive, forKey: .isLive)
+        try c.encodeIfPresent(live, forKey: .live)
+        try c.encodeIfPresent(upcoming, forKey: .upcoming)
+        try c.encodeIfPresent(startPercent, forKey: .startPercent)
+    }
+
+    /// Server returns `views` as either a number ("11000") or a
+    /// formatted string ("11K views"). Coerce to string either way.
+    private static func decodeFlexibleString<K: CodingKey>(_ c: KeyedDecodingContainer<K>, key: K) -> String? {
+        if let s = try? c.decode(String.self, forKey: key) { return s }
+        if let i = try? c.decode(Int.self, forKey: key) { return String(i) }
+        if let d = try? c.decode(Double.self, forKey: key) { return String(d) }
+        return nil
+    }
 }
 
 struct Short: Codable, Hashable, Identifiable {
-    var id: String { videoId ?? UUID().uuidString }
     let videoId: String?
     let title: String?
     let thumbnail: String?
     let views: String?
+
+    var id: String { videoId ?? UUID().uuidString }
+
+    enum CodingKeys: String, CodingKey { case videoId, id, title, thumbnail, views }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        videoId = (try? c.decode(String.self, forKey: .videoId)) ?? (try? c.decode(String.self, forKey: .id))
+        title = try? c.decode(String.self, forKey: .title)
+        thumbnail = try? c.decode(String.self, forKey: .thumbnail)
+        if let s = try? c.decode(String.self, forKey: .views) { views = s }
+        else if let i = try? c.decode(Int.self, forKey: .views) { views = String(i) }
+        else { views = nil }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encodeIfPresent(videoId, forKey: .videoId)
+        try c.encodeIfPresent(title, forKey: .title)
+        try c.encodeIfPresent(thumbnail, forKey: .thumbnail)
+        try c.encodeIfPresent(views, forKey: .views)
+    }
 }
 
 struct HomeResponse: Codable {

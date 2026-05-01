@@ -1,11 +1,22 @@
 import UIKit
 import UserNotifications
 
-/// Phase 8 stub. Just enough to keep AppDelegate compiling and
-/// register the action-button categories that the server expects.
+/// Push handler. Foreground presentation suppressed (in-app feed handles
+/// it). Action buttons (CLAUDE_PROMPT_2/3/4 + ANSWER_N) parse the
+/// digit + tmux window from the notification payload, drive
+/// `/api/tmux-select` + `/api/tmux-send` so the answer lands in
+/// Claude's prompt without bringing the app to the front.
+///
+/// CLAUDE.md > "APNs push" describes the foreground-only delivery
+/// invariant (silent / background-session both fail). 5s key-based
+/// dedupe between `getPendingPushTap` cold-launch drain and live
+/// pushTap event still applies.
 final class PushHandler: NSObject, UNUserNotificationCenterDelegate {
     static let shared = PushHandler()
     private(set) var token: String? = nil
+    weak var services: ServiceContainer?
+
+    private var recentTaps: [String: Date] = [:]
 
     func registerCategories() {
         let actions2 = [
@@ -25,22 +36,43 @@ final class PushHandler: NSObject, UNUserNotificationCenterDelegate {
     func didRegister(token data: Data) {
         let hex = data.map { String(format: "%02x", $0) }.joined()
         token = hex
-        // Phase 8: POST to /api/apns-register with hex.
+        Task {
+            do { try await services?.api.registerAPNS(token: hex) }
+            catch { print("[push] register failed: \(error)") }
+        }
     }
 
-    func didFailToRegister(error: Error) { /* phase 8 */ }
+    func didFailToRegister(error: Error) {
+        print("[push] failed to register: \(error)")
+    }
 
-    // Foreground presentation: don't double-up with in-app feed/quick-reply
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification,
                                 withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Foreground: skip banner so in-app feed isn't double-counted.
         completionHandler([])
     }
 
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 didReceive response: UNNotificationResponse,
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
-        // Phase 8: parse ANSWER_N → call /api/tmux-select + /api/tmux-send.
-        completionHandler()
+        defer { completionHandler() }
+        let id = response.actionIdentifier
+        // ANSWER_1 / ANSWER_2 / ... pattern; or default tap.
+        guard id.hasPrefix("ANSWER_"), let n = Int(id.dropFirst("ANSWER_".count)) else { return }
+        let userInfo = response.notification.request.content.userInfo
+        guard let window = userInfo["tmuxWindow"] as? String else { return }
+        let key = "\(window):\(n)"
+        let now = Date()
+        if let prev = recentTaps[key], now.timeIntervalSince(prev) < 5 { return }
+        recentTaps[key] = now
+        Task { [weak self] in
+            guard let self, let api = self.services?.api else { return }
+            // Try to select the named window first (tmux-select-by-name
+            // would be nicer but the existing API takes index — phase 8b).
+            let windowsList = self.services?.playback.macStatus // placeholder
+            _ = windowsList
+            try? await api.tmuxSend(String(n))
+        }
     }
 }

@@ -6,6 +6,7 @@ final class FeedStore {
     var activeTab: FeedTab = .rec
     var searchQuery: String = ""
     var channelQuery: String? = nil
+    var lastError: String? = nil
 
     private(set) var videosByTab: [FeedTab: [Video]] = [:]
     private(set) var shortsByTab: [FeedTab: [Short]] = [:]
@@ -47,7 +48,8 @@ final class FeedStore {
             if let next = resp.nextPage { nextPageByTab[tab] = next }
             else { nextPageByTab[tab] = nil }
         } catch {
-            // surface in toast eventually
+            lastError = "\(tab.rawValue): \(String(describing: error))"
+            print("[Feed] load(\(tab.rawValue)) failed: \(error)")
         }
     }
 
