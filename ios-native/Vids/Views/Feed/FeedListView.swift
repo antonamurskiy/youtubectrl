@@ -70,9 +70,19 @@ struct FeedListView: UIViewRepresentable {
         }
 
         func bind(to cv: UICollectionView) {
+            // UIHostingConfiguration creates a fresh SwiftUI root so the
+            // outer @Environment(FontStore) etc. don't propagate into
+            // cells. Inject explicitly so cells re-render when the
+            // chosen font changes.
+            let svcs = self.services
             let videoReg = UICollectionView.CellRegistration<UICollectionViewCell, Video> { cell, _, video in
                 cell.contentConfiguration = UIHostingConfiguration {
                     VideoCellView(video: video)
+                        .environment(svcs)
+                        .environment(svcs.fonts)
+                        .environment(svcs.ui)
+                        .environment(svcs.playback)
+                        .font(Font.app(svcs.fonts.size))
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = .clear()
@@ -80,6 +90,9 @@ struct FeedListView: UIViewRepresentable {
             let shortReg = UICollectionView.CellRegistration<UICollectionViewCell, Short> { cell, _, short in
                 cell.contentConfiguration = UIHostingConfiguration {
                     ShortCellView(short: short)
+                        .environment(svcs)
+                        .environment(svcs.fonts)
+                        .font(Font.app(svcs.fonts.size))
                 }
                 .margins(.all, 0)
                 cell.backgroundConfiguration = .clear()

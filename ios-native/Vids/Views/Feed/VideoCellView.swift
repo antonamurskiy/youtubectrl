@@ -3,9 +3,12 @@ import SwiftUI
 struct VideoCellView: View {
     let video: Video
     @State private var thumbnail: UIImage? = nil
+    @Environment(FontStore.self) private var fonts
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let _ = fonts.generation
+        let _ = fonts.label
+        return VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
                 Group {
                     if let img = thumbnail {
@@ -60,9 +63,12 @@ struct VideoCellView: View {
 struct ShortCellView: View {
     let short: Short
     @State private var thumbnail: UIImage? = nil
+    @Environment(FontStore.self) private var fonts
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let _ = fonts.generation
+        let _ = fonts.label
+        return VStack(alignment: .leading, spacing: 4) {
             Group {
                 if let img = thumbnail {
                     Image(uiImage: img).resizable().aspectRatio(9.0/16.0, contentMode: .fill)
