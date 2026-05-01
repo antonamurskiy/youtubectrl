@@ -12,7 +12,7 @@ struct NowPlayingBar: View {
         VStack(spacing: 0) {
             ScrubberView()
                 .frame(height: 28)
-                .padding(.top, 6)
+                .padding(.top, 14)
 
             hairline.padding(.top, 8)
 
