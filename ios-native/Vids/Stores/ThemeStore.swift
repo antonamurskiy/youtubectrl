@@ -31,6 +31,12 @@ final class ThemeStore {
 }
 
 extension Color {
+    /// App primary text — gruvbox cream (#ebdbb2). Matches React's
+    /// `--text`. Use everywhere you'd reach for `.white`.
+    static let appText = Color(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255)
+    /// Dim text variant (#a89984). Matches React's `--text-dim`.
+    static let appTextDim = Color(red: 0xa8/255, green: 0x99/255, blue: 0x84/255)
+
     init(hex: String) {
         var s = hex.trimmingCharacters(in: .whitespaces)
         if s.hasPrefix("#") { s.removeFirst() }

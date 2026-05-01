@@ -105,7 +105,7 @@ struct SecretMenu: View {
                 }
             ), in: 0...1)
         }
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(Color.appText.opacity(0.85))
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
     }
@@ -117,7 +117,7 @@ struct SecretMenu: View {
                 Spacer()
                 Text("\(Int(syncOffsetMs)) ms")
                     .font(Font.app(11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.55))
+                    .foregroundStyle(Color.appText.opacity(0.55))
             }
             Slider(value: Binding(
                 get: { syncOffsetMs },
@@ -129,7 +129,7 @@ struct SecretMenu: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(Color.appText.opacity(0.85))
     }
 
     private var keepAwakeRow: some View {
@@ -147,7 +147,7 @@ struct SecretMenu: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
         }
         .buttonStyle(.plain)
     }
@@ -160,11 +160,11 @@ struct SecretMenu: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
 
             if outputs.isEmpty {
                 Text("loading…").font(Font.app(11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(Color.appText.opacity(0.4))
                     .padding(.horizontal, 24).padding(.vertical, 8)
             } else {
                 ForEach(outputs) { o in
@@ -203,14 +203,14 @@ struct SecretMenu: View {
                     Image(systemName: btOpen ? "chevron.up" : "chevron.down")
                 }
                 .padding(.horizontal, 12).padding(.vertical, 10)
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(Color.appText.opacity(0.85))
             }
             .buttonStyle(.plain)
 
             if btOpen {
                 if btDevices.isEmpty {
                     Text("no devices").font(Font.app(11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(Color.appText.opacity(0.4))
                         .padding(.horizontal, 24).padding(.vertical, 8)
                 }
                 ForEach(btDevices) { d in
@@ -248,7 +248,7 @@ struct SecretMenu: View {
                 Image(systemName: miscOpen ? "chevron.up" : "chevron.down")
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
         }
         .buttonStyle(.plain)
     }
@@ -269,7 +269,7 @@ struct SecretMenu: View {
                 .frame(width: 140)
             }
             .padding(.horizontal, 24).padding(.vertical, 10)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
             .background(Color(hex: "#0a0a0a"))
             .task {
                 // Poll while menu open so slider reflects Mac-side
@@ -310,14 +310,14 @@ struct SecretMenu: View {
                     if let f = friend, let cross = f.cross, let parallel = f.parallel {
                         Text("\(parallel) & \(cross)")
                             .font(Font.app(10, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.55))
+                            .foregroundStyle(Color.appText.opacity(0.55))
                         if let t = f.timeFragment {
                             Text(t).font(Font.app(9, design: .monospaced))
-                                .foregroundStyle(.white.opacity(0.4))
+                                .foregroundStyle(Color.appText.opacity(0.4))
                         }
                     } else {
                         Text("tap refresh").font(Font.app(10, design: .monospaced))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(Color.appText.opacity(0.4))
                     }
                 }
                 Spacer()
@@ -342,12 +342,12 @@ struct SecretMenu: View {
                     }
                 }) {
                     Image(systemName: "arrow.clockwise")
-                        .foregroundStyle(.white.opacity(0.7))
+                        .foregroundStyle(Color.appText.opacity(0.7))
                 }
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
         }
     }
 
@@ -359,7 +359,7 @@ struct SecretMenu: View {
                 .font(Font.app(13, weight: .semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(.white.opacity(0.05))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
         }
         .buttonStyle(.plain)
     }
@@ -371,7 +371,7 @@ struct SecretMenu: View {
                 Text(title).font(Font.app(13))
                 Spacer()
             }
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
             .padding(.horizontal, 24).padding(.vertical, 10)
             .background(Color(hex: "#0a0a0a"))
         }
@@ -391,10 +391,10 @@ struct SecretMenu: View {
                     Spacer()
                     Text(services.fonts.label)
                         .font(Font.app(11, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Color.appText.opacity(0.55))
                     Image(systemName: fontsOpen ? "chevron.up" : "chevron.down")
                 }
-                .foregroundStyle(.white.opacity(0.85))
+                .foregroundStyle(Color.appText.opacity(0.85))
                 .padding(.horizontal, 24).padding(.vertical, 10)
                 .background(Color(hex: "#0a0a0a"))
             }
@@ -435,7 +435,7 @@ struct SecretMenu: View {
                 .buttonStyle(.plain)
             }
         }
-        .foregroundStyle(.white.opacity(0.85))
+        .foregroundStyle(Color.appText.opacity(0.85))
         .padding(.horizontal, 24).padding(.vertical, 10)
         .background(Color(hex: "#0a0a0a"))
     }

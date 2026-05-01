@@ -253,7 +253,7 @@ struct RootView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(.white.opacity(0.06))
@@ -265,7 +265,7 @@ struct RootView: View {
                     if let err = feed.lastError {
                         Text(err)
                             .font(Font.app(12))
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(Color.appText.opacity(0.6))
                             .multilineTextAlignment(.center)
                             .lineLimit(6)
                             .padding(20)

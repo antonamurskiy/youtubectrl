@@ -18,7 +18,7 @@ struct NowPlayingBar: View {
                 skipBtn("-10") { Task { try? await services.api.skip(-10) } }
                 Text(positionLabel)
                     .font(Font.app(11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(Color.appText.opacity(0.65))
                     .frame(minWidth: 36, alignment: .leading)
                 Button(action: { Task { try? await services.api.toggleVisibility() } }) {
                     Image(systemName: playback.visible ? "eye" : "eye.slash")
@@ -40,7 +40,7 @@ struct NowPlayingBar: View {
                 pipButton
                 Text(durationLabel)
                     .font(Font.app(11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.65))
+                    .foregroundStyle(Color.appText.opacity(0.65))
                     .frame(minWidth: 36, alignment: .trailing)
                 skipBtn("+10") { Task { try? await services.api.skip(10) } }
             }
@@ -78,11 +78,11 @@ struct NowPlayingBar: View {
                     Text(playback.title)
                         .font(Font.app(14, weight: .semibold))
                         .lineLimit(1)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.appText)
                     Text(playback.channel)
                         .font(Font.app(12))
                         .lineLimit(1)
-                        .foregroundStyle(.white.opacity(0.55))
+                        .foregroundStyle(Color.appText.opacity(0.55))
                 }
                 .onLongPressGesture { ui.qualityMenuOpen = true }
                 Spacer()
@@ -104,7 +104,7 @@ struct NowPlayingBar: View {
                         Image(systemName: "goforward.15")
                     }
                 }
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
                 .font(Font.app(18, weight: .medium))
             }
             .padding(.horizontal, 12)
@@ -121,7 +121,7 @@ struct NowPlayingBar: View {
         Button(action: action) {
             Text(label)
                 .font(Font.app(11, weight: .heavy, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.65))
+                .foregroundStyle(Color.appText.opacity(0.65))
                 .padding(.horizontal, 4)
         }
         .buttonStyle(.plain)
@@ -166,7 +166,7 @@ struct NowPlayingBar: View {
         Button(action: { ui.audioSheetOpen = true }) {
             Image(systemName: "speaker.wave.2.fill")
                 .font(Font.app(14))
-                .foregroundStyle(.white.opacity(0.65))
+                .foregroundStyle(Color.appText.opacity(0.65))
         }
         .buttonStyle(.plain)
     }

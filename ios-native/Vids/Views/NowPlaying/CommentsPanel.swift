@@ -38,30 +38,30 @@ struct CommentsPanel: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 6)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.appText)
 
             Divider().background(.white.opacity(0.1))
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if loading && comments.isEmpty {
-                        Text("loading…").font(Font.app(12, design: .monospaced)).foregroundStyle(.white.opacity(0.5)).padding()
+                        Text("loading…").font(Font.app(12, design: .monospaced)).foregroundStyle(Color.appText.opacity(0.5)).padding()
                     } else if comments.isEmpty {
-                        Text("No comments").font(Font.app(12, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding()
+                        Text("No comments").font(Font.app(12, design: .monospaced)).foregroundStyle(Color.appText.opacity(0.4)).padding()
                     } else {
                         ForEach(comments) { c in
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
                                     Text(c.author ?? "anonymous").font(Font.app(12, weight: .semibold)).foregroundStyle(Color(hex: "#8ec07c"))
                                     if let likes = c.likeCount, likes > 0 {
-                                        Text("\(likes)").font(Font.app(11)).foregroundStyle(.white.opacity(0.4))
+                                        Text("\(likes)").font(Font.app(11)).foregroundStyle(Color.appText.opacity(0.4))
                                     }
                                     Spacer()
-                                    if let p = c.publishedAt { Text(p).font(Font.app(10)).foregroundStyle(.white.opacity(0.4)) }
+                                    if let p = c.publishedAt { Text(p).font(Font.app(10)).foregroundStyle(Color.appText.opacity(0.4)) }
                                 }
                                 Text(c.text ?? "")
                                     .font(Font.app(13))
-                                    .foregroundStyle(.white.opacity(0.85))
+                                    .foregroundStyle(Color.appText.opacity(0.85))
                             }
                             .padding(.horizontal, 14)
                         }

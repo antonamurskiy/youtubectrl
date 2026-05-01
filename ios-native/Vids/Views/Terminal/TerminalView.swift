@@ -93,7 +93,7 @@ struct TerminalView: View {
                     Image(systemName: "keyboard.chevron.compact.down")
                         .font(Font.app(16, weight: .bold))
                         .frame(width: 44, height: 44)
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.appText)
                         .background(.black.opacity(0.7))
                         .clipShape(Circle())
                 }

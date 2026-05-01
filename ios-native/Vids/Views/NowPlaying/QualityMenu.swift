@@ -19,14 +19,14 @@ struct QualityMenu: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.appText)
 
             Divider().background(.white.opacity(0.1))
 
             ScrollView {
                 LazyVStack(spacing: 0) {
                     row(label: "Best", format: "bv*+ba/b")
-                    if loading { Text("loading…").font(Font.app(11, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding() }
+                    if loading { Text("loading…").font(Font.app(11, design: .monospaced)).foregroundStyle(Color.appText.opacity(0.4)).padding() }
                     ForEach(formats, id: \.self) { f in
                         if let label = f.label, let fmt = f.format { row(label: label, format: fmt) }
                     }
@@ -49,7 +49,7 @@ struct QualityMenu: View {
                 Text(label).font(Font.app(13))
                 Spacer()
             }
-            .foregroundStyle(.white.opacity(0.85))
+            .foregroundStyle(Color.appText.opacity(0.85))
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(Color(hex: "#0a0a0a"))

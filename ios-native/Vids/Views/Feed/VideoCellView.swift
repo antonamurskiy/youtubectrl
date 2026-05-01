@@ -28,7 +28,7 @@ struct VideoCellView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.black.opacity(0.75))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(Color.appText)
                         .padding(8)
                 }
                 // Watched-progress strip at the bottom of the thumbnail.
@@ -50,14 +50,14 @@ struct VideoCellView: View {
                 Text(video.title ?? "")
                     .font(Font.app(14, weight: .semibold))
                     .lineLimit(2)
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.appText)
                 HStack(spacing: 6) {
                     if let ch = video.channel { Text(ch) }
                     if let v = video.views { Text("• \(v)") }
                     if let u = video.uploadedAt { Text("• \(u)") }
                 }
                 .font(Font.app(12))
-                .foregroundStyle(.white.opacity(0.55))
+                .foregroundStyle(Color.appText.opacity(0.55))
             }
             .padding(.horizontal, 12)
         }
@@ -93,7 +93,7 @@ struct ShortCellView: View {
             Text(short.title ?? "")
                 .font(Font.app(12, weight: .semibold))
                 .lineLimit(2)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
                 .frame(width: 140, alignment: .leading)
         }
         .task(id: short.videoId) {

@@ -19,7 +19,7 @@ struct AudioOutputSheet: View {
                 .buttonStyle(.plain)
             }
             .padding(.horizontal, 12).padding(.vertical, 10)
-            .foregroundStyle(.white)
+            .foregroundStyle(Color.appText)
 
             Divider().background(.white.opacity(0.1))
 
@@ -56,7 +56,7 @@ struct AudioOutputSheet: View {
                             Image(systemName: btShown ? "chevron.up" : "chevron.down")
                         }
                         .padding(.horizontal, 12).padding(.vertical, 10)
-                        .foregroundStyle(.white.opacity(0.85))
+                        .foregroundStyle(Color.appText.opacity(0.85))
                     }
                     .buttonStyle(.plain)
 

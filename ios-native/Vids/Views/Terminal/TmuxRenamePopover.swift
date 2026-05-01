@@ -32,14 +32,14 @@ struct TmuxRenamePopover: View {
             HStack {
                 Text("Rename window")
                     .font(Font.app(13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Color.appText.opacity(0.85))
                 Spacer()
             }
             TextField("name", text: $name)
                 .textFieldStyle(.plain)
                 .padding(8)
                 .background(.white.opacity(0.06))
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
                 .submitLabel(.done)
                 .onSubmit(commit)
             // Wider palette → flow into a grid. ~7 swatches per row at
@@ -64,12 +64,12 @@ struct TmuxRenamePopover: View {
             HStack(spacing: 12) {
                 Button(action: cancel) {
                     Text("cancel").frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .background(.white.opacity(0.06)).foregroundStyle(.white)
+                        .background(.white.opacity(0.06)).foregroundStyle(Color.appText)
                 }
                 .buttonStyle(.plain)
                 Button(action: commit) {
                     Text("ok").frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .background(Color(hex: "#8ec07c").opacity(0.25)).foregroundStyle(.white)
+                        .background(Color(hex: "#8ec07c").opacity(0.25)).foregroundStyle(Color.appText)
                 }
                 .buttonStyle(.plain)
             }

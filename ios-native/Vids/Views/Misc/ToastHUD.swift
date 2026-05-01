@@ -12,7 +12,7 @@ struct ToastHUD: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.85))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.appText)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -32,7 +32,7 @@ struct VolumeHUD: View {
             VStack(spacing: 8) {
                 Text("\(pulse.percent)%")
                     .font(Font.app(28, weight: .bold, design: .monospaced))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(Color.appText)
                 Rectangle()
                     .fill(.white.opacity(0.15))
                     .frame(width: 160, height: 4)

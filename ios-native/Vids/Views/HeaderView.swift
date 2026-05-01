@@ -16,14 +16,14 @@ struct HeaderView: View {
             Button(action: home) {
                 Image(systemName: "play.fill")
                     .font(Font.app(13, weight: .bold))
-                    .foregroundStyle(.white.opacity(0.85))
+                    .foregroundStyle(Color.appText.opacity(0.85))
                     .frame(width: 24, height: 24)
             }
 
             TextField("Search", text: $searchText)
                 .textFieldStyle(.plain)
                 .submitLabel(.search)
-                .foregroundStyle(.white)
+                .foregroundStyle(Color.appText)
                 .tint(.white)
                 .focused($fieldFocus)
                 .contentShape(Rectangle())
@@ -87,7 +87,7 @@ private struct TabsRow: View {
                         .font(Font.app(10))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 3)
-                        .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
+                        .foregroundStyle(active ? Color.appText : Color.white.opacity(0.45))
                         .background(
                             ZStack {
                                 if active {
