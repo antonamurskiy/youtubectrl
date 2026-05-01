@@ -235,7 +235,7 @@ struct RootView: View {
                 .background(.white.opacity(0.06))
             }
             ZStack(alignment: .top) {
-                FeedListView()
+                FeedListView(onSwipe: cycleFeedTab(by:))
                 if feed.currentVideos.isEmpty {
                     VStack(spacing: 6) {
                         Text(feed.lastError ?? "Loading…")
@@ -251,15 +251,8 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Horizontal swipe on the feed body cycles tabs (matches React).
-        // Min 60pt + horizontal-dominant so it doesn't fight vertical scroll.
-        .gesture(
-            DragGesture(minimumDistance: 60, coordinateSpace: .local)
-                .onEnded { v in
-                    let dx = v.translation.width, dy = v.translation.height
-                    guard abs(dx) > abs(dy) * 1.5 else { return }
-                    cycleFeedTab(by: dx > 0 ? -1 : 1)
-                }
-        )
+        // Swipe is now wired via UIKit gesture on the FeedListView's
+        // UICollectionView (FeedListView.onSwipe) — SwiftUI's DragGesture
+        // didn't coexist well with the inner scroll view's pans.
     }
 }

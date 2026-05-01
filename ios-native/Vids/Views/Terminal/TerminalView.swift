@@ -349,10 +349,13 @@ struct TermHost: UIViewRepresentable {
 
         // Only begin if the initial motion is dominantly horizontal —
         // vertical pans go to SwiftTerm (selection / native scroll).
+        // Lower threshold (any horizontal velocity, just direction-lock)
+        // since SwiftTerm's panMouseGesture is disabled, our pan doesn't
+        // fight anything else for vertical motion.
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let pan = g as? UIPanGestureRecognizer, let view = pan.view else { return false }
             let v = pan.velocity(in: view)
-            return abs(v.x) > abs(v.y) * 1.5 && abs(v.x) > 200
+            return abs(v.x) > abs(v.y)
         }
 
         @objc func onSwipePan(_ g: UIPanGestureRecognizer) {

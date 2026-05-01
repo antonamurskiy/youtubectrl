@@ -8,9 +8,10 @@ import UIKit
 struct FeedListView: UIViewRepresentable {
     @Environment(FeedStore.self) private var feed
     @Environment(ServiceContainer.self) private var services
+    let onSwipe: (Int) -> Void
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(feed: feed, services: services)
+        Coordinator(feed: feed, services: services, onSwipe: onSwipe)
     }
 
     func makeUIView(context: Context) -> UICollectionView {
@@ -37,11 +38,18 @@ struct FeedListView: UIViewRepresentable {
         cv.alwaysBounceVertical = true
         cv.delegate = context.coordinator
         cv.prefetchDataSource = context.coordinator
-        // Pull-to-refresh.
         let rc = UIRefreshControl()
         rc.tintColor = .white
         rc.addTarget(context.coordinator, action: #selector(Coordinator.onRefresh(_:)), for: .valueChanged)
         cv.refreshControl = rc
+        // Horizontal swipe to cycle tabs — UIKit recognizer with
+        // shouldRecognizeSimultaneouslyWith so it coexists with the
+        // collection view's vertical pan, and direction-lock so
+        // vertical scrolls don't trigger a tab change.
+        let swipe = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onTabSwipe(_:)))
+        swipe.delegate = context.coordinator
+        swipe.cancelsTouchesInView = false
+        cv.addGestureRecognizer(swipe)
         context.coordinator.bind(to: cv)
         return cv
     }
@@ -53,10 +61,12 @@ struct FeedListView: UIViewRepresentable {
         context.coordinator.refresh(uiView, videos: videos, shorts: shorts)
     }
 
-    final class Coordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching {
+    final class Coordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
         private let feed: FeedStore
         private let services: ServiceContainer
+        private let onSwipe: (Int) -> Void
         private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
+        private var swipeStart: CGPoint?
 
         enum Section: Hashable { case videos, shorts }
         enum Item: Hashable {
@@ -64,9 +74,41 @@ struct FeedListView: UIViewRepresentable {
             case short(Short)
         }
 
-        init(feed: FeedStore, services: ServiceContainer) {
+        init(feed: FeedStore, services: ServiceContainer, onSwipe: @escaping (Int) -> Void) {
             self.feed = feed
             self.services = services
+            self.onSwipe = onSwipe
+        }
+
+        // MARK: gesture coexistence
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let pan = g as? UIPanGestureRecognizer, let v = pan.view else { return true }
+            let vel = pan.velocity(in: v)
+            // Only fire on horizontal-dominant motion. Vertical pans
+            // go to the collection view's scroll.
+            return abs(vel.x) > abs(vel.y)
+        }
+
+        @objc func onTabSwipe(_ g: UIPanGestureRecognizer) {
+            guard let v = g.view else { return }
+            switch g.state {
+            case .began: swipeStart = g.location(in: v)
+            case .ended:
+                guard let start = swipeStart else { return }
+                let end = g.location(in: v)
+                let dx = end.x - start.x, dy = end.y - start.y
+                swipeStart = nil
+                guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5 else { return }
+                onSwipe(dx > 0 ? -1 : 1)
+            case .cancelled, .failed: swipeStart = nil
+            default: break
+            }
         }
 
         func bind(to cv: UICollectionView) {
