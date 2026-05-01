@@ -138,11 +138,24 @@ struct NowPlayingBar: View {
                 .interactive(),
             in: RoundedRectangle(cornerRadius: 28, style: .continuous)
         )
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(Color.white.opacity(0.08))
-                .frame(height: 0.5)
-        }
+        // Directional rim — brighter at the top, dim at the bottom —
+        // suggests an above-the-bar light source instead of the
+        // uniform glow a flat stroke produces.
+        .overlay(
+            RoundedRectangle(cornerRadius: 28, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(0.45),
+                            Color.white.opacity(0.18),
+                            Color.white.opacity(0.04),
+                            Color.black.opacity(0.18),
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    ),
+                    lineWidth: 0.75
+                )
+        )
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
