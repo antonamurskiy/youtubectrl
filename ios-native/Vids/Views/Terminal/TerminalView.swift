@@ -103,14 +103,14 @@ struct TerminalView: View {
                 .padding(.bottom, terminal.keyboardHeight + 12)
             }
         }
-        .overlay {
-            if let w = renaming {
-                ZStack {
-                    Color.black.opacity(0.4).ignoresSafeArea()
-                        .onTapGesture { renaming = nil }
-                    TmuxRenamePopover(window: w, open: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }))
-                }
-            }
+        .sheet(item: Binding(
+            get: { renaming },
+            set: { renaming = $0 }
+        )) { w in
+            TmuxRenamePopover(window: w, open: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }))
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
         }
     }
 

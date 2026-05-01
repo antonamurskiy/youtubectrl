@@ -10,17 +10,22 @@ struct VideoCellView: View {
         let _ = fonts.label
         return VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
-                Group {
-                    if let img = thumbnail {
-                        Image(uiImage: img)
-                            .resizable()
-                            .aspectRatio(16.0/9.0, contentMode: .fill)
-                    } else {
-                        Color.black.opacity(0.6)
-                            .aspectRatio(16.0/9.0, contentMode: .fit)
+                // Unified frame: black box always sized 16:9 to the
+                // available width. Image draws inside it via .scaledToFill
+                // + clipped — so loaded/unloaded states have IDENTICAL
+                // intrinsic size, otherwise the cell triggers recursive
+                // _updateVisibleCellsNow on iOS 26.3.1.
+                Color.black.opacity(0.6)
+                    .aspectRatio(16.0/9.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity)
+                    .overlay {
+                        if let img = thumbnail {
+                            Image(uiImage: img)
+                                .resizable()
+                                .scaledToFill()
+                        }
                     }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 0))
+                    .clipped()
 
                 if let dur = video.duration, !dur.isEmpty {
                     Text(dur == "LIVE" ? "LIVE" : dur)
