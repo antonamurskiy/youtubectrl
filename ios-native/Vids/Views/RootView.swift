@@ -66,13 +66,23 @@ struct RootView: View {
             //   ~72 clearance) — matches React's body.keyboard-open rule
             // - NP bar visible: ~250 (bar with three rows + safe area)
             // - otherwise: 24 from bottom
-            FABStack()
-                .padding(.trailing, 16)
-                .padding(.bottom, fabBottomPadding)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-                .ignoresSafeArea(.keyboard, edges: .bottom)
-                .allowsHitTesting(true)
-                .zIndex(20)
+            // Wrap FABStack in a HStack/VStack of natural size so its
+            // hit area is only the buttons themselves — wrapping in a
+            // .frame(maxWidth/maxHeight: .infinity) made the entire
+            // bottom-right quadrant intercept touches, blocking feed
+            // scroll on the right side of the screen.
+            VStack {
+                Spacer()
+                HStack {
+                    Spacer()
+                    FABStack()
+                        .padding(.trailing, 16)
+                        .padding(.bottom, fabBottomPadding)
+                }
+            }
+            .ignoresSafeArea(.keyboard, edges: .bottom)
+            .allowsHitTesting(true)
+            .zIndex(20)
 
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
