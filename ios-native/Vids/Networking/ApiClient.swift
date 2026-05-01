@@ -75,6 +75,11 @@ actor ApiClient {
     func goLive() async throws { try await post("/api/go-live") }
     func stop() async throws { try await post("/api/stop") }
     func toggleVisibility() async throws { try await post("/api/toggle-visibility") }
+    func focusCmux() async throws { try await post("/api/focus-cmux") }
+    func mpvSpeed(_ speed: Double) async throws { try await post("/api/mpv-speed", body: ["speed": speed]) }
+    func moveMonitor(_ monitor: String) async throws { try await post("/api/move-monitor", body: ["monitor": monitor]) }
+    func toggleMaximize() async throws { try await post("/api/maximize") }
+    func toggleFullscreen() async throws { try await post("/api/fullscreen") }
     func volumeBump(_ delta: Int) async throws { try await post("/api/volume-bump", body: ["delta": delta]) }
     func tmuxSelect(index: Int) async throws { try await post("/api/tmux-select", body: ["index": index]) }
     func tmuxSend(_ keys: String) async throws { try await post("/api/tmux-send", body: ["keys": keys]) }
