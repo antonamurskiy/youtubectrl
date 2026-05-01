@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, memo } from 'react'
 import { flushSync } from 'react-dom'
 import { useUIStore } from '../stores/ui'
 import { usePlaybackStore } from '../stores/playback'
@@ -81,7 +81,7 @@ function SkeletonCards() {
   ))
 }
 
-export default function VideoGrid() {
+function VideoGridImpl() {
   const activeTab = useUIStore(s => s.activeTab)
   const searchQuery = useUIStore(s => s.searchQuery)
   const channelQuery = useUIStore(s => s.channelQuery)
@@ -432,3 +432,6 @@ export default function VideoGrid() {
     </>
   )
 }
+
+const VideoGrid = memo(VideoGridImpl)
+export default VideoGrid

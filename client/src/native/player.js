@@ -57,9 +57,14 @@ export const NativePlayer = {
   // ms when the JS-side CSS transition started — native fast-forwards
   // its animator to that fraction to compensate for bridge IPC latency
   // and stay in sync with body's CSS fade.
-  async setSafeAreaBackground(color, cssStartWallMs = 0) {
+  async setSafeAreaBackground(color) {
     if (!plugin) return
-    return plugin.setSafeAreaBackground({ color: color || '', cssStartWallMs })
+    // Skip the native fade when an input is focused — UIView ancestor
+    // animations dismiss the iOS keyboard. Tab switches / color picks
+    // happen with no input focus, so the fade runs in the common case.
+    const ae = typeof document !== 'undefined' ? document.activeElement : null
+    const editable = !!(ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable))
+    return plugin.setSafeAreaBackground({ color: color || '', animate: !editable })
   },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }

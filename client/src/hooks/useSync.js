@@ -51,6 +51,12 @@ export function useSync() {
           if (data.tmuxColors && shallowEqualMap(data.tmuxColors, cur.tmuxColors)) {
             data.tmuxColors = cur.tmuxColors
           }
+          if (data.macStatus && shallowEqualMap(data.macStatus, cur.macStatus)) {
+            data.macStatus = cur.macStatus
+          }
+          if (data.claudeOptions && shallowEqualArr(data.claudeOptions, cur.claudeOptions)) {
+            data.claudeOptions = cur.claudeOptions
+          }
           // In phone-only native mode, the AVPlayer is authoritative for
           // position/duration/paused. Don't let mpv's WS broadcast overwrite
           // them (mpv is muted+hidden there but still reports stale state).
@@ -139,6 +145,13 @@ function shallowEqualMap(a, b) {
   const ak = Object.keys(a), bk = Object.keys(b)
   if (ak.length !== bk.length) return false
   for (const k of ak) if (a[k] !== b[k]) return false
+  return true
+}
+
+function shallowEqualArr(a, b) {
+  if (a === b) return true
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false
   return true
 }
 

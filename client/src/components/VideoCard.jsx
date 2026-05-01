@@ -387,13 +387,7 @@ function VideoCardImpl({ video, isPlaying, isActive, onHide }) {
       >
         <div className="thumb-wrap">
           {thumbnail && <img src={thumbnail} alt="" loading="lazy" onError={(e) => { if (e.target.src.includes('hq720')) e.target.src = e.target.src.replace('hq720', 'hqdefault') }} />}
-          {/* Pre-mount video as soon as URL resolves + card is in the
-              prefetch band, regardless of whether we're previewing.
-              `preload="auto"` pulls bytes in the background so when the
-              card becomes active, .play() is instant — no "loading"
-              jank mid-scroll. Opacity 0 hides it; previewing flips on
-              the playback + visibility together. */}
-          {previewUrl && !terminalOpen && (inView || previewing) && (
+          {previewUrl && !terminalOpen && previewing && (
             <video
               ref={(el) => {
                 previewRef.current = el

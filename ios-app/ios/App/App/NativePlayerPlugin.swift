@@ -776,17 +776,11 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     /// status-bar UIView area. Pass null/empty to revert.
     @objc func setSafeAreaBackground(_ call: CAPPluginCall) {
         let hex = call.getString("color") ?? ""
-        // Default 400ms matches the CSS `transition: background-color
-        // 400ms ease` on body so the Dynamic Island gutter fades in
-        // sync with the body bg instead of snapping.
-        let durMs = call.getDouble("durationMs") ?? 400
-        // JS captures wall-clock at the moment it sets body.style.background.
-        // We use it to fast-forward the native animator's fractionComplete
-        // to compensate for bridge IPC latency — without it, the gutter
-        // animation lags the body fade by ~30-50ms (the dispatch round-
-        // trip). With it, both animations occupy the same wall-clock
-        // window even though they don't START at the same wall-clock.
-        let cssStartWallMs = call.getDouble("cssStartWallMs") ?? 0
+        // Animate over 400ms with cubic-bezier(0.25, 0.1, 0.25, 1.0) to
+        // match body's CSS transition. JS passes animate=false when an
+        // input is focused (typing) — UIView ancestor animations during
+        // focus can dismiss the iOS keyboard, so snap in that case.
+        let animate = call.getBool("animate") ?? true
         DispatchQueue.main.async {
             let color = NativePlayerPlugin.colorFromHex(hex) ?? UIColor(red: 33.0/255, green: 33.0/255, blue: 33.0/255, alpha: 1)
             guard let webView = self.bridge?.webView else {
@@ -794,29 +788,37 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 return
             }
             webView.isOpaque = false
-            // Snap instead of animating. AND: don't touch webView's own
-            // backgroundColor or its scrollView's backgroundColor —
-            // mutating either invalidates the WebView's layer and iOS
-            // WKWebView dismisses any focused input on layer changes.
             // Repaint only the surrounding chrome (parent views up to
-            // UIWindow, plus window's other direct children). Body CSS
-            // covers the WebView's own area, so its bg never shows.
+            // UIWindow, plus window's other direct children). Do NOT
+            // touch webView.backgroundColor or its scrollView's bg —
+            // mutating either invalidates the WebView's compositor
+            // layer and iOS WKWebView dismisses any focused input.
+            // Body CSS covers the WebView's own area, so its bg never
+            // shows.
             let playerView = self.playerContainer
             let playerHost = playerView?.superview
+            var targets: [UIView] = []
             var v: UIView? = webView.superview
             while v != nil {
-                if v !== playerView && v !== playerHost {
-                    v?.backgroundColor = color
-                }
+                if v !== playerView && v !== playerHost { targets.append(v!) }
                 v = v?.superview
             }
             if let window = webView.window {
                 for sub in window.subviews where sub !== webView && sub !== playerView && sub !== playerHost {
-                    sub.backgroundColor = color
+                    targets.append(sub)
                 }
             }
+            if animate {
+                let timing = UICubicTimingParameters(controlPoint1: CGPoint(x: 0.25, y: 0.1), controlPoint2: CGPoint(x: 0.25, y: 1.0))
+                let animator = UIViewPropertyAnimator(duration: 0.4, timingParameters: timing)
+                animator.addAnimations {
+                    for t in targets { t.backgroundColor = color }
+                }
+                animator.startAnimation()
+            } else {
+                for t in targets { t.backgroundColor = color }
+            }
             call.resolve(["ok": true])
-            _ = cssStartWallMs
         }
     }
 

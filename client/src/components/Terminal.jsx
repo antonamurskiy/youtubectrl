@@ -457,19 +457,73 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     scrollLockUntilRef.current = Date.now() + 1200
   }, [activeIdx])
 
-  // xterm's WebGL theme.background snaps when assigned — used to
-  // animate over 400ms via rAF for visual smoothness, but the per-
-  // frame term.refresh() rebuilt xterm's screen DOM and iOS WKWebView
-  // dismissed the focused helper-textarea (ancestor mutations during
-  // focus). Snap immediately. The body / panel chrome / FAB / etc.
-  // still fade via CSS — only xterm's pane snaps.
+  // Fade xterm's WebGL theme.background over 400ms via rAF so it
+  // tracks the same cubic-bezier curve as body/panel/FAB/np-bar's
+  // CSS transitions. Without this, xterm snaps and the snapped pane
+  // shows ugly seams against still-fading neighbors.
+  // EXCEPTION: when the helper-textarea is focused (keyboard up),
+  // skip the rAF — per-frame term.refresh() rebuilds xterm screen
+  // DOM siblings of the focused input, and iOS WKWebView dismisses
+  // focus on ancestor mutations. Tab switches that trigger fades
+  // generally happen with keyboard down, so the fade runs in the
+  // common case. Typing-induced color changes (rare) snap.
+  const xtermBgRef = useRef(null)
   useEffect(() => {
     const term = xtermRef.current
     if (!term) return
     const css = getComputedStyle(document.body)
     const baseBg = css.getPropertyValue('--bg').trim() || '#282828'
     const target = activeColor ? darkenHex(activeColor) : baseBg
-    try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
+    const prev = xtermBgRef.current || target
+    const apply = (hex) => {
+      try { term.options.theme = { ...term.options.theme, background: hex }; term.refresh(0, term.rows - 1) } catch {}
+    }
+    const helper = termRef.current?.querySelector?.('.xterm-helper-textarea')
+    const helperFocused = helper && document.activeElement === helper
+    if (helperFocused || prev === target) {
+      apply(target)
+      xtermBgRef.current = target
+      return
+    }
+    const parse = (h) => {
+      const c = (h || '#000').replace('#', '').padEnd(6, '0').slice(0, 6)
+      return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]
+    }
+    const [r0, g0, b0] = parse(prev)
+    const [r1, g1, b1] = parse(target)
+    // Newton-Raphson on cubic-bezier (0.25, 0.1, 0.25, 1)'s x curve
+    const cx1 = 0.25, cx2 = 0.25, cy1 = 0.1, cy2 = 1.0
+    const bezX = (t) => 3 * (1 - t) * (1 - t) * t * cx1 + 3 * (1 - t) * t * t * cx2 + t * t * t
+    const bezY = (t) => 3 * (1 - t) * (1 - t) * t * cy1 + 3 * (1 - t) * t * t * cy2 + t * t * t
+    const dBezX = (t) => 3 * (1 - t) * (1 - t) * cx1 + 6 * (1 - t) * t * (cx2 - cx1) + 3 * t * t * (1 - cx2)
+    const yForX = (x) => {
+      let t = x
+      for (let i = 0; i < 6; i++) {
+        const dx = bezX(t) - x
+        if (Math.abs(dx) < 1e-4) break
+        const d = dBezX(t)
+        if (Math.abs(d) < 1e-6) break
+        t -= dx / d
+      }
+      return bezY(t)
+    }
+    const start = performance.now()
+    const dur = 400
+    let cancelled = false
+    const tick = (now) => {
+      if (cancelled) return
+      const x = Math.min(1, (now - start) / dur)
+      const y = yForX(x)
+      const r = Math.round(r0 + (r1 - r0) * y)
+      const g = Math.round(g0 + (g1 - g0) * y)
+      const b = Math.round(b0 + (b1 - b0) * y)
+      const cur = '#' + [r, g, b].map(v => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('')
+      apply(cur)
+      if (x < 1) requestAnimationFrame(tick)
+      else xtermBgRef.current = target
+    }
+    requestAnimationFrame(tick)
+    return () => { cancelled = true }
   }, [activeColor])
 
   // Paint the iOS safe-area regions (top under the Dynamic Island,

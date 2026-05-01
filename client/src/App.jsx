@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, memo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { flushSync, createPortal } from 'react-dom'
 import { tick as hapticTick, thump as hapticThump } from './haptics'
@@ -292,7 +292,12 @@ function TmuxTabButton({ window: w, color }) {
   )
 }
 
-function NowPlayingBarMount({ show, ...props }) {
+const TerminalSlot = memo(function TerminalSlot({ terminalOpen, setTerminalOpen, playing, tmuxWindows, tmuxColors, tmuxColorPreview }) {
+  const onClose = useCallback(() => setTerminalOpen(false), [setTerminalOpen])
+  return <Terminal onClose={onClose} hasNowPlaying={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} tmuxColorPreview={tmuxColorPreview} visible={terminalOpen} />
+})
+
+const NowPlayingBarMount = memo(function NowPlayingBarMount({ show, ...props }) {
   const [mounted, setMounted] = useState(show)
   const [exiting, setExiting] = useState(false)
   useEffect(() => {
@@ -307,7 +312,7 @@ function NowPlayingBarMount({ show, ...props }) {
   }, [show, mounted])
   if (!mounted) return null
   return <NowPlayingBar {...props} exiting={exiting} />
-}
+})
 
 function App() {
   const { send } = useSync()
@@ -388,17 +393,17 @@ function App() {
   }, [rawClaudeState])
   const [terminalEverOpened, setTerminalEverOpened] = useState(false)
   useEffect(() => { if (terminalOpen) setTerminalEverOpened(true) }, [terminalOpen])
+  const [keyboardOpen, setKeyboardOpen] = useState(false)
   const longPressRef = useRef(null)
 
-  // Toggle body.keyboard-open when iOS soft keyboard is up. CSS uses
-  // this to lift FABs above the keyboard only when needed; otherwise
-  // they stay at their normal just-above-the-now-playing-bar spot.
   useEffect(() => {
     const vv = window.visualViewport
     if (!vv) return
     const update = () => {
       const kbH = window.innerHeight - vv.height
-      document.body.classList.toggle('keyboard-open', kbH > 100)
+      const open = kbH > 100
+      document.body.classList.toggle('keyboard-open', open)
+      setKeyboardOpen(open)
     }
     update()
     vv.addEventListener('resize', update)
@@ -451,7 +456,7 @@ function App() {
     setTimeout(() => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {}), 500)
   }, [])
 
-  const tabs = ['rec', 'history', 'subs', 'ru', 'live']
+  const tabs = ['rec', 'live', 'subs', 'ru', 'history']
   const tabLabels = { rec: 'Rec', subs: 'Subs', live: 'Live', ru: 'Ru', history: 'Hist' }
   // Per-tab tint applied to body / html / safe-area gutter while on
   // that tab. Same darken pipeline as the tmux window color picker.
@@ -615,18 +620,12 @@ function App() {
       >
         {ptr.armed ? '◉ RELEASE' : '◯ PULL'}
       </div>
+      {!terminalOpen && (
       <div
         ref={ptrBodyRef}
         onTouchStart={onFeedTouchStart}
         onTouchEnd={onFeedTouchEnd}
         onTouchCancel={() => { feedSwipeRef.current = null }}
-        style={{
-          // visibility:hidden + pointer-events:none preserves the
-          // scroll position when terminal toggles. display:none reset
-          // body scrollTop to 0 every time the user opened/closed the
-          // terminal panel.
-          ...(terminalOpen ? { visibility: 'hidden', pointerEvents: 'none' } : undefined),
-        }}
       >
         <header className="header">
           <div className="header-inner">
@@ -673,6 +672,7 @@ function App() {
           <VideoGrid />
         </div>
       </div>
+      )}
 
       {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (
         <div className="tmux-tabs">
@@ -767,11 +767,11 @@ function App() {
       {terminalEverOpened && (
         <Suspense fallback={null}>
           <div style={{ display: terminalOpen ? '' : 'none' }}>
-            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} tmuxColorPreview={tmuxColorPreview} visible={terminalOpen} />
+            <TerminalSlot terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} playing={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} tmuxColorPreview={tmuxColorPreview} />
           </div>
         </Suspense>
       )}
-      <NowPlayingBarMount show={playing} send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />
+      <NowPlayingBarMount show={playing && !(terminalOpen && keyboardOpen)} send={send} frontApp={macStatus.frontApp} refreshStatus={refreshMacStatus} />
       {useSyncStore(s => s.commentsOpen) && playing && <CommentsPanel />}
       {secretMenuOpen && <SecretMenu />}
 
