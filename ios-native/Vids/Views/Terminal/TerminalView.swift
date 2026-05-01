@@ -149,6 +149,17 @@ struct TermHost: UIViewRepresentable {
         pan.delaysTouchesBegan = false
         pan.delaysTouchesEnded = false
         tv.addGestureRecognizer(pan)
+        // Disable SwiftTerm's own pan recognizers — its panMouseGesture
+        // forwards drags as SGR mouse sequences to the PTY (tmux selects,
+        // copies into buffer, looks like an "auto-paste"); panSelectionGesture
+        // would copy into UIPasteboard. Both fire at the same time as our
+        // swipe. We provide our own scroll via ScrollZoneOverlay and our
+        // own swipe via this gesture, so the SwiftTerm pans are dead weight.
+        DispatchQueue.main.async {
+            for gr in tv.gestureRecognizers ?? [] where gr !== pan && gr is UIPanGestureRecognizer {
+                gr.isEnabled = false
+            }
+        }
         return tv
     }
 
