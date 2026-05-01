@@ -156,7 +156,12 @@ struct NowPlayingBar: View {
             Text(label)
                 .font(Font.app(11, weight: .heavy, design: .monospaced))
                 .foregroundStyle(Color.appText.opacity(0.65))
-                .padding(.horizontal, 4)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 8)
+                // Explicit hit-test region — without this, the bar's
+                // outer .contentShape(RoundedRectangle) captured taps
+                // before the tiny text caught them.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
