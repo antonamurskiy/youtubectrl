@@ -17,31 +17,23 @@ struct SecretMenu: View {
 
     var body: some View {
         List {
-            Group {
-                statusSection
-                volumeSection
-                findMySection
-                syncOffsetSection
-                macSection
-                audioOutputSection
-                bluetoothSection
-                fontSection
-                brightnessSection
-            }
-            // Per-row glass: each cell paints a thin material backdrop
-            // instead of the system grouped-list opaque grey. Section
-            // header bg also goes transparent so the sheet material
-            // shows through between sections.
-            .listRowBackground(
-                Rectangle().fill(.ultraThinMaterial)
-                    .overlay(Color.white.opacity(0.04))
-            )
-            .listRowSeparatorTint(Color.white.opacity(0.1))
-            .listSectionSeparator(.hidden)
+            statusSection
+            volumeSection
+            findMySection
+            syncOffsetSection
+            macSection
+            audioOutputSection
+            bluetoothSection
+            fontSection
+            brightnessSection
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(.clear)
+        // Rows: clear so the SHEET's thinMaterial bg shows through.
+        // No per-row backdrop (that's what the long-press card does —
+        // single blur, no nested tiles).
+        .listRowBackground(Color.clear)
         .task {
             await loadOutputs()
             await loadVolume()
@@ -49,6 +41,25 @@ struct SecretMenu: View {
             await loadStealth()
             await refreshFriend(force: false)
         }
+    }
+
+    // MARK: glass card wrapper
+
+    @ViewBuilder
+    private func glassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            content()
+        }
+        .padding(.vertical, 8)
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
     }
 
     // MARK: status
