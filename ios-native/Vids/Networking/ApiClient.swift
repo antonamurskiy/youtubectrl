@@ -49,7 +49,13 @@ actor ApiClient {
         try await get("/api/search", query: [URLQueryItem(name: "q", value: query)])
     }
 
-    func live() async throws -> HomeResponse { try await get("/api/live") }
+    func live() async throws -> HomeResponse {
+        // /api/live returns a bare array, not a wrapped {videos:[...]}.
+        let (data, _) = try await session.data(from: url("/api/live"))
+        let videos = try decoder.decode([Video].self, from: data)
+        return HomeResponse(videos: videos, shorts: nil, nextPage: nil)
+    }
+    func rumble() async throws -> HomeResponse { try await get("/api/rumble") }
     func history() async throws -> HomeResponse { try await get("/api/history") }
     func trending() async throws -> HomeResponse { try await get("/api/trending") }
 
@@ -104,8 +110,8 @@ actor ApiClient {
 
     func channel(id: String? = nil, name: String? = nil) async throws -> HomeResponse {
         var q: [URLQueryItem] = []
-        if let id { q.append(URLQueryItem(name: "channelId", value: id)) }
-        if let name { q.append(URLQueryItem(name: "channelName", value: name)) }
+        if let id { q.append(URLQueryItem(name: "id", value: id)) }
+        if let name { q.append(URLQueryItem(name: "name", value: name)) }
         return try await get("/api/channel", query: q)
     }
 

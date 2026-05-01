@@ -32,6 +32,7 @@ final class FeedStore {
             switch tab {
             case .live: resp = try await api.live()
             case .history: resp = try await api.history()
+            case .ru: resp = try await api.rumble()
             default:
                 let page = append ? nextPageByTab[tab] : nil
                 resp = try await api.home(feed: tab.feedKey, page: page)
