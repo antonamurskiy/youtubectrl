@@ -121,7 +121,12 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
-        .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
+        // Match the SwiftTerm CADisplayLink curve EXACTLY — both
+        // use cubic-bezier(0.25, 0.1, 0.25, 1.0) over 0.4s so body bg,
+        // FAB, scrubber, np-bar, and the terminal pane traverse the
+        // same color path at the same rate (CLAUDE.md > "Synchronizing
+        // the tint fade").
+        .animation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.4), value: theme.resolvedSurface)
         .animation(.easeOut(duration: 0.25), value: terminal.open)
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
