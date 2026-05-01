@@ -20,8 +20,8 @@ struct SecretMenu: View {
         // on iPhone 17 Pro. Card insets 20pt from screen edges, 24pt
         // gap between cards, 26pt corner radius.
         ScrollView {
-            GlassEffectContainer(spacing: 24) {
-                VStack(spacing: 24) {
+            GlassEffectContainer(spacing: 14) {
+                VStack(spacing: 14) {
                     glassCard(volumeSection)
                     glassCard(findMySection)
                     glassCard(syncOffsetSection)
@@ -96,7 +96,7 @@ struct SecretMenu: View {
             let last = children.last?.id
             ForEach(children) { child in
                 child
-                    .padding(.vertical, 4)
+                    .padding(.vertical, 10)
                 if child.id != last {
                     Divider().background(Color.white.opacity(0.08))
                 }
