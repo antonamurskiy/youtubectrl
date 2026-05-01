@@ -62,13 +62,15 @@ struct SecretMenu: View {
         // Darker tint pushes the glass forward of the dimmed sheet bg
         // and a 0.5pt white stroke gives each card a defined edge —
         // matches how iOS draws the long-press preview blob.
-        .glassEffect(.regular.tint(.black.opacity(0.25)),
+        // Light tint on a dim backdrop so the cards read as raised
+        // glass rather than disappearing into the dark sheet bg.
+        .glassEffect(.regular.tint(.white.opacity(0.18)),
                      in: RoundedRectangle(cornerRadius: 22, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+                .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
         )
-        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
+        .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
     }
 
     /// Section with an optional header label, content stacked below.
