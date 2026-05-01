@@ -57,23 +57,25 @@ struct ClaudeFeedView: View {
     @Environment(TerminalStore.self) private var terminal
 
     var body: some View {
-        VStack(alignment: .trailing, spacing: 4) {
-            ForEach(terminal.open ? [] : Array(push.feed.suffix(6).reversed())) { line in
+        // React's .claude-feed: top of screen, left-aligned, dark
+        // surface + cream text + dim border, multi-line wrapping.
+        VStack(alignment: .leading, spacing: 3) {
+            ForEach(terminal.open ? [] : Array(push.feed.suffix(8).reversed())) { line in
                 Text(line.text)
-                    .font(Font.app(11, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.6))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.black.opacity(0.55))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+                    .font(Font.app(12))
+                    .tracking(1)
+                    .foregroundStyle(Color(hex: "#ebdbb2"))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color(hex: "#151515").opacity(0.95))
+                    .overlay(Rectangle().stroke(Color(hex: "#a89984"), lineWidth: 1))
+                    .transition(.opacity)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-        .padding(.top, 100)
-        .padding(.trailing, 12)
+        .padding(.horizontal, 12)
+        .padding(.top, 60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.2), value: push.feed.count)
     }
