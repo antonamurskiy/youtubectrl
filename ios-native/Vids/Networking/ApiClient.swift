@@ -137,17 +137,50 @@ actor ApiClient {
         return try decoder.decode(PhoneOnlyResponse.self, from: data)
     }
 
+    struct StoryboardChapter: Codable, Hashable {
+        let start: Double?
+        let end: Double?
+        let title: String?
+    }
     struct Storyboard: Codable {
-        let template: String?
+        let url: String?
         let cols: Int?
         let rows: Int?
         let interval: Double?
         let width: Int?
         let height: Int?
+        let chapters: [StoryboardChapter]?
     }
 
     func storyboard(videoId: String) async throws -> Storyboard {
-        try await get("/api/storyboard", query: [URLQueryItem(name: "id", value: videoId)])
+        try await get("/api/storyboard", query: [URLQueryItem(name: "videoId", value: videoId)])
+    }
+
+    struct Comment: Codable, Hashable, Identifiable {
+        let author: String?
+        let text: String?
+        let publishedAt: String?
+        let likeCount: Int?
+        var id: String { (author ?? "") + (text?.prefix(40).description ?? "") }
+    }
+
+    func comments(videoId: String) async throws -> [Comment] {
+        try await get("/api/comments", query: [URLQueryItem(name: "id", value: videoId)])
+    }
+
+    struct Format: Codable, Hashable {
+        let label: String?
+        let format: String?
+    }
+    struct FormatsResponse: Codable {
+        let formats: [Format]?
+    }
+    func formats(url: String) async throws -> [Format] {
+        let r: FormatsResponse = try await get("/api/formats", query: [URLQueryItem(name: "url", value: url)])
+        return r.formats ?? []
+    }
+    func setQuality(format: String) async throws {
+        try await post("/api/set-quality", body: ["format": format])
     }
 
     struct AudioOutput: Codable, Hashable, Identifiable {

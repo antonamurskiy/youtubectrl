@@ -6,6 +6,8 @@ final class UIStore {
     var toasts: [Toast] = []
     var volumePulse: VolumePulse? = nil
     var secretMenuOpen: Bool = false
+    var commentsOpen: Bool = false
+    var qualityMenuOpen: Bool = false
 
     @MainActor
     func toast(_ text: String, duration: TimeInterval = 1.6) {

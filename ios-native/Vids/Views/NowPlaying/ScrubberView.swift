@@ -24,6 +24,7 @@ struct ScrubberView: UIViewRepresentable {
                       clockOffset: services.ws.clockOffset,
                       fillColor: UIColor(theme.resolvedFill),
                       trackColor: UIColor(theme.resolvedTrack))
+        uiView.setStoryboard(playback.storyboard)
     }
 }
 
@@ -48,18 +49,19 @@ final class ScrubberUIView: UIView {
     private var clockOffset: Double = 0
     private var dragging = false
     private var dragPct: Double = 0
-    private var storyboardImage: UIImage?
-    private var storyboardCols: Int = 0
-    private var storyboardRows: Int = 0
-    private var storyboardInterval: Double = 0
+    private var storyboard: ApiClient.Storyboard?
+    private var pageImages: [Int: UIImage] = [:]
+    private var pageInFlight: Set<Int> = []
+    private let previewView = UIImageView()
     var onSeek: ((Double) -> Void)?
-    var onPreviewRequest: ((Double) -> Void)?  // pct → fetch storyboard tile
 
-    func setStoryboard(image: UIImage?, cols: Int, rows: Int, interval: Double) {
-        self.storyboardImage = image
-        self.storyboardCols = cols
-        self.storyboardRows = rows
-        self.storyboardInterval = interval
+    func setStoryboard(_ sb: ApiClient.Storyboard?) {
+        // Reset cache when switching storyboards.
+        if sb?.url != storyboard?.url {
+            pageImages.removeAll()
+            pageInFlight.removeAll()
+        }
+        storyboard = sb
     }
 
     override init(frame: CGRect) {
@@ -67,6 +69,13 @@ final class ScrubberUIView: UIView {
         layer.addSublayer(track)
         layer.addSublayer(fill)
         layer.addSublayer(thumb)
+        previewView.isHidden = true
+        previewView.contentMode = .scaleAspectFill
+        previewView.clipsToBounds = true
+        previewView.layer.cornerRadius = 4
+        previewView.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
+        previewView.layer.borderWidth = 1
+        addSubview(previewView)
         addSubview(previewLabel)
         backgroundColor = .clear
         let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
@@ -129,16 +138,79 @@ final class ScrubberUIView: UIView {
         case .began:
             dragging = true; dragPct = pct
             previewLabel.isHidden = false
+            previewView.isHidden = false
         case .changed:
             dragPct = pct
             updatePreviewLabel()
+            updateStoryboardTile()
         case .ended, .cancelled:
             dragging = false
             previewLabel.isHidden = true
+            previewView.isHidden = true
             onSeek?(pct)
         default: break
         }
         setNeedsLayout()
+    }
+
+    private func updateStoryboardTile() {
+        guard let sb = storyboard, let urlTpl = sb.url,
+              let cols = sb.cols, cols > 0,
+              let rows = sb.rows, rows > 0,
+              let interval = sb.interval, interval > 0,
+              let tileW = sb.width, let tileH = sb.height,
+              let pb = playback, pb.duration > 0 else {
+            previewView.image = nil
+            return
+        }
+        let target = pb.duration * dragPct
+        let frameIndex = Int(target / interval)
+        let perPage = cols * rows
+        let pageIndex = frameIndex / perPage
+        let frameOnPage = frameIndex % perPage
+        let col = frameOnPage % cols
+        let row = frameOnPage / cols
+
+        let r = bounds.insetBy(dx: 12, dy: 0)
+        let cx = r.minX + r.width * dragPct
+        let prevW: CGFloat = 132, prevH = prevW * CGFloat(tileH) / CGFloat(tileW)
+        previewView.frame = CGRect(x: max(8, min(bounds.width - prevW - 8, cx - prevW / 2)),
+                                   y: -prevH - 24,
+                                   width: prevW, height: prevH)
+
+        if let img = pageImages[pageIndex] {
+            previewView.image = cropTile(img, col: col, row: row, tileW: tileW, tileH: tileH)
+        } else {
+            previewView.image = nil
+            fetchPage(template: urlTpl, page: pageIndex)
+        }
+    }
+
+    private func cropTile(_ image: UIImage, col: Int, row: Int, tileW: Int, tileH: Int) -> UIImage? {
+        let scale = image.scale
+        let rect = CGRect(x: CGFloat(col * tileW) * scale,
+                          y: CGFloat(row * tileH) * scale,
+                          width: CGFloat(tileW) * scale,
+                          height: CGFloat(tileH) * scale)
+        guard let cg = image.cgImage?.cropping(to: rect) else { return nil }
+        return UIImage(cgImage: cg, scale: scale, orientation: image.imageOrientation)
+    }
+
+    private func fetchPage(template: String, page: Int) {
+        guard !pageInFlight.contains(page) else { return }
+        pageInFlight.insert(page)
+        let urlStr = template.replacingOccurrences(of: "M$M.jpg", with: "M\(page).jpg")
+        guard let url = URL(string: urlStr) else { return }
+        Task.detached { [weak self] in
+            let (data, _) = (try? await URLSession.shared.data(from: url)) ?? (Data(), URLResponse())
+            guard let img = UIImage(data: data) else { return }
+            await MainActor.run {
+                guard let self else { return }
+                self.pageImages[page] = img
+                self.pageInFlight.remove(page)
+                if self.dragging { self.updateStoryboardTile() }
+            }
+        }
     }
 
     private func updatePreviewLabel() {

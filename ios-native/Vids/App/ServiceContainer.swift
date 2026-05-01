@@ -41,6 +41,9 @@ final class ServiceContainer {
                     self.liveSync.setServerPDT(pdt, serverTs: ts)
                     self.liveSync.updateClockOffset(self.ws.clockOffset)
                 }
+                if let url = p.url, !url.isEmpty, url != self.playback.storyboardForUrl {
+                    self.fetchStoryboard(for: url)
+                }
             case .tmux(let t):
                 self.terminal.apply(windows: t.windows, colors: t.colors)
             case .claudeFeed(let lines):
@@ -70,6 +73,16 @@ final class ServiceContainer {
         await MainActor.run { keyboard.start(terminal: terminal) }
         ws.connect()
         await feed.loadInitial(api: api)
+    }
+
+    private func fetchStoryboard(for url: String) {
+        guard let videoId = url.firstMatch(of: /v=([\w-]+)/)?.output.1 else { return }
+        let id = String(videoId)
+        Task { @MainActor in
+            self.playback.storyboardForUrl = url
+            self.playback.storyboard = nil
+            self.playback.storyboard = try? await self.api.storyboard(videoId: id)
+        }
     }
 
     func handleDeepLink(_ url: URL) {

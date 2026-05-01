@@ -83,6 +83,20 @@ struct RootView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(40)
             }
+            if ui.commentsOpen {
+                CommentsPanel()
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .zIndex(41)
+            }
+            if ui.qualityMenuOpen {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                        .onTapGesture { ui.qualityMenuOpen = false }
+                    QualityMenu()
+                }
+                .transition(.opacity)
+                .zIndex(42)
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
         .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
@@ -102,9 +116,9 @@ struct RootView: View {
         }
         if terminal.open { return 24 }                // terminal closed-keyboard: clear of home indicator
         if playback.playing && npBarHeight > 0 {
-            return npBarHeight + 16
+            return npBarHeight + 30
         }
-        if playback.playing { return 270 }
+        if playback.playing { return 290 }
         return 70
     }
 

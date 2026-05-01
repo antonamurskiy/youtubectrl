@@ -36,11 +36,23 @@ struct TerminalView: View {
                 .background(theme.resolvedSurface)
             }
 
-            TermHost(host: services.serverHost)
-                .background(theme.resolvedSurface)
+            ZStack(alignment: .trailing) {
+                TermHost(host: services.serverHost)
+                    .background(theme.resolvedSurface)
+                ScrollZoneOverlay()
+                    .frame(width: 56)
+            }
         }
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
+        .gesture(
+            DragGesture(minimumDistance: 60, coordinateSpace: .local)
+                .onEnded { v in
+                    let dx = v.translation.width, dy = v.translation.height
+                    guard abs(dx) > abs(dy) * 1.5 else { return }
+                    switchTmuxWindow(by: dx > 0 ? -1 : 1)
+                }
+        )
         .overlay {
             if let w = renaming {
                 ZStack {
@@ -50,6 +62,15 @@ struct TerminalView: View {
                 }
             }
         }
+    }
+
+    private func switchTmuxWindow(by delta: Int) {
+        let windows = terminal.windows
+        guard windows.count > 1,
+              let activeIdx = windows.firstIndex(where: { $0.active }) else { return }
+        let next = (activeIdx + delta + windows.count) % windows.count
+        let target = windows[next]
+        Task { try? await services.api.tmuxSelect(index: target.index) }
     }
 
     private func tabBg(_ w: TmuxWindow) -> SwiftUI.Color {

@@ -5,6 +5,7 @@ struct NowPlayingBar: View {
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
     @Environment(PhoneModeStore.self) private var phoneMode
+    @Environment(UIStore.self) private var ui
     @State private var speedPressed: Bool = false
 
     var body: some View {
@@ -82,7 +83,14 @@ struct NowPlayingBar: View {
                         .lineLimit(1)
                         .foregroundStyle(.white.opacity(0.55))
                 }
+                .onLongPressGesture { ui.qualityMenuOpen = true }
                 Spacer()
+                Button(action: { ui.commentsOpen.toggle() }) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 14))
+                        .foregroundStyle(ui.commentsOpen ? Color(hex: "#8ec07c") : .white.opacity(0.6))
+                }
+                .buttonStyle(.plain)
                 HStack(spacing: 18) {
                     Button(action: { Task { try? await services.api.skip(-15) } }) {
                         Image(systemName: "gobackward.15")

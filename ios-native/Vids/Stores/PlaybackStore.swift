@@ -28,6 +28,9 @@ final class PlaybackStore {
     var claudeOptions: [ClaudeOption] = []
     var claudeQuestion: String? = nil
 
+    var storyboard: ApiClient.Storyboard? = nil
+    var storyboardForUrl: String? = nil
+
     func apply(_ p: PlaybackPayload) {
         if let v = p.playing { playing = v }
         if let v = p.url { url = v }
