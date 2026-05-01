@@ -38,6 +38,8 @@ targets:
     resources:
       - path: Vids/Resources/Assets.xcassets
         optional: true
+      - path: Vids/Resources/Fonts
+        optional: true
     info:
       path: Vids/Resources/Info.plist
       properties:
@@ -58,6 +60,8 @@ targets:
           - CFBundleURLSchemes: [youtubectrl]
         UIRequiresFullScreen: false
         ITSAppUsesNonExemptEncryption: false
+        UIAppFonts:
+          - JetBrainsMono-Regular.ttf
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.antonamurskiy.vids

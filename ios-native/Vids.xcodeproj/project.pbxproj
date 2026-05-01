@@ -14,6 +14,7 @@
 		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
 		22A39A9D83262B14E9665774 /* FontStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2465BFECA4E139AC71688AF1 /* FontStore.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
+		285D684AC6072105BA50CB06 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */; };
 		29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581FDCC94E632C0CBFD956B7 /* UIStore.swift */; };
 		2CEB249AFD0ABD0A09F3570F /* PushStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */; };
 		3463517DD905E7E0B8DBA979 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBBC8B0D72054C178C9628EA /* RootView.swift */; };
@@ -68,6 +69,7 @@
 		7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushStore.swift; sourceTree = "<group>"; };
 		8E7DB4C9E774298C79886938 /* VidsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VidsApp.swift; sourceTree = "<group>"; };
 		8FA7931C65256F257CD6A648 /* FABStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FABStack.swift; sourceTree = "<group>"; };
+		948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
 		9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStore.swift; sourceTree = "<group>"; };
 		9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastHUD.swift; sourceTree = "<group>"; };
 		AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
@@ -155,6 +157,7 @@
 				8F7A6D83E010966BAB3D1A1D /* Networking */,
 				D3D7AB10CFC0761FB2847084 /* Player */,
 				48A23DBDD7E989904205FDD0 /* Push */,
+				DB0B7CB7BE40291B9E89E7AA /* Resources */,
 				F13091BF7F00E18BAEE7A479 /* Stores */,
 				61557D84315031FC1767A882 /* Theme */,
 				F4F8809B3C4EE6F81C85BCAB /* Views */,
@@ -188,6 +191,14 @@
 			path = Misc;
 			sourceTree = "<group>";
 		};
+		CF04DC8DE8E259A60EB531B4 /* Fonts */ = {
+			isa = PBXGroup;
+			children = (
+				948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */,
+			);
+			path = Fonts;
+			sourceTree = "<group>";
+		};
 		D3D7AB10CFC0761FB2847084 /* Player */ = {
 			isa = PBXGroup;
 			children = (
@@ -214,6 +225,14 @@
 				8E7DB4C9E774298C79886938 /* VidsApp.swift */,
 			);
 			path = App;
+			sourceTree = "<group>";
+		};
+		DB0B7CB7BE40291B9E89E7AA /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				CF04DC8DE8E259A60EB531B4 /* Fonts */,
+			);
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		E7C921C4C2D7051F75874DD6 /* SecretMenu */ = {
@@ -261,6 +280,7 @@
 			buildConfigurationList = 8E54F70AB3775B14580C7A9D /* Build configuration list for PBXNativeTarget "Vids" */;
 			buildPhases = (
 				91EA0EDF0A5207A6A01A90A6 /* Sources */,
+				93C7E2247941BC5C0FEBFA34 /* Resources */,
 				ED55E2031EC38698C28C70E5 /* Frameworks */,
 			);
 			buildRules = (
@@ -310,6 +330,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		93C7E2247941BC5C0FEBFA34 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				285D684AC6072105BA50CB06 /* JetBrainsMono-Regular.ttf in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		91EA0EDF0A5207A6A01A90A6 /* Sources */ = {

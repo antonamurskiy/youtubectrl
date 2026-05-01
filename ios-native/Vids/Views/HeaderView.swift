@@ -10,7 +10,8 @@ struct HeaderView: View {
     @State private var searchTask: Task<Void, Never>? = nil
 
     var body: some View {
-        // Single-row header: home / search / tabs (right) / status dots.
+        VStack(spacing: 4) {
+        // Top row: home / search / status dots.
         HStack(spacing: 6) {
             Button(action: home) {
                 Image(systemName: "play.fill")
@@ -38,14 +39,24 @@ struct HeaderView: View {
                 }
                 .frame(maxWidth: .infinity, minHeight: 28)
 
-            // Tabs on the right.
+            HStack(spacing: 3) {
+                StatusDot(on: true)
+                StatusDot(on: playback.macStatus.ethernet ?? false)
+                StatusDot(on: !(playback.macStatus.locked ?? false))
+                StatusDot(on: !(playback.macStatus.screenOff ?? false))
+            }
+        }
+        .padding(.horizontal, 10)
+
+        // Tabs row — horizontally scrollable so wider fonts don't wrap.
+        ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 4) {
                 ForEach(FeedTab.allCases) { tab in
                     let active = feed.activeTab == tab
                     Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
                         Text(tab.label)
                             .font(Font.app(11, weight: active ? .heavy : .semibold))
-                            .padding(.horizontal, 7)
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(active ? Color.white.opacity(0.22) : Color.clear)
                             .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
@@ -59,15 +70,9 @@ struct HeaderView: View {
                     .buttonStyle(.plain)
                 }
             }
-
-            HStack(spacing: 3) {
-                StatusDot(on: true)
-                StatusDot(on: playback.macStatus.ethernet ?? false)
-                StatusDot(on: !(playback.macStatus.locked ?? false))
-                StatusDot(on: !(playback.macStatus.screenOff ?? false))
-            }
+            .padding(.horizontal, 10)
         }
-        .padding(.horizontal, 10)
+        }
         .padding(.vertical, 6)
     }
 

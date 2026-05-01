@@ -204,6 +204,14 @@ struct RootView: View {
         return playback.playing ? 210 : 32
     }
 
+    private func cycleFeedTab(by delta: Int) {
+        let all = FeedTab.allCases
+        guard let i = all.firstIndex(of: feed.activeTab) else { return }
+        let next = all[(i + delta + all.count) % all.count]
+        feed.activeTab = next
+        Task { await feed.load(tab: next, api: services.api) }
+    }
+
     private var feedView: some View {
         VStack(spacing: 0) {
             HeaderView(searchFocused: $searchFocused)
@@ -243,5 +251,15 @@ struct RootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Horizontal swipe on the feed body cycles tabs (matches React).
+        // Min 60pt + horizontal-dominant so it doesn't fight vertical scroll.
+        .gesture(
+            DragGesture(minimumDistance: 60, coordinateSpace: .local)
+                .onEnded { v in
+                    let dx = v.translation.width, dy = v.translation.height
+                    guard abs(dx) > abs(dy) * 1.5 else { return }
+                    cycleFeedTab(by: dx > 0 ? -1 : 1)
+                }
+        )
     }
 }
