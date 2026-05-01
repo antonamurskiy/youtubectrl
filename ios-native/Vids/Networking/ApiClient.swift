@@ -55,8 +55,13 @@ actor ApiClient {
         let videos = try decoder.decode([Video].self, from: data)
         return HomeResponse(videos: videos, shorts: nil, nextPage: nil)
     }
+    func history() async throws -> HomeResponse {
+        // /api/history also returns a bare array.
+        let (data, _) = try await session.data(from: url("/api/history"))
+        let videos = try decoder.decode([Video].self, from: data)
+        return HomeResponse(videos: videos, shorts: nil, nextPage: nil)
+    }
     func rumble() async throws -> HomeResponse { try await get("/api/rumble") }
-    func history() async throws -> HomeResponse { try await get("/api/history") }
     func trending() async throws -> HomeResponse { try await get("/api/trending") }
 
     func play(url: String, title: String? = nil, channel: String? = nil, thumbnail: String? = nil, isLive: Bool? = nil, startPercent: Double? = nil) async throws {
