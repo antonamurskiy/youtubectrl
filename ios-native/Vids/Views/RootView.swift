@@ -55,13 +55,8 @@ struct RootView: View {
 
             // iPad / landscape regular: feed and terminal side-by-side
             // (50/50 split). iPhone compact: cross-fade as before.
-            // Hardcoded NowPlayingBar clearance for terminal content.
-            // The measured-via-PreferenceKey value was unreliable (race
-            // between bar mount + terminal layout + safe-area resolution).
-            // 270pt = 3-row bar (~200) + iPhone home-indicator (~34) +
-            // 36pt margin so the last visible terminal row breathes.
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen)
-                ? 270
+                ? 200
                 : 0
             if hSize == .regular {
                 HStack(spacing: 0) {
