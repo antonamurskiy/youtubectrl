@@ -23,16 +23,17 @@ struct RootView: View {
         ZStack(alignment: .bottom) {
             theme.resolvedSurface.ignoresSafeArea()
 
-            // Feed dismounts entirely when terminal opens.
-            if !terminal.open {
-                feedView
-                    .transition(.identity)
-            }
+            // Feed always mounted — preserves scroll position across
+            // terminal toggles. Hidden via opacity (not removal) so
+            // SwiftUI doesn't re-create the UICollectionView.
+            feedView
+                .opacity(terminal.open ? 0 : 1)
+                .allowsHitTesting(!terminal.open)
 
-            // Terminal slides up from bottom.
+            // Terminal slides up from bottom over the feed.
             if terminal.open {
                 TerminalView()
-                    .transition(.identity)
+                    .transition(.move(edge: .bottom))
             }
 
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
@@ -119,6 +120,7 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
         .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
+        .animation(.easeOut(duration: 0.25), value: terminal.open)
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
