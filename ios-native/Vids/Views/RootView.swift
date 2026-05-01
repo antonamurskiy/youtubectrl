@@ -167,12 +167,12 @@ struct RootView: View {
             set: { ui.secretMenuOpen = $0 }
         )) {
             SecretMenu()
-                // Two detents: medium for quick glance, large for the
-                // full menu. .large was previously dropped because the
-                // sheet's clear-row List rendered invisibly at full
-                // detent — the new glass-card layout has its own
-                // backgrounds so .large works again.
-                .presentationDetents([.medium, .large])
+                // .large flips iOS 26's sheet host into full-screen
+                // opaque mode, which compounds with the glass cards'
+                // borders to produce a "double rim" effect. Cap at
+                // fraction(0.92) so we stay on the translucent-detent
+                // track all the way up.
+                .presentationDetents([.medium, .fraction(0.92)])
                 .presentationDragIndicator(.visible)
                 // Dim backdrop behind the glass cards — without it the
                 // cards float over the bright feed with nothing for the
