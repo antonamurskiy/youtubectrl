@@ -111,10 +111,18 @@ struct FeedListView: UIViewRepresentable {
             switch item {
             case .video(let v):
                 guard let url = v.url ?? v.videoId.flatMap({ "https://www.youtube.com/watch?v=\($0)" }) else { return }
-                Task { try? await services.api.play(url: url, title: v.title, channel: v.channel, thumbnail: v.thumbnail, isLive: v.isLive ?? v.live, startPercent: v.startPercent) }
+                Task { @MainActor in
+                    do { try await self.services.api.play(url: url, title: v.title, channel: v.channel, thumbnail: v.thumbnail, isLive: v.isLive ?? v.live, startPercent: v.startPercent) }
+                    catch { self.services.ui.toast("Play failed") }
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             case .short(let s):
                 guard let id = s.videoId else { return }
-                Task { try? await services.api.play(url: "https://www.youtube.com/watch?v=\(id)", title: s.title) }
+                Task { @MainActor in
+                    do { try await self.services.api.play(url: "https://www.youtube.com/watch?v=\(id)", title: s.title) }
+                    catch { self.services.ui.toast("Play failed") }
+                }
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
             }
         }
 
@@ -137,6 +145,7 @@ struct FeedListView: UIViewRepresentable {
         }
 
         @objc func onRefresh(_ control: UIRefreshControl) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
             let tab = feed.activeTab
             Task { @MainActor in
                 await feed.load(tab: tab, api: services.api, append: false)
@@ -172,6 +181,10 @@ struct FeedListView: UIViewRepresentable {
                         Task { @MainActor in
                             await self.services.phoneMode.startPhoneOnly(url: url, services: self.services)
                         }
+                    },
+                    UIAction(title: "Not interested", image: UIImage(systemName: "hand.thumbsdown"), attributes: .destructive) { [weak self] _ in
+                        guard let self, let token = v.notInterestedToken else { return }
+                        Task { try? await self.services.api.notInterested(token: token) }
                     },
                 ]
                 return UIMenu(title: "", children: actions)

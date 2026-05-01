@@ -37,7 +37,7 @@ struct TerminalView: View {
             }
 
             ZStack(alignment: .trailing) {
-                TermHost(host: services.serverHost)
+                TermHost(host: services.serverHost, onSwipe: switchTmuxWindow(by:))
                     .background(theme.resolvedSurface)
                 ScrollZoneOverlay()
                     .frame(width: 56)
@@ -45,14 +45,6 @@ struct TerminalView: View {
         }
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
-        .gesture(
-            DragGesture(minimumDistance: 60, coordinateSpace: .local)
-                .onEnded { v in
-                    let dx = v.translation.width, dy = v.translation.height
-                    guard abs(dx) > abs(dy) * 1.5 else { return }
-                    switchTmuxWindow(by: dx > 0 ? -1 : 1)
-                }
-        )
         .overlay {
             if let w = renaming {
                 ZStack {
@@ -86,6 +78,7 @@ struct TerminalView: View {
 /// emulator. Sends user keypresses back as bytes.
 struct TermHost: UIViewRepresentable {
     let host: String
+    let onSwipe: (Int) -> Void  // called with -1 (prev) or +1 (next)
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -98,7 +91,14 @@ struct TermHost: UIViewRepresentable {
         if let font = UIFont(name: "Menlo-Regular", size: 13) {
             tv.font = font
         }
+        context.coordinator.onSwipe = onSwipe
         context.coordinator.attach(tv: tv, host: host)
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onSwipePan(_:)))
+        pan.delegate = context.coordinator
+        pan.cancelsTouchesInView = false
+        pan.delaysTouchesBegan = false
+        pan.delaysTouchesEnded = false
+        tv.addGestureRecognizer(pan)
         return tv
     }
 
@@ -110,11 +110,37 @@ struct TermHost: UIViewRepresentable {
         coordinator.disconnect()
     }
 
-    final class Coordinator: NSObject, TerminalViewDelegate {
+    final class Coordinator: NSObject, TerminalViewDelegate, UIGestureRecognizerDelegate {
         private var ws: URLSessionWebSocketTask?
         private weak var tv: SwiftTerm.TerminalView?
         private var connectedHost: String?
         private let session = URLSession(configuration: .default)
+        var onSwipe: ((Int) -> Void)?
+        private var swipeStart: CGPoint?
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        @objc func onSwipePan(_ g: UIPanGestureRecognizer) {
+            guard let view = g.view else { return }
+            switch g.state {
+            case .began:
+                swipeStart = g.location(in: view)
+            case .ended:
+                guard let start = swipeStart else { return }
+                let end = g.location(in: view)
+                let dx = end.x - start.x, dy = end.y - start.y
+                swipeStart = nil
+                // Require: |dx| > 60, dominant horizontal motion.
+                guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5 else { return }
+                onSwipe?(dx > 0 ? -1 : 1)  // swipe right = previous window
+            case .cancelled, .failed:
+                swipeStart = nil
+            default: break
+            }
+        }
 
         func attach(tv: SwiftTerm.TerminalView, host: String) {
             self.tv = tv

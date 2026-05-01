@@ -103,6 +103,12 @@ struct RootView: View {
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
+        .onChange(of: playback.playing) { _, new in
+            // Hardware volume buttons drive the Mac whenever something
+            // is playing on it, regardless of phone mode (matches React).
+            if new { services.avHost.enableVolumeIntercept() }
+            else { services.avHost.disableVolumeIntercept() }
+        }
         .task { theme.setTabTint(for: feed.activeTab) }
     }
 
@@ -125,6 +131,25 @@ struct RootView: View {
     private var feedView: some View {
         VStack(spacing: 0) {
             HeaderView(searchFocused: $searchFocused)
+            if let ch = feed.channelQuery {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.rectangle")
+                    Text("Viewing: \(ch)")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Button(action: {
+                        feed.clearChannel()
+                        Task { await feed.load(tab: feed.activeTab, api: services.api) }
+                    }) {
+                        Image(systemName: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.white.opacity(0.06))
+            }
             ZStack(alignment: .top) {
                 FeedListView()
                 if feed.currentVideos.isEmpty {

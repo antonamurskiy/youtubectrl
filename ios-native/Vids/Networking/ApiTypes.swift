@@ -14,6 +14,7 @@ struct Video: Codable, Hashable, Identifiable {
     let live: Bool?
     let upcoming: Bool?
     let startPercent: Double?
+    let notInterestedToken: String?
 
     // Server uses `id`, `videoId` is what client computes locally —
     // accept both. Identifiable id falls through to derived URL.
@@ -22,6 +23,7 @@ struct Video: Codable, Hashable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case videoId, id, url, title, channel, channelId, thumbnail
         case duration, views, uploadedAt, isLive, live, upcoming, startPercent
+        case notInterestedToken
     }
 
     init(from decoder: Decoder) throws {
@@ -39,6 +41,7 @@ struct Video: Codable, Hashable, Identifiable {
         live = try? c.decode(Bool.self, forKey: .live)
         upcoming = try? c.decode(Bool.self, forKey: .upcoming)
         startPercent = try? c.decode(Double.self, forKey: .startPercent)
+        notInterestedToken = try? c.decode(String.self, forKey: .notInterestedToken)
     }
 
     func encode(to encoder: Encoder) throws {

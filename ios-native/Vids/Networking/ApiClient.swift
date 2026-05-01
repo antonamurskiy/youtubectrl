@@ -183,6 +183,10 @@ actor ApiClient {
         try await post("/api/set-quality", body: ["format": format])
     }
 
+    func notInterested(token: String) async throws {
+        try await post("/api/not-interested", body: ["token": token])
+    }
+
     struct AudioOutput: Codable, Hashable, Identifiable {
         let name: String
         let active: Bool
