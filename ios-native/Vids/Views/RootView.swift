@@ -15,11 +15,23 @@ struct RootView: View {
     @Environment(ThemeStore.self) private var theme
     @Environment(UIStore.self) private var ui
     @Environment(PhoneModeStore.self) private var phoneMode
+    @Environment(FontStore.self) private var fonts
 
     @State private var searchFocused = false
     @State private var npBarHeight: CGFloat = 0
 
     var body: some View {
+        // Read fonts.generation here so a font load/change triggers a
+        // re-render of the entire subtree.
+        let _ = fonts.generation
+        // Inject the chosen font as the default so Text/Label without
+        // an explicit .font modifier (TextField placeholder, default
+        // Text in subviews) inherit it instead of SF Pro.
+        rootBody
+            .font(Font.app(fonts.size))
+    }
+
+    private var rootBody: some View {
         ZStack(alignment: .bottom) {
             theme.resolvedSurface.ignoresSafeArea()
             // Hardware keyboard shortcuts — space play/pause, ←/→ skip 5s.

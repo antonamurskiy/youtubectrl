@@ -136,16 +136,26 @@ final class FontStore {
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let dest = cacheDir.appendingPathComponent("\(family).ttf")
         try? ttfData.write(to: dest)
-        var error: Unmanaged<CFError>?
-        CTFontManagerRegisterFontsForURL(dest as CFURL, .process, &error)
-        // Read the actual PostScript name out of the registered file.
-        // The hardcoded guesses (e.g. "JetBrainsMono-Regular") often
-        // don't match what the TTF declares (e.g.
-        // "JetBrainsMonoRoman-Regular"), causing UIFont(name:) lookups
-        // to fail and the app to fall back to .system.
-        guard let provider = CGDataProvider(url: dest as CFURL) else { return nil }
-        let cgFont = CGFont(provider)
-        return cgFont?.postScriptName as String?
+        // Read the PostScript name from the file, then register via the
+        // CGFont path (more reliable than CTFontManagerRegisterFontsForURL
+        // for cached-and-replayed fonts).
+        guard let provider = CGDataProvider(url: dest as CFURL),
+              let cgFont = CGFont(provider) else {
+            NSLog("[FontStore] CGFont creation failed for \(family)")
+            return nil
+        }
+        let postScript = cgFont.postScriptName as String?
+        var cferr: Unmanaged<CFError>?
+        let registered = CTFontManagerRegisterGraphicsFont(cgFont, &cferr)
+        NSLog("[FontStore] register \(family): postScript=\(postScript ?? "nil") ok=\(registered)")
+        if !registered {
+            // Maybe it's already registered from a previous launch — verify.
+            if let ps = postScript, UIFont(name: ps, size: 12) != nil {
+                return ps
+            }
+            return nil
+        }
+        return postScript
     }
 }
 
