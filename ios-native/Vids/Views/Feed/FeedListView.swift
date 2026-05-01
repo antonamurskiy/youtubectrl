@@ -37,6 +37,11 @@ struct FeedListView: UIViewRepresentable {
         cv.alwaysBounceVertical = true
         cv.delegate = context.coordinator
         cv.prefetchDataSource = context.coordinator
+        // Pull-to-refresh.
+        let rc = UIRefreshControl()
+        rc.tintColor = .white
+        rc.addTarget(context.coordinator, action: #selector(Coordinator.onRefresh(_:)), for: .valueChanged)
+        cv.refreshControl = rc
         context.coordinator.bind(to: cv)
         return cv
     }
@@ -117,8 +122,51 @@ struct FeedListView: UIViewRepresentable {
             for ip in indexPaths {
                 guard let item = dataSource.itemIdentifier(for: ip) else { continue }
                 if case .video(let v) = item, let id = v.videoId {
-                    ThumbnailCache.shared.prefetch(id: id, url: v.thumbnail)
+                    Task { await ThumbnailCache.shared.prefetch(id: id, url: v.thumbnail) }
                 }
+            }
+            // Infinite scroll: load next page when prefetch reaches the
+            // last 5 cells in the videos section.
+            if let last = indexPaths.map(\.item).max() {
+                let videos = feed.currentVideos
+                if last >= videos.count - 5 {
+                    let tab = feed.activeTab
+                    Task { @MainActor in await feed.load(tab: tab, api: services.api, append: true) }
+                }
+            }
+        }
+
+        @objc func onRefresh(_ control: UIRefreshControl) {
+            let tab = feed.activeTab
+            Task { @MainActor in
+                await feed.load(tab: tab, api: services.api, append: false)
+                control.endRefreshing()
+            }
+        }
+
+        // Long-press context menu.
+        func collectionView(_ collectionView: UICollectionView,
+                            contextMenuConfigurationForItemsAt indexPaths: [IndexPath],
+                            point: CGPoint) -> UIContextMenuConfiguration? {
+            guard let ip = indexPaths.first,
+                  let item = dataSource.itemIdentifier(for: ip),
+                  case .video(let v) = item else { return nil }
+            return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
+                guard let self else { return UIMenu() }
+                let actions: [UIAction] = [
+                    UIAction(title: "More from \(v.channel ?? "channel")", image: UIImage(systemName: "person.crop.rectangle")) { _ in
+                        // Phase 11b: push a channel filter onto FeedStore.
+                    },
+                    UIAction(title: "Copy link", image: UIImage(systemName: "link")) { _ in
+                        if let url = v.url ?? v.videoId.flatMap({ "https://www.youtube.com/watch?v=\($0)" }) {
+                            UIPasteboard.general.string = url
+                        }
+                    },
+                    UIAction(title: "Watch on phone", image: UIImage(systemName: "iphone")) { _ in
+                        // Phase 11b: phone-only mode (separate from sync).
+                    },
+                ]
+                return UIMenu(title: "", children: actions)
             }
         }
     }

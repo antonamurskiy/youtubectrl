@@ -6,6 +6,7 @@ struct HeaderView: View {
     @Environment(PlaybackStore.self) private var playback
     @Binding var searchFocused: Bool
     @State private var searchText: String = ""
+    @State private var searchTask: Task<Void, Never>? = nil
 
     var body: some View {
         VStack(spacing: 6) {
@@ -22,7 +23,19 @@ struct HeaderView: View {
                     .submitLabel(.search)
                     .foregroundStyle(.white)
                     .tint(.white)
-                    .onSubmit { Task { await feed.search(searchText, api: services.api) } }
+                    .onChange(of: searchText) { _, new in
+                        searchTask?.cancel()
+                        // 350ms debounce — feels live without firing on every keystroke.
+                        searchTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            guard !Task.isCancelled else { return }
+                            await feed.search(new, api: services.api)
+                        }
+                    }
+                    .onSubmit {
+                        searchTask?.cancel()
+                        Task { await feed.search(searchText, api: services.api) }
+                    }
                     .padding(.horizontal, 8)
                     .frame(maxWidth: .infinity, minHeight: 30)
 
