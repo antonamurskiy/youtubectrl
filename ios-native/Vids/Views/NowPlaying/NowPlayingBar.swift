@@ -129,33 +129,36 @@ struct NowPlayingBar: View {
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         // iOS 26 Liquid Glass mini-player: floating glass surface with
         // a top hairline. Sheet-style instead of the flat dark bar.
-        // Match the FAB stack's glassiness: same #282828 70% tint and
-        // .interactive() modifier so the NP bar refracts/highlights
-        // the same way the FABs do.
-        .glassEffect(
-            .regular
-                .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                .interactive(),
-            in: RoundedRectangle(cornerRadius: 28, style: .continuous)
-        )
-        // Directional rim — brighter at the top, dim at the bottom —
-        // suggests an above-the-bar light source instead of the
-        // uniform glow a flat stroke produces.
-        .overlay(
+        // Glass painted as a BACKGROUND layer (not via .glassEffect on
+        // self) so the scrubber preview tile can render OUTSIDE the
+        // bar's rounded-rect shape. .glassEffect(in: shape) applies
+        // the shape as a clip mask to descendants too, which was
+        // hiding the storyboard preview that floats above the bar.
+        .background {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.45),
-                            Color.white.opacity(0.18),
-                            Color.white.opacity(0.04),
-                            Color.black.opacity(0.18),
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    ),
-                    lineWidth: 0.75
+                .fill(Color.clear)
+                .glassEffect(
+                    .regular
+                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                        .interactive(),
+                    in: RoundedRectangle(cornerRadius: 28, style: .continuous)
                 )
-        )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 28, style: .continuous)
+                        .strokeBorder(
+                            LinearGradient(
+                                colors: [
+                                    Color.white.opacity(0.45),
+                                    Color.white.opacity(0.18),
+                                    Color.white.opacity(0.04),
+                                    Color.black.opacity(0.18),
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            ),
+                            lineWidth: 0.75
+                        )
+                )
+        }
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
