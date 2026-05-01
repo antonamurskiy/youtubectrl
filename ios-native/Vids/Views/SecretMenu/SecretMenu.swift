@@ -78,7 +78,7 @@ struct SecretMenu: View {
 
     private func statusBadge(_ label: String, on: Bool) -> some View {
         Text(label)
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .font(Font.app(11, weight: .bold, design: .monospaced))
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(on ? Color(hex: "#8ec07c").opacity(0.18) : Color(hex: "#3c3836").opacity(0.4))
@@ -113,10 +113,10 @@ struct SecretMenu: View {
     private var syncOffsetRow: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Live sync offset").font(.system(size: 12, weight: .semibold))
+                Text("Live sync offset").font(Font.app(12, weight: .semibold))
                 Spacer()
                 Text("\(Int(syncOffsetMs)) ms")
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Font.app(11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.55))
             }
             Slider(value: Binding(
@@ -139,10 +139,10 @@ struct SecretMenu: View {
         }) {
             HStack {
                 Image(systemName: "cup.and.saucer")
-                Text("Keep awake").font(.system(size: 13))
+                Text("Keep awake").font(Font.app(13))
                 Spacer()
                 Text(playback.macStatus.keepAwake == true ? "ON" : "OFF")
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(Font.app(10, weight: .bold, design: .monospaced))
                     .foregroundStyle(playback.macStatus.keepAwake == true ? Color(hex: "#8ec07c") : .white.opacity(0.4))
             }
             .padding(.horizontal, 12)
@@ -155,7 +155,7 @@ struct SecretMenu: View {
     private var outputsSection: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                Text("Audio output").font(.system(size: 13, weight: .semibold))
+                Text("Audio output").font(Font.app(13, weight: .semibold))
                 Spacer()
             }
             .padding(.horizontal, 12)
@@ -163,7 +163,7 @@ struct SecretMenu: View {
             .foregroundStyle(.white.opacity(0.85))
 
             if outputs.isEmpty {
-                Text("loading…").font(.system(size: 11, design: .monospaced))
+                Text("loading…").font(Font.app(11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.4))
                     .padding(.horizontal, 24).padding(.vertical, 8)
             } else {
@@ -172,7 +172,7 @@ struct SecretMenu: View {
                         Task { try? await services.api.setAudioOutput(o.name); await loadOutputs() }
                     }) {
                         HStack {
-                            Text(o.name).font(.system(size: 13))
+                            Text(o.name).font(Font.app(13))
                                 .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
                             Spacer()
                             if o.active { Image(systemName: "checkmark") }
@@ -198,7 +198,7 @@ struct SecretMenu: View {
             }) {
                 HStack {
                     Image(systemName: "homepod.and.appletv")
-                    Text("Bluetooth").font(.system(size: 13, weight: .semibold))
+                    Text("Bluetooth").font(Font.app(13, weight: .semibold))
                     Spacer()
                     Image(systemName: btOpen ? "chevron.up" : "chevron.down")
                 }
@@ -209,7 +209,7 @@ struct SecretMenu: View {
 
             if btOpen {
                 if btDevices.isEmpty {
-                    Text("no devices").font(.system(size: 11, design: .monospaced))
+                    Text("no devices").font(Font.app(11, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.4))
                         .padding(.horizontal, 24).padding(.vertical, 8)
                 }
@@ -222,7 +222,7 @@ struct SecretMenu: View {
                         }
                     }) {
                         HStack {
-                            Text(d.name ?? d.address).font(.system(size: 13))
+                            Text(d.name ?? d.address).font(Font.app(13))
                                 .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .white.opacity(0.85))
                             Spacer()
                             if d.connected == true { Image(systemName: "checkmark") }
@@ -243,7 +243,7 @@ struct SecretMenu: View {
     private var miscToggle: some View {
         Button(action: { withAnimation { miscOpen.toggle() } }) {
             HStack {
-                Text("Misc").font(.system(size: 13, weight: .semibold))
+                Text("Misc").font(Font.app(13, weight: .semibold))
                 Spacer()
                 Image(systemName: miscOpen ? "chevron.up" : "chevron.down")
             }
@@ -260,7 +260,7 @@ struct SecretMenu: View {
             fontSizeRow
             HStack {
                 Image(systemName: "sun.max")
-                Text("Brightness").font(.system(size: 13))
+                Text("Brightness").font(Font.app(13))
                 Spacer()
                 Slider(value: Binding(
                     get: { brightness },
@@ -303,17 +303,17 @@ struct SecretMenu: View {
             HStack(spacing: 8) {
                 Image(systemName: "location.fill")
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Maria").font(.system(size: 13))
+                    Text("Maria").font(Font.app(13))
                     if let f = friend, let cross = f.cross, let parallel = f.parallel {
                         Text("\(parallel) & \(cross)")
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(Font.app(10, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.55))
                         if let t = f.timeFragment {
-                            Text(t).font(.system(size: 9, design: .monospaced))
+                            Text(t).font(Font.app(9, design: .monospaced))
                                 .foregroundStyle(.white.opacity(0.4))
                         }
                     } else {
-                        Text("tap refresh").font(.system(size: 10, design: .monospaced))
+                        Text("tap refresh").font(Font.app(10, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.4))
                     }
                 }
@@ -353,7 +353,7 @@ struct SecretMenu: View {
     private var close: some View {
         Button(action: { ui.secretMenuOpen = false }) {
             Text("Close")
-                .font(.system(size: 13, weight: .semibold))
+                .font(Font.app(13, weight: .semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(.white.opacity(0.05))
                 .foregroundStyle(.white)
@@ -365,7 +365,7 @@ struct SecretMenu: View {
         Button(action: action) {
             HStack {
                 Image(systemName: icon)
-                Text(title).font(.system(size: 13))
+                Text(title).font(Font.app(13))
                 Spacer()
             }
             .foregroundStyle(.white.opacity(0.85))
@@ -384,10 +384,10 @@ struct SecretMenu: View {
             Button(action: { fontsOpen.toggle() }) {
                 HStack {
                     Image(systemName: "textformat")
-                    Text("Font").font(.system(size: 13))
+                    Text("Font").font(Font.app(13))
                     Spacer()
                     Text(services.fonts.label)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(Font.app(11, design: .monospaced))
                         .foregroundStyle(.white.opacity(0.55))
                     Image(systemName: fontsOpen ? "chevron.up" : "chevron.down")
                 }
@@ -401,7 +401,7 @@ struct SecretMenu: View {
                     Button(action: { services.fonts.setLabel(entry.label) }) {
                         HStack {
                             Text(entry.label)
-                                .font(.system(size: 12))
+                                .font(Font.app(12))
                                 .foregroundStyle(services.fonts.label == entry.label ? Color(hex: "#8ec07c") : .white.opacity(0.75))
                             Spacer()
                             if services.fonts.label == entry.label { Image(systemName: "checkmark") }
@@ -418,12 +418,12 @@ struct SecretMenu: View {
     private var fontSizeRow: some View {
         HStack {
             Image(systemName: "textformat.size")
-            Text("Font size").font(.system(size: 13))
+            Text("Font size").font(Font.app(13))
             Spacer()
             ForEach(FontStore.sizes, id: \.self) { px in
                 Button(action: { services.fonts.setSize(px) }) {
                     Text("\(Int(px))")
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(Font.app(11, design: .monospaced))
                         .frame(width: 22, height: 22)
                         .background(services.fonts.size == px ? Color(hex: "#8ec07c").opacity(0.25) : Color.clear)
                         .foregroundStyle(services.fonts.size == px ? .white : .white.opacity(0.55))

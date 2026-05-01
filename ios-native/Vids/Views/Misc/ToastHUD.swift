@@ -8,7 +8,7 @@ struct ToastHUD: View {
         VStack(spacing: 8) {
             ForEach(terminal.open ? [] : ui.toasts) { t in
                 Text(t.text)
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Font.app(13, weight: .semibold))
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(.black.opacity(0.85))
@@ -31,7 +31,7 @@ struct VolumeHUD: View {
         if let pulse = ui.volumePulse {
             VStack(spacing: 8) {
                 Text("\(pulse.percent)%")
-                    .font(.system(size: 28, weight: .bold, design: .monospaced))
+                    .font(Font.app(28, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white)
                 Rectangle()
                     .fill(.white.opacity(0.15))
@@ -60,7 +60,7 @@ struct ClaudeFeedView: View {
         VStack(alignment: .trailing, spacing: 4) {
             ForEach(terminal.open ? [] : Array(push.feed.suffix(6).reversed())) { line in
                 Text(line.text)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Font.app(11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
                     .truncationMode(.middle)

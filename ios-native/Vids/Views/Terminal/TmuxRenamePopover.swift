@@ -21,7 +21,7 @@ struct TmuxRenamePopover: View {
         VStack(spacing: 12) {
             HStack {
                 Text("Rename window")
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(Font.app(13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.85))
                 Spacer()
             }

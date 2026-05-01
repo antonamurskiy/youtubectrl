@@ -11,7 +11,7 @@ struct FABStack: View {
         VStack(spacing: 12) {
             Button(action: { terminal.toggle() }) {
                 Image(systemName: "terminal")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(Font.app(14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(.white.opacity(0.1))
                     .foregroundStyle(.white)
@@ -19,7 +19,7 @@ struct FABStack: View {
             }
             Button(action: refresh) {
                 Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 14, weight: .bold))
+                    .font(Font.app(14, weight: .bold))
                     .frame(width: 44, height: 44)
                     .background(.white.opacity(0.1))
                     .foregroundStyle(.white)

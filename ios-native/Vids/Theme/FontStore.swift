@@ -1,4 +1,5 @@
 import UIKit
+import SwiftUI
 import Observation
 import CoreText
 
@@ -10,6 +11,7 @@ import CoreText
 @Observable
 @MainActor
 final class FontStore {
+    static var shared: FontStore?
     struct Entry { let label: String; let postScript: String; let cssFamily: String?; let bundled: Bool }
 
     static let entries: [Entry] = [
@@ -46,6 +48,10 @@ final class FontStore {
         self.label = Self.entries.first(where: { $0.label == saved })?.label ?? Self.entries[0].label
         let savedSize = UserDefaults.standard.double(forKey: Self.sizeKey)
         self.size = savedSize > 0 ? CGFloat(savedSize) : Self.defaultSize
+        Self.shared = self
+        // Trigger registration of the saved font on launch so it's
+        // ready before any view tries to render with it.
+        ensureRegistered(label: self.label)
     }
 
     func setLabel(_ new: String) {
@@ -110,5 +116,26 @@ final class FontStore {
         try? ttfData.write(to: dest)
         var error: Unmanaged<CFError>?
         CTFontManagerRegisterFontsForURL(dest as CFURL, .process, &error)
+    }
+}
+
+extension Font {
+    /// App-wide font derived from the user's FontStore selection. Use
+    /// instead of .system(size:weight:) so font picker changes propagate
+    /// to every Text/Label without re-touching every callsite.
+    @MainActor
+    static func app(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        guard let store = FontStore.shared,
+              let entry = FontStore.entries.first(where: { $0.label == store.label }),
+              entry.postScript != "<system>",
+              UIFont(name: entry.postScript, size: size) != nil
+        else {
+            return .system(size: size, weight: weight, design: design)
+        }
+        // Bumping `generation` in FontStore re-renders observers; the
+        // resolved size we hand back also tracks store.size if the
+        // caller passed the implicit default.
+        _ = store.generation
+        return .custom(entry.postScript, size: size).weight(weight)
     }
 }

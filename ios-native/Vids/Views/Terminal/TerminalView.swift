@@ -21,7 +21,7 @@ struct TerminalView: View {
                             ForEach(terminal.windows) { w in
                                 Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
                                     Text(w.name)
-                                        .font(.system(size: 13, weight: w.active ? .heavy : .semibold))
+                                        .font(Font.app(13, weight: w.active ? .heavy : .semibold))
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
                                         .background(tabBg(w))
@@ -74,7 +74,7 @@ struct TerminalView: View {
             if terminal.keyboardOpen {
                 Button(action: dismissKeyboard) {
                     Image(systemName: "keyboard.chevron.compact.down")
-                        .font(.system(size: 16, weight: .bold))
+                        .font(Font.app(16, weight: .bold))
                         .frame(width: 44, height: 44)
                         .foregroundStyle(.white)
                         .background(.black.opacity(0.7))

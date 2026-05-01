@@ -17,18 +17,18 @@ struct NowPlayingBar: View {
             HStack(spacing: 8) {
                 skipBtn("-10") { Task { try? await services.api.skip(-10) } }
                 Text(positionLabel)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Font.app(11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.65))
                     .frame(minWidth: 36, alignment: .leading)
                 Button(action: { Task { try? await services.api.toggleVisibility() } }) {
                     Image(systemName: playback.visible ? "eye" : "eye.slash")
                         .foregroundStyle(playback.visible ? Color(hex: "#8ec07c") : Color(hex: "#d05050"))
-                        .font(.system(size: 14))
+                        .font(Font.app(14))
                 }
                 .buttonStyle(.plain)
                 Spacer(minLength: 0)
                 Text(liveLabel)
-                    .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                    .font(Font.app(11, weight: .heavy, design: .monospaced))
                     .foregroundStyle(liveLabelColor)
                     .onTapGesture {
                         guard playback.isLive && !playback.isPostLive else { return }
@@ -39,7 +39,7 @@ struct NowPlayingBar: View {
                 audioButton
                 pipButton
                 Text(durationLabel)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(Font.app(11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.65))
                     .frame(minWidth: 36, alignment: .trailing)
                 skipBtn("+10") { Task { try? await services.api.skip(10) } }
@@ -76,11 +76,11 @@ struct NowPlayingBar: View {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(playback.title)
-                        .font(.system(size: 14, weight: .semibold))
+                        .font(Font.app(14, weight: .semibold))
                         .lineLimit(1)
                         .foregroundStyle(.white)
                     Text(playback.channel)
-                        .font(.system(size: 12))
+                        .font(Font.app(12))
                         .lineLimit(1)
                         .foregroundStyle(.white.opacity(0.55))
                 }
@@ -88,7 +88,7 @@ struct NowPlayingBar: View {
                 Spacer()
                 Button(action: { ui.commentsOpen.toggle() }) {
                     Image(systemName: "bubble.left.and.bubble.right")
-                        .font(.system(size: 14))
+                        .font(Font.app(14))
                         .foregroundStyle(ui.commentsOpen ? Color(hex: "#8ec07c") : .white.opacity(0.6))
                 }
                 .buttonStyle(.plain)
@@ -98,14 +98,14 @@ struct NowPlayingBar: View {
                     }
                     Button(action: { Task { try? await services.api.playPause() } }) {
                         Image(systemName: playback.paused ? "play.fill" : "pause.fill")
-                            .font(.system(size: 22))
+                            .font(Font.app(22))
                     }
                     Button(action: { Task { try? await services.api.skip(15) } }) {
                         Image(systemName: "goforward.15")
                     }
                 }
                 .foregroundStyle(.white)
-                .font(.system(size: 18, weight: .medium))
+                .font(Font.app(18, weight: .medium))
             }
             .padding(.horizontal, 12)
             .padding(.top, 8)
@@ -120,7 +120,7 @@ struct NowPlayingBar: View {
     private func skipBtn(_ label: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.system(size: 11, weight: .heavy, design: .monospaced))
+                .font(Font.app(11, weight: .heavy, design: .monospaced))
                 .foregroundStyle(.white.opacity(0.65))
                 .padding(.horizontal, 4)
         }
@@ -130,7 +130,7 @@ struct NowPlayingBar: View {
     private func npBtn(active: Bool, systemName: String, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .font(.system(size: 14, weight: .medium))
+                .font(Font.app(14, weight: .medium))
                 .frame(width: 36, height: 32)
                 .foregroundStyle(active ? Color(hex: "#8ec07c") : .white.opacity(0.65))
                 .background(active ? Color(hex: "#8ec07c").opacity(0.15) : .clear)
@@ -141,7 +141,7 @@ struct NowPlayingBar: View {
 
     private var speedButton: some View {
         Text(speedLabel)
-            .font(.system(size: 11, weight: .heavy, design: .monospaced))
+            .font(Font.app(11, weight: .heavy, design: .monospaced))
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .foregroundStyle(speedTextColor)
@@ -165,7 +165,7 @@ struct NowPlayingBar: View {
     private var audioButton: some View {
         Button(action: { ui.audioSheetOpen = true }) {
             Image(systemName: "speaker.wave.2.fill")
-                .font(.system(size: 14))
+                .font(Font.app(14))
                 .foregroundStyle(.white.opacity(0.65))
         }
         .buttonStyle(.plain)
@@ -177,7 +177,7 @@ struct NowPlayingBar: View {
             if active { services.avHost.stopPip() } else { services.avHost.startPip() }
         }) {
             Image(systemName: active ? "pip.exit" : "pip.enter")
-                .font(.system(size: 14))
+                .font(Font.app(14))
                 .foregroundStyle(active ? Color(hex: "#8ec07c") : .white.opacity(0.6))
         }
         .buttonStyle(.plain)

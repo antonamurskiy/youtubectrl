@@ -22,6 +22,23 @@ struct RootView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             theme.resolvedSurface.ignoresSafeArea()
+            // Hardware keyboard shortcuts — space play/pause, ←/→ skip 5s.
+            // Capture-phase + global focus so they fire whether or not a
+            // text field has focus (which is rarely true on iPhone).
+            Color.clear.frame(width: 0, height: 0)
+                .focusable()
+                .onKeyPress(.space) {
+                    Task { try? await services.api.playPause() }
+                    return .handled
+                }
+                .onKeyPress(.leftArrow) {
+                    Task { try? await services.api.skip(-5) }
+                    return .handled
+                }
+                .onKeyPress(.rightArrow) {
+                    Task { try? await services.api.skip(5) }
+                    return .handled
+                }
 
             // Feed always mounted — preserves scroll position across
             // terminal toggles. Hidden via opacity (not removal) so
@@ -155,6 +172,12 @@ struct RootView: View {
             if new { services.avHost.enableVolumeIntercept() }
             else { services.avHost.disableVolumeIntercept() }
         }
+        .onChange(of: playback.url) { _, _ in
+            // When mpv switches videos while sync mode is active, reload
+            // the AVPlayer with the new URL — otherwise PiP keeps showing
+            // the previous content's last frame.
+            Task { await phoneMode.reloadForCurrentVideo(services: services) }
+        }
         .task { theme.setTabTint(for: feed.activeTab) }
     }
 
@@ -176,7 +199,7 @@ struct RootView: View {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.rectangle")
                     Text("Viewing: \(ch)")
-                        .font(.system(size: 13, weight: .semibold))
+                        .font(Font.app(13, weight: .semibold))
                     Spacer()
                     Button(action: {
                         feed.clearChannel()
@@ -196,7 +219,7 @@ struct RootView: View {
                 if feed.currentVideos.isEmpty {
                     VStack(spacing: 6) {
                         Text(feed.lastError ?? "Loading…")
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(Font.app(12, design: .monospaced))
                             .foregroundStyle(.white.opacity(0.6))
                             .multilineTextAlignment(.center)
                             .lineLimit(6)

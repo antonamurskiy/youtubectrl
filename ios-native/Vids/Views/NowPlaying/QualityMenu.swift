@@ -10,10 +10,10 @@ struct QualityMenu: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Quality").font(.system(size: 13, weight: .semibold))
+                Text("Quality").font(Font.app(13, weight: .semibold))
                 Spacer()
                 Button(action: { ui.qualityMenuOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 13))
+                    Image(systemName: "xmark").font(Font.app(13))
                 }
                 .buttonStyle(.plain)
             }
@@ -26,7 +26,7 @@ struct QualityMenu: View {
             ScrollView {
                 LazyVStack(spacing: 0) {
                     row(label: "Best", format: "bv*+ba/b")
-                    if loading { Text("loading…").font(.system(size: 11, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding() }
+                    if loading { Text("loading…").font(Font.app(11, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding() }
                     ForEach(formats, id: \.self) { f in
                         if let label = f.label, let fmt = f.format { row(label: label, format: fmt) }
                     }
@@ -46,7 +46,7 @@ struct QualityMenu: View {
             ui.qualityMenuOpen = false
         }) {
             HStack {
-                Text(label).font(.system(size: 13))
+                Text(label).font(Font.app(13))
                 Spacer()
             }
             .foregroundStyle(.white.opacity(0.85))

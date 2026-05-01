@@ -11,10 +11,10 @@ struct AudioOutputSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Image(systemName: "speaker.wave.2.fill")
-                Text("Audio output").font(.system(size: 13, weight: .semibold))
+                Text("Audio output").font(Font.app(13, weight: .semibold))
                 Spacer()
                 Button(action: { ui.audioSheetOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 13))
+                    Image(systemName: "xmark").font(Font.app(13))
                 }
                 .buttonStyle(.plain)
             }
@@ -30,7 +30,7 @@ struct AudioOutputSheet: View {
                             Task { try? await services.api.setAudioOutput(o.name); await load() }
                         }) {
                             HStack {
-                                Text(o.name).font(.system(size: 13))
+                                Text(o.name).font(Font.app(13))
                                     .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
                                 Spacer()
                                 if o.active { Image(systemName: "checkmark") }
@@ -51,7 +51,7 @@ struct AudioOutputSheet: View {
                     }) {
                         HStack {
                             Image(systemName: "homepod.and.appletv")
-                            Text("Bluetooth").font(.system(size: 13, weight: .semibold))
+                            Text("Bluetooth").font(Font.app(13, weight: .semibold))
                             Spacer()
                             Image(systemName: btShown ? "chevron.up" : "chevron.down")
                         }
@@ -70,7 +70,7 @@ struct AudioOutputSheet: View {
                                 }
                             }) {
                                 HStack {
-                                    Text(d.name ?? d.address).font(.system(size: 13))
+                                    Text(d.name ?? d.address).font(Font.app(13))
                                         .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .white.opacity(0.85))
                                     Spacer()
                                     if d.connected == true { Image(systemName: "checkmark") }

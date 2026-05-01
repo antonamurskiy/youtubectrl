@@ -10,10 +10,10 @@ struct CommentsPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Comments").font(.system(size: 14, weight: .semibold))
+                Text("Comments").font(Font.app(14, weight: .semibold))
                 Spacer()
                 Button(action: { ui.commentsOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 14))
+                    Image(systemName: "xmark").font(Font.app(14))
                 }
                 .buttonStyle(.plain)
             }
@@ -26,22 +26,22 @@ struct CommentsPanel: View {
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
                     if loading && comments.isEmpty {
-                        Text("loading…").font(.system(size: 12, design: .monospaced)).foregroundStyle(.white.opacity(0.5)).padding()
+                        Text("loading…").font(Font.app(12, design: .monospaced)).foregroundStyle(.white.opacity(0.5)).padding()
                     } else if comments.isEmpty {
-                        Text("No comments").font(.system(size: 12, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding()
+                        Text("No comments").font(Font.app(12, design: .monospaced)).foregroundStyle(.white.opacity(0.4)).padding()
                     } else {
                         ForEach(comments) { c in
                             VStack(alignment: .leading, spacing: 4) {
                                 HStack(spacing: 6) {
-                                    Text(c.author ?? "anonymous").font(.system(size: 12, weight: .semibold)).foregroundStyle(Color(hex: "#8ec07c"))
+                                    Text(c.author ?? "anonymous").font(Font.app(12, weight: .semibold)).foregroundStyle(Color(hex: "#8ec07c"))
                                     if let likes = c.likeCount, likes > 0 {
-                                        Text("\(likes)").font(.system(size: 11)).foregroundStyle(.white.opacity(0.4))
+                                        Text("\(likes)").font(Font.app(11)).foregroundStyle(.white.opacity(0.4))
                                     }
                                     Spacer()
-                                    if let p = c.publishedAt { Text(p).font(.system(size: 10)).foregroundStyle(.white.opacity(0.4)) }
+                                    if let p = c.publishedAt { Text(p).font(Font.app(10)).foregroundStyle(.white.opacity(0.4)) }
                                 }
                                 Text(c.text ?? "")
-                                    .font(.system(size: 13))
+                                    .font(Font.app(13))
                                     .foregroundStyle(.white.opacity(0.85))
                             }
                             .padding(.horizontal, 14)

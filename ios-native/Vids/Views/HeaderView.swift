@@ -14,7 +14,7 @@ struct HeaderView: View {
         HStack(spacing: 6) {
             Button(action: home) {
                 Image(systemName: "play.fill")
-                    .font(.system(size: 13, weight: .bold))
+                    .font(Font.app(13, weight: .bold))
                     .foregroundStyle(.white.opacity(0.85))
                     .frame(width: 26, height: 26)
             }
@@ -44,7 +44,7 @@ struct HeaderView: View {
                     let active = feed.activeTab == tab
                     Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
                         Text(tab.label)
-                            .font(.system(size: 11, weight: active ? .heavy : .semibold))
+                            .font(Font.app(11, weight: active ? .heavy : .semibold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 4)
                             .background(active ? Color.white.opacity(0.22) : Color.clear)
@@ -79,9 +79,17 @@ struct HeaderView: View {
 
 private struct StatusDot: View {
     let on: Bool
+    @State private var pulse: Bool = false
     var body: some View {
         Circle()
             .fill(on ? Color(hex: "#8ec07c") : Color(hex: "#3c3836"))
             .frame(width: 5, height: 5)
+            .scaleEffect(pulse ? 1.6 : 1)
+            .opacity(pulse ? 0.4 : 1)
+            .animation(.easeOut(duration: 0.45), value: pulse)
+            .onChange(of: on) { _, _ in
+                pulse = true
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { pulse = false }
+            }
     }
 }

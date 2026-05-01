@@ -21,7 +21,7 @@ struct VideoCellView: View {
 
                 if let dur = video.duration, !dur.isEmpty {
                     Text(dur == "LIVE" ? "LIVE" : dur)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(Font.app(11, weight: .semibold, design: .monospaced))
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.black.opacity(0.75))
@@ -33,7 +33,7 @@ struct VideoCellView: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.title ?? "")
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(Font.app(14, weight: .semibold))
                     .lineLimit(2)
                     .foregroundStyle(.white)
                 HStack(spacing: 6) {
@@ -41,7 +41,7 @@ struct VideoCellView: View {
                     if let v = video.views { Text("• \(v)") }
                     if let u = video.uploadedAt { Text("• \(u)") }
                 }
-                .font(.system(size: 12))
+                .font(Font.app(12))
                 .foregroundStyle(.white.opacity(0.55))
             }
             .padding(.horizontal, 12)
@@ -73,7 +73,7 @@ struct ShortCellView: View {
             .frame(width: 140, height: 180)
             .clipped()
             Text(short.title ?? "")
-                .font(.system(size: 12, weight: .semibold))
+                .font(Font.app(12, weight: .semibold))
                 .lineLimit(2)
                 .foregroundStyle(.white)
                 .frame(width: 140, alignment: .leading)

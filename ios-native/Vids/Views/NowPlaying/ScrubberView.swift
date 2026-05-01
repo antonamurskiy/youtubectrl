@@ -32,6 +32,7 @@ final class ScrubberUIView: UIView {
     private let track = CAShapeLayer()
     private let fill = CAShapeLayer()
     private let thumb = CAShapeLayer()
+    private let chapters = CAShapeLayer()
     private let previewLayer = CALayer()
     private let previewLabel: UILabel = {
         let l = UILabel()
@@ -68,7 +69,9 @@ final class ScrubberUIView: UIView {
         super.init(frame: frame)
         layer.addSublayer(track)
         layer.addSublayer(fill)
+        layer.addSublayer(chapters)
         layer.addSublayer(thumb)
+        chapters.fillColor = UIColor.white.withAlphaComponent(0.6).cgColor
         previewView.isHidden = true
         previewView.contentMode = .scaleAspectFill
         previewView.clipsToBounds = true
@@ -123,6 +126,21 @@ final class ScrubberUIView: UIView {
         }
         let fillRect = CGRect(x: r.minX, y: r.minY, width: r.width * pct, height: r.height)
         fill.path = UIBezierPath(roundedRect: fillRect, cornerRadius: h/2).cgPath
+
+        // Chapter markers — vertical 2pt-wide ticks at each chapter
+        // start. Skipped for live streams (durations are virtual).
+        if let sb = storyboard, let chs = sb.chapters, !chs.isEmpty, pb.duration > 0, !pb.isLive {
+            let path = UIBezierPath()
+            for c in chs {
+                guard let start = c.start, start > 0, start < pb.duration else { continue }
+                let p = start / pb.duration
+                let x = r.minX + r.width * p
+                path.append(UIBezierPath(rect: CGRect(x: x - 1, y: r.minY, width: 2, height: r.height)))
+            }
+            chapters.path = path.cgPath
+        } else {
+            chapters.path = nil
+        }
 
         let thumbR: CGFloat = 8
         let cx = r.minX + r.width * pct

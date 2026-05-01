@@ -19,6 +19,16 @@ final class PhoneModeStore {
         else { await switchToComputer(services: services) }
     }
 
+    /// Re-fetches /api/watch-on-phone and reloads the AVPlayer with the
+    /// new URL — used when mpv switches videos while sync mode is active.
+    /// Uses pause→replaceCurrentItem→play so PiP doesn't get stuck on
+    /// the previous frame.
+    @MainActor
+    func reloadForCurrentVideo(services: ServiceContainer) async {
+        guard mode == .sync else { return }
+        await switchToSync(services: services)
+    }
+
     @MainActor
     func switchToSync(services: ServiceContainer) async {
         do {
