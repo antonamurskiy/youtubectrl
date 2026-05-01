@@ -91,7 +91,14 @@ final class NoPasteTerminalView: SwiftTerm.TerminalView {
     override func copy(_ sender: Any?) { /* swallow */ }
     override func insertText(_ text: String) {
         if swipeInProgress { return }
-        if text.contains("\n") || text.contains("\r") || text.count > 4 {
+        // Allow single Enter — iOS keyboard sends "\n" / "\r" / "\r\n".
+        if text == "\n" || text == "\r" || text == "\r\n" {
+            super.insertText(text)
+            return
+        }
+        // Bulk insert (paste): drop.
+        if text.count > 4 || text.contains("\n") || text.contains("\r") {
+            NSLog("[NoPaste] insertText DROPPED len=\(text.count): \(text.prefix(60).debugDescription)")
             return
         }
         super.insertText(text)
@@ -100,7 +107,14 @@ final class NoPasteTerminalView: SwiftTerm.TerminalView {
     /// exit point for all data heading to the PTY (selection mouse
     /// forwarding included). Drop anything during a swipe.
     override func send(source: Terminal, data: ArraySlice<UInt8>) {
-        if swipeInProgress { return }
+        if swipeInProgress {
+            NSLog("[NoPaste] send DROPPED \(data.count) bytes: \(Array(data.prefix(40)))")
+            return
+        }
+        // Diagnostic: log any unusually large send (>32 bytes is suspicious for keystrokes).
+        if data.count > 32 {
+            NSLog("[NoPaste] send LARGE \(data.count) bytes: \(String(bytes: Array(data.prefix(80)), encoding: .utf8) ?? "<binary>")")
+        }
         super.send(source: source, data: data)
     }
 }
