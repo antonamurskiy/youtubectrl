@@ -794,48 +794,27 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 return
             }
             webView.isOpaque = false
-            // Wrap every assignment in a UIView animation so the gutter
-            // fade matches CSS body bg fade. Walk parents up to UIWindow
-            // + every direct child of the window — Capacitor's status-bar
-            // plugin inserts a tinted UIView above the WebView that we
-            // need to recolor too.
-            // Animate at 400ms ease (CSS-matched cubic). JS-side
-            // delays its body CSS transition by an empirically-tuned
-            // bridge latency so both fades start at roughly the same
-            // wall-clock moment. We don't try to fast-forward fraction
-            // anymore — that overcorrected because the bridge round-
-            // trip is variable.
-            // playerContainer is a SIBLING of webView (added to
-            // wv.superview), so animating wv.superview's bg drives
-            // compositing on the same parent that hosts the AVPlayer
-            // layer — that competed with video decode and made PiP
-            // skip + the live-sync drift loop fail to stabilize.
-            // Skip both playerContainer AND its parent (wv.superview)
-            // from the animation. The WebView itself still animates.
+            // Snap instead of animating. AND: don't touch webView's own
+            // backgroundColor or its scrollView's backgroundColor —
+            // mutating either invalidates the WebView's layer and iOS
+            // WKWebView dismisses any focused input on layer changes.
+            // Repaint only the surrounding chrome (parent views up to
+            // UIWindow, plus window's other direct children). Body CSS
+            // covers the WebView's own area, so its bg never shows.
             let playerView = self.playerContainer
             let playerHost = playerView?.superview
-            let timing = UICubicTimingParameters(
-                controlPoint1: CGPoint(x: 0.25, y: 0.1),
-                controlPoint2: CGPoint(x: 0.25, y: 1.0)
-            )
-            let animator = UIViewPropertyAnimator(duration: durMs / 1000.0, timingParameters: timing)
-            animator.addAnimations {
-                webView.backgroundColor = color
-                webView.scrollView.backgroundColor = color
-                var v: UIView? = webView
-                while v != nil {
-                    if v !== playerView && v !== playerHost {
-                        v?.backgroundColor = color
-                    }
-                    v = v?.superview
+            var v: UIView? = webView.superview
+            while v != nil {
+                if v !== playerView && v !== playerHost {
+                    v?.backgroundColor = color
                 }
-                if let window = webView.window {
-                    for sub in window.subviews where sub !== playerView && sub !== playerHost {
-                        sub.backgroundColor = color
-                    }
+                v = v?.superview
+            }
+            if let window = webView.window {
+                for sub in window.subviews where sub !== webView && sub !== playerView && sub !== playerHost {
+                    sub.backgroundColor = color
                 }
             }
-            animator.startAnimation()
             call.resolve(["ok": true])
             _ = cssStartWallMs
         }

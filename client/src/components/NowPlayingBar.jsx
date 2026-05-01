@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useShallow } from 'zustand/react/shallow'
 import { usePlaybackStore } from '../stores/playback'
@@ -494,6 +494,21 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   // Terminal tmux tint takes precedence; otherwise fall back to the
   // active tab tint.
   const tmuxTint = terminalOpen ? activeTmuxColor : tabTint
+  // Memoize the inline style — the .now-playing root is a position:fixed
+  // sibling of the terminal panel, and React rebuilding this object on
+  // every 1Hz playback render mutated the bar's style attribute on every
+  // tick. iOS WKWebView dismisses focused inputs near sibling fixed
+  // elements that mutate during focus.
+  const npRootStyle = useMemo(() => {
+    if (!tmuxTint) return undefined
+    return {
+      background: darkenHex(tmuxTint, 0.55),
+      '--np-track': darkenHex(tmuxTint, 0.4),
+      '--np-track-pattern': darkenHex(tmuxTint, 0.55),
+      '--np-fill': tmuxTint,
+      '--np-fill-pattern': darkenHex(tmuxTint, 0.55),
+    }
+  }, [tmuxTint])
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)
@@ -685,8 +700,12 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   useEffect(() => {
     const el = rootRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
+    let lastH = -1
     const update = () => {
-      document.documentElement.style.setProperty('--np-height', `${Math.ceil(el.getBoundingClientRect().height)}px`)
+      const h = Math.ceil(el.getBoundingClientRect().height)
+      if (h === lastH) return
+      lastH = h
+      document.documentElement.style.setProperty('--np-height', `${h}px`)
     }
     update()
     const ro = new ResizeObserver(update)
@@ -939,18 +958,7 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
     <div
       className={`now-playing${exiting ? ' np-exit' : ''}`}
       ref={rootRef}
-      style={tmuxTint ? {
-        background: darkenHex(tmuxTint, 0.55),
-        // Scrubber track (un-played, right side): a deeper darken of
-        // the tint so it stays in the same color family as the bar bg
-        // instead of falling back to the off-theme gray --surface-hover.
-        // Pattern dots match the bar bg.
-        '--np-track': darkenHex(tmuxTint, 0.4),
-        '--np-track-pattern': darkenHex(tmuxTint, 0.55),
-        // Played portion (fill, left side): raw tint so it stands out.
-        '--np-fill': tmuxTint,
-        '--np-fill-pattern': darkenHex(tmuxTint, 0.55),
-      } : undefined}
+      style={npRootStyle}
     >
       {/* Progress bar — on top of everything */}
       <div

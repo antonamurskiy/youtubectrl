@@ -253,27 +253,30 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     // termEl thanks to pointer-events: none on the children. The
     // right-edge .terminal-scroll-zone overlay sits on TOP and handles
     // explicit scroll via xterm.scrollLines().
+    // Idempotent lock: only writes to style when the property is
+    // actually missing/different. Without idempotency, every observer
+    // tick mutated the style attribute on .xterm-screen/.xterm-viewport
+    // (siblings of the focused helper-textarea), and iOS WKWebView
+    // dismissed the keyboard on those ancestor-style mutations.
     const lockSubtree = () => {
-      // Target the canvas/screen + viewport ONLY, NOT the whole .xterm
-      // root. Setting pointer-events: none on the root made iOS dismiss
-      // the soft keyboard whenever the active window's MutationObserver
-      // re-applied — the focused .xterm-helper-textarea was an
-      // ancestor-of-non-interactive descendant, which iOS treats as
-      // "no longer interactive" and auto-closes the keyboard. Locking
-      // just the screen + viewport stops xterm forwarding touch to
-      // tmux while leaving the helper-textarea's interactivity intact.
       const screen = termEl.querySelector('.xterm-screen')
-      if (screen) screen.style.setProperty('pointer-events', 'none', 'important')
+      if (screen && screen.style.getPropertyValue('pointer-events') !== 'none') {
+        screen.style.setProperty('pointer-events', 'none', 'important')
+      }
       const v = termEl.querySelector('.xterm-viewport')
       if (v) {
-        v.style.setProperty('pointer-events', 'none', 'important')
-        v.style.setProperty('touch-action', 'none', 'important')
-        v.style.setProperty('overflow', 'hidden', 'important')
+        if (v.style.getPropertyValue('pointer-events') !== 'none') v.style.setProperty('pointer-events', 'none', 'important')
+        if (v.style.getPropertyValue('touch-action') !== 'none') v.style.setProperty('touch-action', 'none', 'important')
+        if (v.style.getPropertyValue('overflow') !== 'hidden') v.style.setProperty('overflow', 'hidden', 'important')
       }
     }
     lockSubtree()
+    // Watch only direct-children replacements on termEl (xterm replaces
+    // .xterm-viewport on resize/theme rebuild). subtree:true previously
+    // meant every cell/glyph DOM mutation re-fired the observer →
+    // re-style mutation → iOS focus dismissal.
     const viewportLockObserver = new MutationObserver(lockSubtree)
-    viewportLockObserver.observe(termEl, { childList: true, subtree: true })
+    viewportLockObserver.observe(termEl, { childList: true, subtree: false })
     // Track touch coords inside the same listener pair as refocusOnTap
     // so we can decide BEFORE the React-side onTouchEnd has run whether
     // the gesture was a horizontal pane-swipe. (justSwipedRef alone
@@ -454,98 +457,19 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     scrollLockUntilRef.current = Date.now() + 1200
   }, [activeIdx])
 
-  // xterm's WebGL theme.background snaps when assigned. To match the
-  // body's 400ms ease CSS fade, animate the xterm bg manually via
-  // requestAnimationFrame interpolating from the previous color to
-  // the new one with the same cubic-bezier(0.25, 0.1, 0.25, 1) curve.
-  // Without this, xterm visibly snapped to the new tint while body
-  // was still fading — exactly the "Dynamic Island late" perception.
-  const xtermBgRef = useRef(null)
+  // xterm's WebGL theme.background snaps when assigned — used to
+  // animate over 400ms via rAF for visual smoothness, but the per-
+  // frame term.refresh() rebuilt xterm's screen DOM and iOS WKWebView
+  // dismissed the focused helper-textarea (ancestor mutations during
+  // focus). Snap immediately. The body / panel chrome / FAB / etc.
+  // still fade via CSS — only xterm's pane snaps.
   useEffect(() => {
     const term = xtermRef.current
     if (!term) return
     const css = getComputedStyle(document.body)
     const baseBg = css.getPropertyValue('--bg').trim() || '#282828'
     const target = activeColor ? darkenHex(activeColor) : baseBg
-    const from = xtermBgRef.current || target
-    xtermBgRef.current = target
-    const parse = (hex) => {
-      const c = hex.replace('#', '')
-      const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
-      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
-    }
-    const [fr, fg, fb] = parse(from)
-    const [tr, tg, tb] = parse(target)
-    if (fr === tr && fg === tg && fb === tb) {
-      try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
-      return
-    }
-    // Cubic bezier evaluator for cubic-bezier(0.25, 0.1, 0.25, 1) —
-    // matches CSS `ease`. Newton-Raphson on x to find t.
-    const bz = (t, p1, p2) => 3 * (1 - t) * (1 - t) * t * p1 + 3 * (1 - t) * t * t * p2 + t * t * t
-    const easeY = (x) => {
-      let t = x
-      for (let i = 0; i < 6; i++) {
-        const xt = bz(t, 0.25, 0.25)
-        const dx = 3 * (1 - t) * (1 - t) * 0.25 + 6 * (1 - t) * t * (0.25 - 0.25) + 3 * t * t * (1 - 0.25)
-        t -= (xt - x) / (dx || 1)
-      }
-      return bz(t, 0.1, 1)
-    }
-    // If the iOS soft keyboard is up (helper-textarea focused), the
-    // per-frame term.refresh() rebuilds xterm's screen DOM and iOS
-    // treats the focused textarea's ancestor as non-interactive →
-    // dismisses the keyboard. Skip the animation in that case and
-    // snap; body's CSS fade still smooths the surrounding surfaces.
-    const isTextareaFocused = () => {
-      const ae = document.activeElement
-      return ae && ae.classList && ae.classList.contains('xterm-helper-textarea')
-    }
-    if (isTextareaFocused()) {
-      try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
-      return
-    }
-    const start = performance.now()
-    const dur = 400
-    let raf = 0
-    let cancelled = false
-    // Cancel the rAF synchronously the moment the helper-textarea
-    // gets focus — iOS pops the keyboard within a single frame of
-    // touchend, so checking focus at the next tick is too late.
-    const onFocusIn = (e) => {
-      const t = e.target
-      if (t && t.classList && t.classList.contains('xterm-helper-textarea')) {
-        cancelled = true
-        cancelAnimationFrame(raf)
-        try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
-        document.removeEventListener('focusin', onFocusIn)
-      }
-    }
-    document.addEventListener('focusin', onFocusIn)
-    const tick = () => {
-      if (cancelled) return
-      // Bail mid-animation if focus moves to the helper-textarea.
-      if (isTextareaFocused()) {
-        try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
-        document.removeEventListener('focusin', onFocusIn)
-        return
-      }
-      const elapsed = performance.now() - start
-      const x = Math.min(1, elapsed / dur)
-      const e = easeY(x)
-      const r = Math.round(fr + (tr - fr) * e)
-      const g = Math.round(fg + (tg - fg) * e)
-      const b = Math.round(fb + (tb - fb) * e)
-      const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
-      try {
-        term.options.theme = { ...term.options.theme, background: hex }
-        term.refresh(0, term.rows - 1)
-      } catch {}
-      if (x < 1) raf = requestAnimationFrame(tick)
-      else document.removeEventListener('focusin', onFocusIn)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => { cancelled = true; cancelAnimationFrame(raf); document.removeEventListener('focusin', onFocusIn) }
+    try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
   }, [activeColor])
 
   // Paint the iOS safe-area regions (top under the Dynamic Island,
@@ -576,13 +500,17 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     // Sync the --gutter-bg CSS var so the fixed .safe-area-cover
     // band follows the terminal tint (was permanently var(--bg) gray).
     const prevGutter = html.style.getPropertyValue('--gutter-bg')
+    const prevMenu = html.style.getPropertyValue('--menu-bg')
     html.style.setProperty('--gutter-bg', tintBg)
+    html.style.setProperty('--menu-bg', tintBg)
     NativePlayer.setSafeAreaBackground?.(tintBg)?.catch?.(() => {})
     return () => {
       html.style.background = prevHtml
       body.style.background = prevBody
       if (prevGutter) html.style.setProperty('--gutter-bg', prevGutter)
       else html.style.removeProperty('--gutter-bg')
+      if (prevMenu) html.style.setProperty('--menu-bg', prevMenu)
+      else html.style.removeProperty('--menu-bg')
       NativePlayer.setSafeAreaBackground?.('')?.catch?.(() => {})
     }
   }, [visible, activeColor])

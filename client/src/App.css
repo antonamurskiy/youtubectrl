@@ -700,13 +700,12 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   flex-direction: column;
   padding: 10px 12px;
   padding-bottom: calc(8px + var(--safe-bottom));
-  /* Frosted glass: translucent --bg + heavy blur on what's behind.
-   * color-mix keeps the bar tinted with the active theme (gruvbox or
-   * the maria-proximity red wash) but lets ~25% of the underlying
-   * page show through. iOS Safari needs the -webkit- prefix. */
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(140%);
-  backdrop-filter: blur(24px) saturate(140%);
+  /* Was frosted glass via backdrop-filter: blur(24px). Removed —
+   * iOS Safari re-blurs the layer on every repaint of underlying
+   * content (terminal scroll, scrubber tick, etc.), tanking perf
+   * AND causing keyboard-focus dismissal under GPU load. Solid
+   * --bg matches the rest of the chrome. */
+  background: var(--bg);
   position: fixed;
   bottom: 0;
   left: 0;
@@ -716,12 +715,7 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   z-index: 100;
   gap: 4px;
   overflow: visible;
-  transform: translateZ(0);
-  -webkit-backface-visibility: hidden;
-  backface-visibility: hidden;
-  -webkit-transform-style: preserve-3d;
   animation: np-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
-  will-change: transform, opacity;
   transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 /* Browsers without backdrop-filter support fall through to a solid
@@ -1141,8 +1135,9 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   position: fixed;
   top: calc(env(safe-area-inset-top) + 36px);
   right: 16px;
-  background: #151515;
+  background: var(--menu-bg, #151515);
   border: 1px solid var(--border);
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
   z-index: 600;
   /* Wide enough to feel roomy on mobile without reaching the edge
    * of the viewport. The map crop is locked to width: 100% / 200px
@@ -1622,9 +1617,19 @@ body.keyboard-open .now-playing { display: none; }
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+  position: relative;
   transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1), border-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 .fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--fab-bg-active, var(--surface-hover)); }
+
+/* Invisible hit-area extension. Visible button stays 40x40 but the
+ * tap target reaches 16px in every direction (72x72), catching near-
+ * misses that would otherwise hit a video card behind/below the FAB. */
+.fab-refresh::before, .fab-cmux::before, .fab-tmux::before {
+  content: '';
+  position: absolute;
+  inset: -16px;
+}
 
 /* Top-of-screen "kill feed" of recent Claude pane lines. Renders
  * while the terminal panel is closed so the user can keep tabs on
@@ -1909,10 +1914,11 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
 /* ── Context menu ── */
 .context-menu {
   position: fixed;
-  background: #151515;
+  background: var(--menu-bg, #151515);
   border: 1px solid var(--border);
   z-index: 700;
   min-width: 160px;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .context-menu-item {

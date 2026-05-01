@@ -481,6 +481,7 @@ function App() {
     // (the tabs strip).
     html.style.setProperty('--gutter-bg', tintBg)
     html.style.setProperty('--header-bg', tintBg)
+    html.style.setProperty('--menu-bg', tintBg)
     // Active-tab pill highlight: a slightly LIGHTER variant of the
     // tint so it stands out against the header bg. Falls back to
     // --surface gray when no tint is active.

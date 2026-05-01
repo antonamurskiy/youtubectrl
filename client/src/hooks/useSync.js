@@ -35,6 +35,22 @@ export function useSync() {
       try {
         const data = JSON.parse(e.data)
         if (data.type === 'playback') {
+          // Server includes tmuxWindows + tmuxColors on every 1Hz tick.
+          // JSON.parse always creates new array/object refs even when
+          // contents are identical → useShallow in App sees ref change
+          // → App re-renders 1Hz → cascades to all children → typing
+          // lag, scrolling jank, etc.
+          //
+          // Dedupe: replace the new refs with the existing store refs
+          // when contents match. App's useShallow then sees no change
+          // for those fields and skips the re-render entirely.
+          const cur = usePlaybackStore.getState()
+          if (data.tmuxWindows && shallowEqualWindows(data.tmuxWindows, cur.tmuxWindows)) {
+            data.tmuxWindows = cur.tmuxWindows
+          }
+          if (data.tmuxColors && shallowEqualMap(data.tmuxColors, cur.tmuxColors)) {
+            data.tmuxColors = cur.tmuxColors
+          }
           // In phone-only native mode, the AVPlayer is authoritative for
           // position/duration/paused. Don't let mpv's WS broadcast overwrite
           // them (mpv is muted+hidden there but still reports stale state).
@@ -50,10 +66,15 @@ export function useSync() {
         } else if (data.type === 'tmux') {
           // Focused update from /api/tmux-select / rename / color save —
           // refresh the tab bar without waiting for the next 1Hz tick.
-          usePlaybackStore.getState().update({
-            tmuxWindows: data.tmuxWindows,
-            ...(data.tmuxColors ? { tmuxColors: data.tmuxColors } : {}),
-          })
+          const cur = usePlaybackStore.getState()
+          const update = {}
+          if (!shallowEqualWindows(data.tmuxWindows, cur.tmuxWindows)) {
+            update.tmuxWindows = data.tmuxWindows
+          }
+          if (data.tmuxColors && !shallowEqualMap(data.tmuxColors, cur.tmuxColors)) {
+            update.tmuxColors = data.tmuxColors
+          }
+          if (Object.keys(update).length) usePlaybackStore.getState().update(update)
         } else if (data.type === 'claude-feed') {
           if (Array.isArray(data.lines) && data.lines.length) {
             useSyncStore.getState().pushClaudeFeed(data.lines)
@@ -94,6 +115,31 @@ export function useSync() {
   }, [])
 
   return { send, wsRef }
+}
+
+// Shallow content equality for the tmuxWindows array. Each window is
+// compared by the fields the UI actually reads (index, name, active,
+// title). Adding fields on the server requires adding them here.
+function shallowEqualWindows(a, b) {
+  if (a === b) return true
+  if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i], y = b[i]
+    if (x === y) continue
+    if (!x || !y) return false
+    if (x.index !== y.index || x.name !== y.name || x.active !== y.active || x.title !== y.title) return false
+  }
+  return true
+}
+
+// Shallow content equality for tmuxColors: { name: hex, ... }
+function shallowEqualMap(a, b) {
+  if (a === b) return true
+  if (!a || !b) return false
+  const ak = Object.keys(a), bk = Object.keys(b)
+  if (ak.length !== bk.length) return false
+  for (const k of ak) if (a[k] !== b[k]) return false
+  return true
 }
 
 function sendPing(ws, state) {
