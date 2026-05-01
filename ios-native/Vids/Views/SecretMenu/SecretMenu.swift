@@ -17,7 +17,6 @@ struct SecretMenu: View {
 
     var body: some View {
         List {
-            statusSection
             volumeSection
             findMySection
             syncOffsetSection

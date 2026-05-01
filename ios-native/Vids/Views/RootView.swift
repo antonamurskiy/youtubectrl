@@ -155,7 +155,12 @@ struct RootView: View {
             set: { ui.secretMenuOpen = $0 }
         )) {
             SecretMenu()
-                .presentationDetents([.medium, .large])
+                // Skip .large — at full-screen detent the sheet host
+                // switches to opaque rendering on iOS 26 and the
+                // clear-row List content disappears against the
+                // material. Cap at fraction(0.92) so we stay
+                // translucent-detent the whole way up.
+                .presentationDetents([.medium, .fraction(0.92)])
                 .presentationDragIndicator(.visible)
                 // .ultraThinMaterial directly on presentationBackground
                 // renders opaque-ish in dark mode on iOS 26 — wrap a
