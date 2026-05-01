@@ -1,0 +1,87 @@
+import SwiftUI
+
+struct VideoCellView: View {
+    let video: Video
+    @State private var thumbnail: UIImage? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ZStack(alignment: .bottomTrailing) {
+                Group {
+                    if let img = thumbnail {
+                        Image(uiImage: img)
+                            .resizable()
+                            .aspectRatio(16.0/9.0, contentMode: .fill)
+                    } else {
+                        Color.black.opacity(0.6)
+                            .aspectRatio(16.0/9.0, contentMode: .fit)
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 0))
+
+                if let dur = video.duration, !dur.isEmpty {
+                    Text(dur == "LIVE" ? "LIVE" : dur)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.75))
+                        .foregroundStyle(.white)
+                        .padding(8)
+                }
+            }
+            .clipped()
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(video.title ?? "")
+                    .font(.system(size: 14, weight: .semibold))
+                    .lineLimit(2)
+                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    if let ch = video.channel { Text(ch) }
+                    if let v = video.views { Text("• \(v)") }
+                    if let u = video.uploadedAt { Text("• \(u)") }
+                }
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.55))
+            }
+            .padding(.horizontal, 12)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: video.videoId) { await loadThumb() }
+    }
+
+    private func loadThumb() async {
+        guard let id = video.videoId else { return }
+        let url = video.thumbnail ?? "https://i.ytimg.com/vi/\(id)/hqdefault.jpg"
+        thumbnail = await ThumbnailCache.shared.image(id: id, url: url)
+    }
+}
+
+struct ShortCellView: View {
+    let short: Short
+    @State private var thumbnail: UIImage? = nil
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Group {
+                if let img = thumbnail {
+                    Image(uiImage: img).resizable().aspectRatio(9.0/16.0, contentMode: .fill)
+                } else {
+                    Color.black.opacity(0.6).aspectRatio(9.0/16.0, contentMode: .fit)
+                }
+            }
+            .frame(width: 140, height: 180)
+            .clipped()
+            Text(short.title ?? "")
+                .font(.system(size: 12, weight: .semibold))
+                .lineLimit(2)
+                .foregroundStyle(.white)
+                .frame(width: 140, alignment: .leading)
+        }
+        .task(id: short.videoId) {
+            guard let id = short.videoId else { return }
+            let url = short.thumbnail ?? "https://i.ytimg.com/vi/\(id)/hqdefault.jpg"
+            thumbnail = await ThumbnailCache.shared.image(id: id, url: url)
+        }
+    }
+}

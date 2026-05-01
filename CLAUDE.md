@@ -30,7 +30,7 @@ APP_PATH=/Users/antonamurskiy/Library/Developer/Xcode/DerivedData/App-fmgudysqpu
 cd client && npm run build
 cd ../ios-app && npx cap sync ios
 
-# 2. Clean + build iOS for device (-allowProvisioningUpdates refreshes free cert)
+# 2. Clean + build iOS for device (-allowProvisioningUpdates refreshes the cert)
 cd ios/App && xcodebuild -project App.xcodeproj -scheme App -configuration Debug clean
 xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
   -destination "id=$DEVICE" -allowProvisioningUpdates build
@@ -178,8 +178,10 @@ Real-time push from the Mac to the iPhone for:
 - The .p8 auth key sits at `.apns-key.p8` (gitignored).
 - `App.entitlements` declares `aps-environment=development`.
   `CODE_SIGN_ENTITLEMENTS = App/App.entitlements;` is set on both
-  Debug + Release in `project.pbxproj`. Free Personal Teams can't
-  sign Push Notifications — paid Apple Developer Program required.
+  Debug + Release in `project.pbxproj`. The Apple Developer
+  Program account is paid (active as of 2026-05-01) — Push
+  Notifications, App Groups, Background Modes, and other
+  capabilities that Personal Teams can't sign all work.
 - Server uses `@parse/node-apn`. Tokens persist to
   `.apns-tokens.json` (gitignored). Bad/Unregistered tokens
   auto-purge.
