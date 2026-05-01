@@ -157,7 +157,15 @@ struct RootView: View {
             SecretMenu()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.ultraThinMaterial)
+                // .ultraThinMaterial directly on presentationBackground
+                // renders opaque-ish in dark mode on iOS 26 — wrap a
+                // clear color over the material so the sheet layer truly
+                // blurs the feed underneath.
+                .presentationBackground {
+                    Rectangle()
+                        .fill(.ultraThinMaterial)
+                        .ignoresSafeArea()
+                }
         }
         .sheet(isPresented: Binding(
             get: { ui.commentsOpen },
@@ -166,7 +174,9 @@ struct RootView: View {
             CommentsPanel()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.ultraThinMaterial)
+                .presentationBackground {
+                    Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+                }
         }
         .sheet(isPresented: Binding(
             get: { ui.qualityMenuOpen },
@@ -175,7 +185,9 @@ struct RootView: View {
             QualityMenu()
                 .presentationDetents([.height(320)])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.ultraThinMaterial)
+                .presentationBackground {
+                    Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+                }
         }
         .sheet(isPresented: Binding(
             get: { ui.audioSheetOpen },
@@ -184,7 +196,9 @@ struct RootView: View {
             AudioOutputSheet()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.ultraThinMaterial)
+                .presentationBackground {
+                    Rectangle().fill(.ultraThinMaterial).ignoresSafeArea()
+                }
         }
         // Match the SwiftTerm CADisplayLink curve EXACTLY — both
         // use cubic-bezier(0.25, 0.1, 0.25, 1.0) over 0.4s so body bg,
