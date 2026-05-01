@@ -2,10 +2,11 @@ import SwiftUI
 
 struct ToastHUD: View {
     @Environment(UIStore.self) private var ui
+    @Environment(TerminalStore.self) private var terminal
 
     var body: some View {
         VStack(spacing: 8) {
-            ForEach(ui.toasts) { t in
+            ForEach(terminal.open ? [] : ui.toasts) { t in
                 Text(t.text)
                     .font(.system(size: 13, weight: .semibold))
                     .padding(.horizontal, 14)

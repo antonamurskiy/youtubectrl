@@ -11,9 +11,11 @@ final class UIStore {
     func toast(_ text: String, duration: TimeInterval = 1.6) {
         let t = Toast(text: text)
         toasts.append(t)
-        Task {
-            try? await Task.sleep(nanoseconds: UInt64(duration * 1_000_000_000))
-            await MainActor.run { self.toasts.removeAll { $0.id == t.id } }
+        // Use a runloop Timer rather than Task.sleep — observed Task
+        // continuations being delayed indefinitely under SwiftUI render
+        // pressure, leaving toasts pinned on screen.
+        Timer.scheduledTimer(withTimeInterval: duration, repeats: false) { [weak self] _ in
+            self?.toasts.removeAll { $0.id == t.id }
         }
     }
 
