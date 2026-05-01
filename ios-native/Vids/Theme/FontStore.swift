@@ -12,23 +12,31 @@ import CoreText
 @MainActor
 final class FontStore {
     static var shared: FontStore?
-    struct Entry { let label: String; let postScript: String; let cssFamily: String?; let bundled: Bool }
+    struct Entry {
+        let label: String
+        let postScript: String
+        let directURL: String?  // jsdelivr CDN ttf — preferred over Google Fonts CSS
+        let cssFamily: String?  // Google Fonts CSS endpoint family param
+        let bundled: Bool
+    }
 
     static let entries: [Entry] = [
-        .init(label: "SF Mono",         postScript: "<system>",                cssFamily: nil,                  bundled: true),
-        .init(label: "Menlo",           postScript: "Menlo-Regular",           cssFamily: nil,                  bundled: true),
-        .init(label: "Courier",         postScript: "Courier",                 cssFamily: nil,                  bundled: true),
-        .init(label: "JetBrains Mono",  postScript: "JetBrainsMono-Regular",   cssFamily: "JetBrains+Mono",     bundled: false),
-        .init(label: "IBM Plex Mono",   postScript: "IBMPlexMono",             cssFamily: "IBM+Plex+Mono",      bundled: false),
-        .init(label: "Space Mono",      postScript: "SpaceMono-Regular",       cssFamily: "Space+Mono",         bundled: false),
-        .init(label: "Geist Mono",      postScript: "GeistMono-Regular",       cssFamily: "Geist+Mono",         bundled: false),
-        .init(label: "Fira Code",       postScript: "FiraCode-Regular",        cssFamily: "Fira+Code",          bundled: false),
-        .init(label: "DM Mono",         postScript: "DMMono-Regular",          cssFamily: "DM+Mono",            bundled: false),
-        .init(label: "Red Hat Mono",    postScript: "RedHatMono-Regular",      cssFamily: "Red+Hat+Mono",       bundled: false),
-        .init(label: "Azeret Mono",     postScript: "AzeretMono-Regular",      cssFamily: "Azeret+Mono",        bundled: false),
-        .init(label: "Monaspace Neon",  postScript: "MonaspaceNeon-Regular",   cssFamily: "Monaspace+Neon",     bundled: false),
-        .init(label: "Martian Mono",    postScript: "MartianMono-Regular",     cssFamily: "Martian+Mono",       bundled: false),
-        .init(label: "Commit Mono",     postScript: "CommitMono-Regular",      cssFamily: "Commit+Mono",        bundled: false),
+        .init(label: "SF Mono",         postScript: "<system>",                directURL: nil, cssFamily: nil,                  bundled: true),
+        .init(label: "Menlo",           postScript: "Menlo-Regular",           directURL: nil, cssFamily: nil,                  bundled: true),
+        .init(label: "Courier",         postScript: "Courier",                 directURL: nil, cssFamily: nil,                  bundled: true),
+        // jsdelivr-hosted github raw ttfs — bypass Google Fonts CSS
+        // negotiation that was returning variable woff2 we can't read.
+        .init(label: "JetBrains Mono",  postScript: "JetBrainsMono-Regular",   directURL: "https://cdn.jsdelivr.net/gh/JetBrains/JetBrainsMono/fonts/ttf/JetBrainsMono-Regular.ttf",                                                  cssFamily: "JetBrains+Mono",     bundled: false),
+        .init(label: "IBM Plex Mono",   postScript: "IBMPlexMono",             directURL: "https://cdn.jsdelivr.net/gh/IBM/plex/IBM-Plex-Mono/fonts/complete/ttf/IBMPlexMono-Regular.ttf",                                            cssFamily: "IBM+Plex+Mono",      bundled: false),
+        .init(label: "Space Mono",      postScript: "SpaceMono-Regular",       directURL: "https://cdn.jsdelivr.net/gh/googlefonts/spacemono/fonts/SpaceMono-Regular.ttf",                                                            cssFamily: "Space+Mono",         bundled: false),
+        .init(label: "Fira Code",       postScript: "FiraCode-Regular",        directURL: "https://cdn.jsdelivr.net/gh/tonsky/FiraCode/distr/ttf/FiraCode-Regular.ttf",                                                               cssFamily: "Fira+Code",          bundled: false),
+        .init(label: "DM Mono",         postScript: "DMMono-Regular",          directURL: "https://cdn.jsdelivr.net/gh/googlefonts/dm-mono/fonts/ttf/DMMono-Regular.ttf",                                                             cssFamily: "DM+Mono",            bundled: false),
+        .init(label: "Red Hat Mono",    postScript: "RedHatMono-Regular",      directURL: "https://cdn.jsdelivr.net/gh/RedHatOfficial/RedHatFont/fonts/static/RedHatMono/RedHatMono-Regular.ttf",                                     cssFamily: "Red+Hat+Mono",       bundled: false),
+        .init(label: "Geist Mono",      postScript: "GeistMono-Regular",       directURL: nil,                                                                                                                                       cssFamily: "Geist+Mono",         bundled: false),
+        .init(label: "Azeret Mono",     postScript: "AzeretMono-Regular",      directURL: nil,                                                                                                                                       cssFamily: "Azeret+Mono",        bundled: false),
+        .init(label: "Monaspace Neon",  postScript: "MonaspaceNeon-Regular",   directURL: nil,                                                                                                                                       cssFamily: "Monaspace+Neon",     bundled: false),
+        .init(label: "Martian Mono",    postScript: "MartianMono-Regular",     directURL: nil,                                                                                                                                       cssFamily: "Martian+Mono",       bundled: false),
+        .init(label: "Commit Mono",     postScript: "CommitMono-Regular",      directURL: nil,                                                                                                                                       cssFamily: "Commit+Mono",        bundled: false),
     ]
 
     static let sizes: [CGFloat] = [10, 11, 12, 13, 14, 15, 16]
@@ -98,8 +106,7 @@ final class FontStore {
 
     func ensureRegistered(label: String) {
         guard let entry = Self.entries.first(where: { $0.label == label }),
-              !entry.bundled,
-              let css = entry.cssFamily
+              !entry.bundled
         else {
             generation += 1
             return
@@ -112,12 +119,39 @@ final class FontStore {
         if registered.contains(label) { return }
         registered.insert(label)
         Task.detached { [weak self] in
-            let name = await self?.downloadAndRegister(family: css)
+            // Prefer the direct CDN ttf (always works); fall back to
+            // Google Fonts CSS scrape if no direct URL is configured.
+            let name: String?
+            if let direct = entry.directURL, let url = URL(string: direct) {
+                name = await self?.downloadAndRegisterDirect(url: url, label: label)
+            } else if let css = entry.cssFamily {
+                name = await self?.downloadAndRegister(family: css)
+            } else {
+                name = nil
+            }
             await MainActor.run {
                 if let n = name { self?.resolvedNames[label] = n }
                 self?.generation += 1
             }
         }
+    }
+
+    private func downloadAndRegisterDirect(url: URL, label: String) async -> String? {
+        guard let (data, _) = try? await URLSession.shared.data(from: url) else {
+            NSLog("[FontStore] direct download failed: \(url)")
+            return nil
+        }
+        let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
+        let dest = cacheDir.appendingPathComponent("\(label).ttf")
+        try? data.write(to: dest)
+        guard let provider = CGDataProvider(url: dest as CFURL),
+              let cgFont = CGFont(provider) else { return nil }
+        let postScript = cgFont.postScriptName as String?
+        var cferr: Unmanaged<CFError>?
+        let ok = CTFontManagerRegisterGraphicsFont(cgFont, &cferr)
+        NSLog("[FontStore] direct register \(label): postScript=\(postScript ?? "nil") ok=\(ok)")
+        if !ok, let ps = postScript, UIFont(name: ps, size: 12) != nil { return ps }
+        return ok ? postScript : nil
     }
 
     private func downloadAndRegister(family: String) async -> String? {
