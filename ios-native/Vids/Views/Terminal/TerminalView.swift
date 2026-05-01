@@ -13,26 +13,33 @@ struct TerminalView: View {
         VStack(spacing: 0) {
             // Tmux tab strip — only shows when server reports >1 window.
             if terminal.windows.count > 1 {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(terminal.windows) { w in
-                            Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
-                                Text(w.name)
-                                    .font(.system(size: 13, weight: .semibold))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(tabBg(w))
-                                    .foregroundStyle(.white)
+                HStack(spacing: 6) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(terminal.windows) { w in
+                                Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
+                                    Text(w.name)
+                                        .font(.system(size: 13, weight: w.active ? .heavy : .semibold))
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(tabBg(w))
+                                        .foregroundStyle(w.active ? .white : .white.opacity(0.55))
+                                        .overlay(alignment: .bottom) {
+                                            Rectangle()
+                                                .fill(w.active ? Color(hex: "#ebdbb2") : Color.clear)
+                                                .frame(height: 2)
+                                        }
+                                }
+                                .buttonStyle(.plain)
+                                .simultaneousGesture(
+                                    LongPressGesture(minimumDuration: 0.5)
+                                        .onEnded { _ in renaming = w }
+                                )
                             }
-                            .buttonStyle(.plain)
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.5)
-                                    .onEnded { _ in renaming = w }
-                            )
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
                 }
                 .background(theme.resolvedSurface)
             }
@@ -54,6 +61,21 @@ struct TerminalView: View {
         }
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
+        .overlay(alignment: .bottomTrailing) {
+            if terminal.keyboardOpen {
+                Button(action: dismissKeyboard) {
+                    Image(systemName: "keyboard.chevron.compact.down")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 44, height: 44)
+                        .foregroundStyle(.white)
+                        .background(.black.opacity(0.7))
+                        .clipShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .padding(.trailing, 12)
+                .padding(.bottom, terminal.keyboardHeight + 12)
+            }
+        }
         .overlay {
             if let w = renaming {
                 ZStack {
@@ -63,6 +85,10 @@ struct TerminalView: View {
                 }
             }
         }
+    }
+
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     private func switchTmuxWindow(by delta: Int) {
@@ -75,10 +101,15 @@ struct TerminalView: View {
     }
 
     private func tabBg(_ w: TmuxWindow) -> SwiftUI.Color {
-        guard let hex = terminal.resolveColor(w.name) else {
-            return w.active ? SwiftUI.Color.white.opacity(0.15) : SwiftUI.Color.white.opacity(0.05)
+        let hex = terminal.resolveColor(w.name)
+        if w.active {
+            // Active: bright tint or strong neutral so the underline +
+            // bg combo is unmistakable against the panel bg.
+            if let h = hex { return SwiftUI.Color(hex: h).opacity(0.7) }
+            return SwiftUI.Color.white.opacity(0.22)
         }
-        return SwiftUI.Color(hex: hex).darken(0.55).opacity(w.active ? 1 : 0.7)
+        if let h = hex { return SwiftUI.Color(hex: h).darken(0.55).opacity(0.5) }
+        return SwiftUI.Color.white.opacity(0.05)
     }
 }
 
