@@ -32,15 +32,24 @@ struct VideoCellView: View {
                         .padding(8)
                 }
                 // Watched-progress strip at the bottom of the thumbnail.
+                // GeometryReader inside UIHostingConfiguration causes
+                // recursive _updateVisibleCellsNow on iOS 26.3.1 (cell
+                // intrinsic size never converges → app crash on refresh).
+                // LinearGradient with hard stops gives the same visual
+                // without the layout feedback loop.
                 if let pos = video.savedPosition, let dur = video.savedDuration, dur > 0, pos > 0 {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(.black.opacity(0.5)).frame(height: 3)
-                            Rectangle().fill(Color(hex: "#cc4040"))
-                                .frame(width: geo.size.width * CGFloat(min(pos / dur, 1)), height: 3)
-                        }
-                        .frame(maxHeight: .infinity, alignment: .bottom)
-                    }
+                    let pct = min(max(pos / dur, 0), 1)
+                    LinearGradient(
+                        stops: [
+                            .init(color: Color(hex: "#cc4040"), location: 0),
+                            .init(color: Color(hex: "#cc4040"), location: pct),
+                            .init(color: .black.opacity(0.5),  location: pct),
+                            .init(color: .black.opacity(0.5),  location: 1),
+                        ],
+                        startPoint: .leading, endPoint: .trailing
+                    )
+                    .frame(height: 3)
+                    .frame(maxWidth: .infinity, alignment: .bottom)
                     .allowsHitTesting(false)
                 }
             }

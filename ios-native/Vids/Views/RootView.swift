@@ -58,24 +58,28 @@ struct RootView: View {
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen)
                 ? 175
                 : 0
+            // Keep TerminalView ALWAYS mounted — opening / closing only
+            // toggles opacity + hit testing. Conditional mounting tore
+            // down the PTY + SwiftTerm view + WS connection on close,
+            // producing a visible blink when reopening (cold xterm
+            // re-init, scroll-to-bottom, font reload). Persistent mount
+            // keeps the session warm.
             if hSize == .regular {
                 HStack(spacing: 0) {
                     feedView
                         .frame(maxWidth: .infinity)
-                    if terminal.open {
-                        TerminalView(bottomInset: bottomInset)
-                            .frame(maxWidth: .infinity)
-                            .transition(.move(edge: .trailing).combined(with: .opacity))
-                    }
+                    TerminalView(bottomInset: bottomInset)
+                        .frame(maxWidth: .infinity)
+                        .opacity(terminal.open ? 1 : 0)
+                        .allowsHitTesting(terminal.open)
                 }
             } else {
                 feedView
                     .opacity(terminal.open ? 0 : 1)
                     .allowsHitTesting(!terminal.open)
-                if terminal.open {
-                    TerminalView(bottomInset: bottomInset)
-                        .transition(.opacity)
-                }
+                TerminalView(bottomInset: bottomInset)
+                    .opacity(terminal.open ? 1 : 0)
+                    .allowsHitTesting(terminal.open)
             }
 
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
