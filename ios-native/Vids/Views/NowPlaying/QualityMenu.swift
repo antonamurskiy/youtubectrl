@@ -21,7 +21,7 @@ struct QualityMenu: View {
             .padding(.vertical, 10)
             .foregroundStyle(Color.appText)
 
-            Divider().background(.white.opacity(0.1))
+            Divider().background(Color.appText.opacity(0.1))
 
             ScrollView {
                 LazyVStack(spacing: 0) {

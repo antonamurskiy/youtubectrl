@@ -89,7 +89,7 @@ struct NowPlayingBar: View {
                 Button(action: { ui.commentsOpen.toggle() }) {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(Font.app(14))
-                        .foregroundStyle(ui.commentsOpen ? Color(hex: "#8ec07c") : .white.opacity(0.6))
+                        .foregroundStyle(ui.commentsOpen ? Color(hex: "#8ec07c") : Color.appText.opacity(0.6))
                 }
                 .buttonStyle(.plain)
                 HStack(spacing: 18) {
@@ -132,7 +132,7 @@ struct NowPlayingBar: View {
             Image(systemName: systemName)
                 .font(Font.app(14, weight: .medium))
                 .frame(width: 36, height: 32)
-                .foregroundStyle(active ? Color(hex: "#8ec07c") : .white.opacity(0.65))
+                .foregroundStyle(active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.65))
                 .background(active ? Color(hex: "#8ec07c").opacity(0.15) : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
         }
@@ -145,7 +145,7 @@ struct NowPlayingBar: View {
             .padding(.horizontal, 6)
             .padding(.vertical, 3)
             .foregroundStyle(speedTextColor)
-            .background(speedPressed ? Color.white.opacity(0.15) : .clear)
+            .background(speedPressed ? Color.appText.opacity(0.15) : .clear)
             .clipShape(RoundedRectangle(cornerRadius: 3))
             .gesture(
                 LongPressGesture(minimumDuration: 0.15)
@@ -178,7 +178,7 @@ struct NowPlayingBar: View {
         }) {
             Image(systemName: active ? "pip.exit" : "pip.enter")
                 .font(Font.app(14))
-                .foregroundStyle(active ? Color(hex: "#8ec07c") : .white.opacity(0.6))
+                .foregroundStyle(active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.6))
         }
         .buttonStyle(.plain)
     }
@@ -193,8 +193,8 @@ struct NowPlayingBar: View {
     }
 
     private var speedTextColor: Color {
-        if speedPressed { return .white }
-        if abs(playback.speed - 1.0) < 0.01 { return .white.opacity(0.55) }
+        if speedPressed { return Color.appText }
+        if abs(playback.speed - 1.0) < 0.01 { return Color.appText.opacity(0.55) }
         return Color(hex: "#cc4040")
     }
 
@@ -218,7 +218,7 @@ struct NowPlayingBar: View {
     }
 
     private var liveLabelColor: Color {
-        guard playback.isLive && !playback.isPostLive else { return .white.opacity(0.5) }
+        guard playback.isLive && !playback.isPostLive else { return Color.appText.opacity(0.5) }
         let behind = max(0, playback.duration - playback.position)
         return behind < 5 ? Color(hex: "#cc4040") : Color(hex: "#a89984")
     }

@@ -21,7 +21,7 @@ struct AudioOutputSheet: View {
             .padding(.horizontal, 12).padding(.vertical, 10)
             .foregroundStyle(Color.appText)
 
-            Divider().background(.white.opacity(0.1))
+            Divider().background(Color.appText.opacity(0.1))
 
             ScrollView {
                 LazyVStack(spacing: 0) {
@@ -31,7 +31,7 @@ struct AudioOutputSheet: View {
                         }) {
                             HStack {
                                 Text(o.name).font(Font.app(13))
-                                    .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
+                                    .foregroundStyle(o.active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.85))
                                 Spacer()
                                 if o.active { Image(systemName: "checkmark") }
                             }
@@ -71,7 +71,7 @@ struct AudioOutputSheet: View {
                             }) {
                                 HStack {
                                     Text(d.name ?? d.address).font(Font.app(13))
-                                        .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .white.opacity(0.85))
+                                        .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : Color.appText.opacity(0.85))
                                     Spacer()
                                     if d.connected == true { Image(systemName: "checkmark") }
                                 }

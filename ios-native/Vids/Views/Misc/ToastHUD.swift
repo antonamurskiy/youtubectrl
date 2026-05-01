@@ -34,7 +34,7 @@ struct VolumeHUD: View {
                     .font(Font.app(28, weight: .bold, design: .monospaced))
                     .foregroundStyle(Color.appText)
                 Rectangle()
-                    .fill(.white.opacity(0.15))
+                    .fill(Color.appText.opacity(0.15))
                     .frame(width: 160, height: 4)
                     .overlay(alignment: .leading) {
                         Rectangle()

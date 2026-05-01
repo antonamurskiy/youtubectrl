@@ -257,7 +257,7 @@ struct RootView: View {
                 .foregroundStyle(Color.appText)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
-                .background(.white.opacity(0.06))
+                .background(Color.appText.opacity(0.06))
             }
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))

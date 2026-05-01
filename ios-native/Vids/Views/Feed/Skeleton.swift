@@ -24,10 +24,10 @@ struct FeedSkeleton: View {
 
     private var shimmerBar: some View {
         Rectangle()
-            .fill(Color.white.opacity(0.05))
+            .fill(Color.appText.opacity(0.05))
             .overlay(
                 LinearGradient(
-                    colors: [.clear, .white.opacity(0.08), .clear],
+                    colors: [.clear, Color.appText.opacity(0.08), .clear],
                     startPoint: .leading,
                     endPoint: .trailing
                 )

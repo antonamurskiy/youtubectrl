@@ -24,19 +24,19 @@ struct SecretMenu: View {
                 VStack(spacing: 0) {
                     handle
                     statusRow
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     volumeRow
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     findMyBlock
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     syncOffsetRow
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     keepAwakeRow
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     outputsSection
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     btSection
-                    Divider().background(.white.opacity(0.1))
+                    Divider().background(Color.appText.opacity(0.1))
                     miscToggle
                     if miscOpen { miscSection }
                     close
@@ -61,7 +61,7 @@ struct SecretMenu: View {
     // MARK: rows
 
     private var handle: some View {
-        Capsule().fill(.white.opacity(0.15)).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 6)
+        Capsule().fill(Color.appText.opacity(0.15)).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 6)
     }
 
     private var statusRow: some View {
@@ -143,7 +143,7 @@ struct SecretMenu: View {
                 Spacer()
                 Text(playback.macStatus.keepAwake == true ? "ON" : "OFF")
                     .font(Font.app(10, weight: .bold, design: .monospaced))
-                    .foregroundStyle(playback.macStatus.keepAwake == true ? Color(hex: "#8ec07c") : .white.opacity(0.4))
+                    .foregroundStyle(playback.macStatus.keepAwake == true ? Color(hex: "#8ec07c") : Color.appText.opacity(0.4))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -173,7 +173,7 @@ struct SecretMenu: View {
                     }) {
                         HStack {
                             Text(o.name).font(Font.app(13))
-                                .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
+                                .foregroundStyle(o.active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.85))
                             Spacer()
                             if o.active { Image(systemName: "checkmark") }
                         }
@@ -223,7 +223,7 @@ struct SecretMenu: View {
                     }) {
                         HStack {
                             Text(d.name ?? d.address).font(Font.app(13))
-                                .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .white.opacity(0.85))
+                                .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : Color.appText.opacity(0.85))
                             Spacer()
                             if d.connected == true { Image(systemName: "checkmark") }
                         }
@@ -331,7 +331,7 @@ struct SecretMenu: View {
                     }
                 }) {
                     Image(systemName: stealth ? "eye.slash" : "eye")
-                        .foregroundStyle(stealth ? .white.opacity(0.5) : Color(hex: "#8ec07c"))
+                        .foregroundStyle(stealth ? Color.appText.opacity(0.5) : Color(hex: "#8ec07c"))
                 }
                 .buttonStyle(.plain)
                 // Force refresh
@@ -358,7 +358,7 @@ struct SecretMenu: View {
             Text("Close")
                 .font(Font.app(13, weight: .semibold))
                 .frame(maxWidth: .infinity).padding(.vertical, 14)
-                .background(.white.opacity(0.05))
+                .background(Color.appText.opacity(0.05))
                 .foregroundStyle(Color.appText)
         }
         .buttonStyle(.plain)
@@ -405,7 +405,7 @@ struct SecretMenu: View {
                         HStack {
                             Text(entry.label)
                                 .font(Font.app(12))
-                                .foregroundStyle(services.fonts.label == entry.label ? Color(hex: "#8ec07c") : .white.opacity(0.75))
+                                .foregroundStyle(services.fonts.label == entry.label ? Color(hex: "#8ec07c") : Color.appText.opacity(0.75))
                             Spacer()
                             if services.fonts.label == entry.label { Image(systemName: "checkmark") }
                         }
@@ -429,7 +429,7 @@ struct SecretMenu: View {
                         .font(Font.app(11, design: .monospaced))
                         .frame(width: 22, height: 22)
                         .background(services.fonts.size == px ? Color(hex: "#8ec07c").opacity(0.25) : Color.clear)
-                        .foregroundStyle(services.fonts.size == px ? .white : .white.opacity(0.55))
+                        .foregroundStyle(services.fonts.size == px ? .white : Color.appText.opacity(0.55))
                         .clipShape(RoundedRectangle(cornerRadius: 3))
                 }
                 .buttonStyle(.plain)

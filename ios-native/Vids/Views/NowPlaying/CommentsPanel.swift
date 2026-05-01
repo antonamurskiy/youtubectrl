@@ -13,7 +13,7 @@ struct CommentsPanel: View {
         VStack(spacing: 0) {
             // Drag handle.
             Capsule()
-                .fill(.white.opacity(0.25))
+                .fill(Color.appText.opacity(0.25))
                 .frame(width: 36, height: 4)
                 .padding(.top, 8)
                 .padding(.bottom, 6)
@@ -40,7 +40,7 @@ struct CommentsPanel: View {
             .padding(.vertical, 6)
             .foregroundStyle(Color.appText)
 
-            Divider().background(.white.opacity(0.1))
+            Divider().background(Color.appText.opacity(0.1))
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {

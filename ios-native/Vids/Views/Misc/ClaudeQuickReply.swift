@@ -1,73 +1,70 @@
 import SwiftUI
 
-/// Floats above the FAB stack when Claude is waiting on a multi-choice
-/// question. Tap a numbered button to send the digit straight to the
-/// active tmux window via /api/tmux-send + /api/tmux-select. Mirrors
-/// the React app's .claude-quick-reply (App.jsx:684).
+/// Right-aligned stack of individual buttons + a question box, matching
+/// the React .claude-quick-reply (App.jsx:684, App.css:1698). Each option
+/// is its own button (not a row in a shared panel) — text is "N text",
+/// magenta border, translucent dark-navy bg, pink-cream text.
 struct ClaudeQuickReply: View {
     @Environment(PlaybackStore.self) private var playback
     @Environment(ServiceContainer.self) private var services
+    @Environment(TerminalStore.self) private var terminal
     @State private var pressed: Int? = nil
 
+    // React palette
+    private let magenta = Color(hex: "#b16286")
+    private let buttonBg = Color(red: 26/255, green: 26/255, blue: 46/255).opacity(0.7)
+    private let pinkText = Color(hex: "#f0c0e0")
+    private let bgFlat = Color(hex: "#282828")
+
     var body: some View {
-        // Show on waiting OR thinking with options so the user always
-        // sees the latest prompt — the React app does the same.
         let visible = !playback.claudeOptions.isEmpty &&
             (playback.claudeState == "waiting" || playback.claudeState == "thinking")
         if visible {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .trailing, spacing: 4) {
                 if let q = playback.claudeQuestion, !q.isEmpty {
                     Text(q)
-                        .font(Font.app(12))
-                        .foregroundStyle(Color.appText.opacity(0.7))
-                        .lineLimit(3)
+                        .font(Font.app(13))
+                        .foregroundStyle(pinkText)
+                        .multilineTextAlignment(.trailing)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .frame(maxWidth: 220, alignment: .trailing)
+                        .background(bgFlat)
+                        .overlay(Rectangle().stroke(magenta, lineWidth: 1))
                 }
                 ForEach(playback.claudeOptions, id: \.n) { opt in
-                    Button(action: { tap(opt.n) }) {
-                        HStack(spacing: 8) {
-                            Text("\(opt.n)")
-                                .font(Font.app(13, weight: .heavy))
-                                .frame(width: 22, height: 22)
-                                .foregroundStyle(Color.appText)
-                                .background(Color(hex: "#b16286").opacity(0.3))
-                                .clipShape(RoundedRectangle(cornerRadius: 4))
-                            Text(opt.text)
-                                .font(Font.app(13))
-                                .foregroundStyle(Color.appText.opacity(0.9))
-                                .lineLimit(2)
-                                .multilineTextAlignment(.leading)
-                            Spacer()
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 6)
-                        .background((pressed == opt.n ? Color(hex: "#b16286").opacity(0.35) : Color.clear))
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    Button(action: { tap(opt) }) {
+                        Text("\(opt.n) \(opt.text)")
+                            .font(Font.app(13))
+                            .multilineTextAlignment(.trailing)
+                            .frame(maxWidth: 320, alignment: .trailing)
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 16)
+                            .frame(minHeight: 56)
+                            .foregroundStyle(pressed == opt.n ? bgFlat : pinkText)
+                            .background(pressed == opt.n ? magenta : buttonBg)
+                            .overlay(Rectangle().stroke(magenta.opacity(0.6), lineWidth: 1))
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(10)
-            .frame(maxWidth: 320, alignment: .leading)
-            .background(Color(hex: "#151515").opacity(0.96))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(Color(hex: "#b16286"), lineWidth: 1.5)
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 10))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
-            .padding(.horizontal, 12)
-            // Sit directly above the terminal FAB. FAB padding = 210 (NP visible)
-            // or 32 (idle); FAB stack itself is ~110pt tall (two 44pt FABs + spacing).
-            .padding(.bottom, (playback.playing ? 210 : 32) + 110 + 8)
+            .padding(.trailing, 16)
+            // bottom: calc(var(--np-height, 220px) + 106px) ≈ 326 when playing
+            // body.keyboard-open: bottom: 498px
+            .padding(.bottom, terminal.keyboardOpen
+                ? terminal.keyboardHeight + 162
+                : (playback.playing ? 326 : 122))
+            .ignoresSafeArea(.keyboard, edges: .bottom)
             .allowsHitTesting(true)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .transition(.opacity)
         }
     }
 
-    private func tap(_ n: Int) {
-        pressed = n
+    private func tap(_ opt: ClaudeOption) {
+        pressed = opt.n
         Task {
-            try? await services.api.tmuxSend(String(n))
+            try? await services.api.tmuxSend(String(opt.n))
             try? await Task.sleep(nanoseconds: 200_000_000)
             await MainActor.run { pressed = nil }
         }

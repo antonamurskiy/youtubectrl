@@ -38,7 +38,7 @@ struct TmuxRenamePopover: View {
             TextField("name", text: $name)
                 .textFieldStyle(.plain)
                 .padding(8)
-                .background(.white.opacity(0.06))
+                .background(Color.appText.opacity(0.06))
                 .foregroundStyle(Color.appText)
                 .submitLabel(.done)
                 .onSubmit(commit)
@@ -64,7 +64,7 @@ struct TmuxRenamePopover: View {
             HStack(spacing: 12) {
                 Button(action: cancel) {
                     Text("cancel").frame(maxWidth: .infinity).padding(.vertical, 10)
-                        .background(.white.opacity(0.06)).foregroundStyle(Color.appText)
+                        .background(Color.appText.opacity(0.06)).foregroundStyle(Color.appText)
                 }
                 .buttonStyle(.plain)
                 Button(action: commit) {

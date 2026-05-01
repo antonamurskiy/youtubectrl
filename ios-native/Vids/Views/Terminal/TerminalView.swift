@@ -78,10 +78,12 @@ struct TerminalView: View {
             }
         }
         .onDisappear {
-            // Capture keyboard state at the moment of close so the
-            // next open can decide whether to re-focus and bring the
-            // keyboard back (matches React's wasKbOpenAtCloseRef).
             terminal.wasKeyboardOpenAtClose = terminal.keyboardOpen
+        }
+        .onChange(of: theme.activeTmuxTint) { _, _ in
+            // Re-theme keyboard accessory whenever the active tmux
+            // pane tint changes so the buttons track the panel.
+            terminal.themeAccessory?()
         }
         .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
@@ -134,10 +136,10 @@ struct TerminalView: View {
             // Active: bright tint or strong neutral so the underline +
             // bg combo is unmistakable against the panel bg.
             if let h = hex { return SwiftUI.Color(hex: h).opacity(0.7) }
-            return SwiftUI.Color.white.opacity(0.22)
+            return Color.appText.opacity(0.22)
         }
         if let h = hex { return SwiftUI.Color(hex: h).darken(0.55).opacity(0.5) }
-        return SwiftUI.Color.white.opacity(0.05)
+        return Color.appText.opacity(0.05)
     }
 }
 
@@ -193,13 +195,28 @@ func themeAccessoryView(_ root: UIView?, paneTint: UIColor? = nil) {
             btn.tintColor = cream
             btn.layer.cornerRadius = 4
             btn.layer.borderWidth = 0
-            // Some SwiftTerm buttons set bg via UIButton.Configuration —
-            // override via configurationUpdateHandler so it sticks.
+            // Force template rendering on any image so tintColor applies
+            // — SwiftTerm's arrow / keyboard glyph buttons ship with
+            // .alwaysOriginal images that ignore the tint and stay white.
+            for state: UIControl.State in [.normal, .highlighted, .selected] {
+                if let img = btn.image(for: state) {
+                    btn.setImage(img.withRenderingMode(.alwaysTemplate), for: state)
+                }
+            }
             if #available(iOS 15.0, *), btn.configuration != nil {
                 var c = btn.configuration!
                 c.background.backgroundColor = chipBg
                 c.baseForegroundColor = cream
+                if let img = c.image {
+                    c.image = img.withRenderingMode(.alwaysTemplate)
+                }
                 btn.configuration = c
+            }
+        }
+        if let iv = v as? UIImageView {
+            iv.tintColor = cream
+            if let img = iv.image {
+                iv.image = img.withRenderingMode(.alwaysTemplate)
             }
         }
         for s in v.subviews { walk(s) }

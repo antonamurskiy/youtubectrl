@@ -44,7 +44,7 @@ struct FeedListView: UIViewRepresentable {
         // above it.
         cv.contentInsetAdjustmentBehavior = .never
         let rc = UIRefreshControl()
-        rc.tintColor = .white
+        rc.tintColor = UIColor(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255, alpha: 1)
         rc.addTarget(context.coordinator, action: #selector(Coordinator.onRefresh(_:)), for: .valueChanged)
         cv.refreshControl = rc
         // Horizontal swipe to cycle tabs — UIKit recognizer with

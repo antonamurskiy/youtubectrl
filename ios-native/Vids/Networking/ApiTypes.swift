@@ -157,6 +157,22 @@ struct PlaybackPayload: Codable {
 struct ClaudeOption: Codable, Hashable {
     let n: Int
     let text: String
+
+    enum CodingKeys: String, CodingKey { case n, text }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Server sends `n` as a string ("1", "2", ...) — accept both.
+        if let i = try? c.decode(Int.self, forKey: .n) {
+            n = i
+        } else {
+            let s = try c.decode(String.self, forKey: .n)
+            n = Int(s) ?? 0
+        }
+        text = try c.decode(String.self, forKey: .text)
+    }
+
+    init(n: Int, text: String) { self.n = n; self.text = text }
 }
 
 struct ClaudePayload: Codable {

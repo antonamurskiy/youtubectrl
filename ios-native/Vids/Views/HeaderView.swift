@@ -87,11 +87,11 @@ private struct TabsRow: View {
                         .font(Font.app(10))
                         .padding(.horizontal, 5)
                         .padding(.vertical, 3)
-                        .foregroundStyle(active ? Color.appText : Color.white.opacity(0.45))
+                        .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.45))
                         .background(
                             ZStack {
                                 if active {
-                                    Color.white.opacity(0.22)
+                                    Color.appText.opacity(0.22)
                                         .matchedGeometryEffect(id: "tab.bg", in: ns)
                                 }
                             }
