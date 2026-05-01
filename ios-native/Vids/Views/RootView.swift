@@ -56,7 +56,7 @@ struct RootView: View {
             // iPad / landscape regular: feed and terminal side-by-side
             // (50/50 split). iPhone compact: cross-fade as before.
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen)
-                ? 200
+                ? 175
                 : 0
             if hSize == .regular {
                 HStack(spacing: 0) {
