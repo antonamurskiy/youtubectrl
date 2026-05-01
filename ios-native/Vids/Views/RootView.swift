@@ -188,7 +188,13 @@ struct RootView: View {
         .animation(.easeOut(duration: 0.25), value: terminal.open)
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
-        .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
+        .onChange(of: terminal.open) { _, new in
+            theme.terminalOpen = new
+            // Persistent mount means SwiftTerm keeps first-responder
+            // status across close. Dismiss the soft keyboard explicitly
+            // so closing the panel always tucks it away.
+            if !new { terminal.dismissKeyboard?() }
+        }
         .onChange(of: terminal.activeWindow?.name ?? "") { _, _ in
             // When the active tmux window changes, paint the body bg
             // with that window's color so the whole app shifts to
