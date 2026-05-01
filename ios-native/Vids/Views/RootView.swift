@@ -123,24 +123,17 @@ struct RootView: View {
             //   ~72 clearance) — matches React's body.keyboard-open rule
             // - NP bar visible: ~250 (bar with three rows + safe area)
             // - otherwise: 24 from bottom
-            // Position FABs in the bottom-right via Spacer pseudo-frame
-            // but disable hit-testing on the wrapper so the empty
-            // space (Spacers) doesn't intercept feed scroll on the
-            // right side. Re-enable on the FABStack itself.
-            VStack {
-                Spacer()
-                HStack {
-                    Spacer()
-                    FABStack()
-                        .padding(.trailing, 16)
-                        .padding(.bottom, fabBottomPadding)
-                        .transaction { $0.animation = nil }
-                        .allowsHitTesting(true)
-                }
-            }
-            .ignoresSafeArea(.keyboard, edges: .bottom)
-            .allowsHitTesting(false)
-            .zIndex(20)
+            // FAB stack — pushed to the right via .frame(maxWidth: .infinity,
+            // alignment: .trailing). The frame's transparent area
+            // doesn't capture hits because nothing's painted there;
+            // only the FAB buttons themselves are hit-testable.
+            FABStack()
+                .padding(.trailing, 16)
+                .padding(.bottom, fabBottomPadding)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .transaction { $0.animation = nil }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
+                .zIndex(20)
 
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)

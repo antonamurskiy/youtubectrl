@@ -32,6 +32,7 @@ final class WSClient {
         c.host = parts.first
         if parts.count > 1, let port = Int(parts[1]) { c.port = port }
         c.path = "/ws/sync"
+        c.queryItems = [URLQueryItem(name: "proto", value: "2")]
         guard let url = c.url else { return }
         task = session.webSocketTask(with: url)
         task?.resume()

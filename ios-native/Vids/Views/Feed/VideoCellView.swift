@@ -31,6 +31,18 @@ struct VideoCellView: View {
                         .foregroundStyle(.white)
                         .padding(8)
                 }
+                // Watched-progress strip at the bottom of the thumbnail.
+                if let pos = video.savedPosition, let dur = video.savedDuration, dur > 0, pos > 0 {
+                    GeometryReader { geo in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(.black.opacity(0.5)).frame(height: 3)
+                            Rectangle().fill(Color(hex: "#cc4040"))
+                                .frame(width: geo.size.width * CGFloat(min(pos / dur, 1)), height: 3)
+                        }
+                        .frame(maxHeight: .infinity, alignment: .bottom)
+                    }
+                    .allowsHitTesting(false)
+                }
             }
             .clipped()
 

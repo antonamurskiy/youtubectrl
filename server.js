@@ -6455,8 +6455,15 @@ wssTerm.on("connection", (ws) => {
   }
 });
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws, req) => {
   console.log("  Phone sync: WebSocket connected");
+  // proto=2 → delta encoding for playback messages. The full state on
+  // first tick + only changed fields after. Position / serverTs /
+  // absoluteMs are always included since they change every tick.
+  // Default proto=1 (full state) keeps the React client unchanged.
+  const u = new URL(req.url, "http://x");
+  ws.protoVersion = parseInt(u.searchParams.get("proto") || "1", 10);
+  ws.lastSentPlayback = null;
   startWsSync();
   ws.isAlive = true;
   ws.on("pong", () => { ws.isAlive = true; });
@@ -6775,8 +6782,27 @@ function startWsSync() {
         state.tmuxWindows = tmuxWindows;
         state.tmuxColors = tmuxColors;
       }
-      const msg = JSON.stringify(state);
-      wss.clients.forEach(ws => { if (ws.readyState === WebSocket.OPEN) ws.send(msg); });
+      const fullMsg = JSON.stringify(state);
+      // Always-include keys for proto=2 deltas — they change every
+      // tick or are essential for sync timing.
+      const PINNED = ["type","position","serverTs","absoluteMs","paused","speed","playing"];
+      wss.clients.forEach(ws => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        if (ws.protoVersion !== 2 || ws.lastSentPlayback == null) {
+          ws.send(fullMsg);
+          ws.lastSentPlayback = state;
+          return;
+        }
+        const last = ws.lastSentPlayback;
+        const delta = {};
+        for (const k of Object.keys(state)) {
+          if (PINNED.includes(k) || JSON.stringify(state[k]) !== JSON.stringify(last[k])) {
+            delta[k] = state[k];
+          }
+        }
+        ws.send(JSON.stringify(delta));
+        ws.lastSentPlayback = state;
+      });
     } catch {}
   }, 1000); // 1x per second
 }

@@ -229,19 +229,23 @@ actor ApiClient {
     }
     func setFindmyStealth(_ on: Bool) async throws { try await post("/api/findmy-stealth", body: ["on": on]) }
 
-    struct AudioOutput: Codable, Hashable, Identifiable {
+    struct AudioOutput: Hashable, Identifiable {
         let name: String
         let active: Bool
         var id: String { name }
     }
 
-    struct AudioOutputs: Codable {
-        let outputs: [AudioOutput]
+    private struct AudioOutputsRaw: Codable {
+        let outputs: [String]
+        let current: String?
     }
 
     func audioOutputs() async throws -> [AudioOutput] {
-        let r: AudioOutputs = try await get("/api/audio-outputs")
-        return r.outputs
+        // Server returns { outputs: [name…], current: name } — synthesize
+        // AudioOutput rows by marking the current entry active.
+        let r: AudioOutputsRaw = try await get("/api/audio-outputs")
+        let cur = r.current
+        return r.outputs.map { AudioOutput(name: $0, active: $0 == cur) }
     }
 
     func setAudioOutput(_ name: String) async throws {
