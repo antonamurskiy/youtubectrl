@@ -47,8 +47,11 @@ struct ScrubPreviewOverlay: View {
         let trackWidth = screen.width - scrubInset * 2
         let cx = scrubInset + trackWidth * scrub.pct
 
+        // Match the actual storyboard tile aspect (16:9 default; some
+        // streams use 4:3 or vertical) so the image fills the frame
+        // exactly with no letterbox or crop.
         let tileW: CGFloat = 200
-        let tileH: CGFloat = tileW * 9.0 / 16.0  // exact 16:9 — no letterbox
+        let tileH: CGFloat = tileW / max(0.5, scrub.aspect)
         let lo: CGFloat = 8
         let hi: CGFloat = screen.width - tileW - 8
         let tileX: CGFloat = max(lo, min(hi, cx - tileW / 2))
@@ -59,13 +62,9 @@ struct ScrubPreviewOverlay: View {
             ZStack {
                 Color.black
                 if let img = scrub.image {
-                    // .scaledToFit fits the image inside the frame
-                    // without overflowing — .scaledToFill was making
-                    // the image render larger than the 200×112 box
-                    // because the source storyboard crop is at full
-                    // ytimg resolution (e.g. 320×180) and scaledToFill
-                    // sizes by the longer side.
-                    Image(uiImage: img).resizable().scaledToFit()
+                    // tileH derives from scrub.aspect, matching the
+                    // source — scaledToFill edge-aligns without crop.
+                    Image(uiImage: img).resizable().scaledToFill()
                 }
             }
             .frame(width: tileW, height: tileH)

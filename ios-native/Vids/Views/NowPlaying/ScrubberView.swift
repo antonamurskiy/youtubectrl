@@ -20,16 +20,13 @@ struct ScrubberView: UIViewRepresentable {
         // ScrubberUIView publishes drag state, RootView renders the
         // floating tile (Apple TV / AVKit pattern; no glass-clip
         // issues since the preview lives outside the bar's view tree).
-        v.onScrub = { [weak services] active, pct, image, label in
-            guard let scrub = services?.scrub else {
-                NSLog("[ScrubberView] onScrub but services is nil")
-                return
-            }
-            NSLog("[ScrubberView] onScrub active=\(active) pct=\(pct) hasImage=\(image != nil) label=\(label)")
+        v.onScrub = { [weak services] active, pct, image, label, aspect in
+            guard let scrub = services?.scrub else { return }
             scrub.active = active
             scrub.pct = pct
             scrub.image = image
             scrub.label = label
+            scrub.aspect = aspect
         }
         return v
     }
@@ -59,7 +56,7 @@ final class ScrubberUIView: UIView {
     var onSeek: ((Double) -> Void)?
     /// Publishes scrub state to the SwiftUI overlay (Apple TV pattern).
     /// (active, pct, tileImage, label)
-    var onScrub: ((Bool, Double, UIImage?, String) -> Void)?
+    var onScrub: ((Bool, Double, UIImage?, String, Double) -> Void)?
 
     func setStoryboard(_ sb: ApiClient.Storyboard?) {
         // Reset cache when switching storyboards.
@@ -193,21 +190,23 @@ final class ScrubberUIView: UIView {
     /// hand off to the SwiftUI overlay via `onScrub`.
     private func publishScrub(active: Bool) {
         guard active else {
-            onScrub?(false, dragPct, nil, "")
+            onScrub?(false, dragPct, nil, "", 16.0/9.0)
             return
         }
         guard let pb = playback, pb.duration > 0 else {
-            onScrub?(true, dragPct, nil, "")
+            onScrub?(true, dragPct, nil, "", 16.0/9.0)
             return
         }
         let target = pb.duration * dragPct
         let label = pb.isLive ? "-\(formatTime(pb.duration - target))" : formatTime(target)
         var image: UIImage? = nil
+        var aspect: Double = 16.0/9.0
         if let sb = storyboard, let urlTpl = sb.url,
            let cols = sb.cols, cols > 0,
            let rows = sb.rows, rows > 0,
            let interval = sb.interval, interval > 0,
-           let tileW = sb.width, let tileH = sb.height {
+           let tileW = sb.width, let tileH = sb.height, tileH > 0 {
+            aspect = Double(tileW) / Double(tileH)
             let frameIndex = Int(target / interval)
             let perPage = cols * rows
             let pageIndex = frameIndex / perPage
@@ -220,7 +219,7 @@ final class ScrubberUIView: UIView {
                 fetchPage(template: urlTpl, page: pageIndex)
             }
         }
-        onScrub?(true, dragPct, image, label)
+        onScrub?(true, dragPct, image, label, aspect)
     }
 
     private func cropTile(_ image: UIImage, col: Int, row: Int, tileW: Int, tileH: Int) -> UIImage? {
