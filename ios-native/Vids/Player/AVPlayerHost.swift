@@ -59,6 +59,7 @@ final class AVPlayerHost: NSObject {
 
     var isMuted: Bool = false
     var volumeInterceptEnabled: Bool = false
+    var pipActive: Bool = false
     var onVolumeButton: ((Int) -> Void)?
     var onRemotePlayPause: (() -> Void)?
     var onRemoteSkip: ((Double) -> Void)?
@@ -235,6 +236,7 @@ final class AVPlayerHost: NSObject {
         guard pip == nil, AVPictureInPictureController.isPictureInPictureSupported() else { return }
         let p = AVPictureInPictureController(playerLayer: playerLayer)
         p?.canStartPictureInPictureAutomaticallyFromInline = false
+        p?.delegate = self
         pip = p
     }
 
@@ -384,6 +386,10 @@ final class AVPlayerHost: NSObject {
         lastVolume = new
     }
 
+    fileprivate func setPipActive(_ active: Bool) {
+        pipActive = active
+    }
+
     private func restoreVolume(to value: Float) {
         let mpv = MPVolumeView(frame: CGRect(x: -1000, y: -1000, width: 1, height: 1))
         UIApplication.shared.connectedScenes
@@ -399,5 +405,14 @@ final class AVPlayerHost: NSObject {
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { mpv.removeFromSuperview() }
         }
+    }
+}
+
+extension AVPlayerHost: AVPictureInPictureControllerDelegate {
+    func pictureInPictureControllerDidStartPictureInPicture(_ controller: AVPictureInPictureController) {
+        Task { @MainActor in self.setPipActive(true) }
+    }
+    func pictureInPictureControllerDidStopPictureInPicture(_ controller: AVPictureInPictureController) {
+        Task { @MainActor in self.setPipActive(false) }
     }
 }

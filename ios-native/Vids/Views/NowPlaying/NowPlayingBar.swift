@@ -6,7 +6,6 @@ struct NowPlayingBar: View {
     @Environment(ThemeStore.self) private var theme
     @Environment(PhoneModeStore.self) private var phoneMode
     @State private var speedPressed: Bool = false
-    @State private var pipActive: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -155,13 +154,13 @@ struct NowPlayingBar: View {
     }
 
     private var pipButton: some View {
-        Button(action: {
-            if pipActive { services.avHost.stopPip() } else { services.avHost.startPip() }
-            pipActive.toggle()
+        let active = services.avHost.pipActive
+        return Button(action: {
+            if active { services.avHost.stopPip() } else { services.avHost.startPip() }
         }) {
-            Image(systemName: pipActive ? "pip.exit" : "pip.enter")
+            Image(systemName: active ? "pip.exit" : "pip.enter")
                 .font(.system(size: 14))
-                .foregroundStyle(pipActive ? Color(hex: "#8ec07c") : .white.opacity(0.6))
+                .foregroundStyle(active ? Color(hex: "#8ec07c") : .white.opacity(0.6))
         }
         .buttonStyle(.plain)
     }

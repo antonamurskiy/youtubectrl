@@ -26,6 +26,7 @@
 		8BF0E6C212EC9797757DEB25 /* AVPlayerHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */; };
 		8E92BC457ECE29753485A29E /* ScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7A60F533EA88740A8701DF /* ScrubberView.swift */; };
 		92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01B92142190D3825B2F82AE /* FeedListView.swift */; };
+		97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */; };
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
 		B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */; };
 		BBF6D487F7176B512230EC73 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 346B82D17260E7978B885929 /* TerminalStore.swift */; };
@@ -47,6 +48,7 @@
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
+		4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardObserver.swift; sourceTree = "<group>"; };
 		55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSyncEngine.swift; sourceTree = "<group>"; };
 		581FDCC94E632C0CBFD956B7 /* UIStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UIStore.swift; sourceTree = "<group>"; };
 		5A0C52D6101F3F7D06A77584 /* ThumbnailCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCache.swift; sourceTree = "<group>"; };
@@ -181,6 +183,7 @@
 			isa = PBXGroup;
 			children = (
 				65572894BBBB3AB5F3216CEA /* AppDelegate.swift */,
+				4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */,
 				E521EA57B7C296650D408D49 /* ServiceContainer.swift */,
 				8E7DB4C9E774298C79886938 /* VidsApp.swift */,
 			);
@@ -295,6 +298,7 @@
 				92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */,
 				C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */,
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
+				97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */,
 				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
 				452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */,
 				E623387647B43F0B8FC3BCC6 /* PhoneModeStore.swift in Sources */,

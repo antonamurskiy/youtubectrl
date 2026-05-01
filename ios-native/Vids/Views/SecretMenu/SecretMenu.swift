@@ -117,6 +117,7 @@ struct SecretMenu: View {
     @ViewBuilder
     private var miscSection: some View {
         VStack(spacing: 0) {
+            findMyRow
             HStack {
                 Image(systemName: "sun.max")
                 Text("Brightness").font(.system(size: 13))
@@ -183,5 +184,46 @@ struct SecretMenu: View {
     @MainActor
     private func loadOutputs() async {
         outputs = (try? await services.api.audioOutputs()) ?? []
+    }
+
+    @State private var friend: ApiClient.FindMyFriend? = nil
+    @State private var friendLoading: Bool = false
+
+    private var findMyRow: some View {
+        HStack {
+            Image(systemName: "location.fill")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Maria")
+                    .font(.system(size: 13))
+                if friendLoading {
+                    Text("locating…").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
+                } else if let f = friend, let cross = f.cross, let parallel = f.parallel {
+                    Text("\(parallel) & \(cross)")
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.55))
+                    if let t = f.timeFragment {
+                        Text(t).font(.system(size: 9, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
+                    }
+                } else {
+                    Text("tap to refresh").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
+                }
+            }
+            Spacer()
+        }
+        .foregroundStyle(.white.opacity(0.85))
+        .padding(.horizontal, 24)
+        .padding(.vertical, 10)
+        .background(Color(hex: "#0a0a0a"))
+        .onTapGesture {
+            Task { await refreshFriend(force: true) }
+        }
+        .task { await refreshFriend(force: false) }
+    }
+
+    @MainActor
+    private func refreshFriend(force: Bool) async {
+        friendLoading = true
+        defer { friendLoading = false }
+        friend = try? await services.api.findmyFriend(force: force)
     }
 }

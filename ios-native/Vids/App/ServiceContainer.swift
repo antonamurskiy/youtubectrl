@@ -16,6 +16,7 @@ final class ServiceContainer {
     let avHost: AVPlayerHost
     let liveSync: LiveSyncEngine
     let phoneMode: PhoneModeStore
+    let keyboard: KeyboardObserver
 
     init() {
         self.api = ApiClient(host: "yuzu.local:3000")
@@ -28,6 +29,7 @@ final class ServiceContainer {
         self.avHost = AVPlayerHost()
         self.liveSync = LiveSyncEngine()
         self.phoneMode = PhoneModeStore()
+        self.keyboard = KeyboardObserver()
         self.ws = WSClient(host: "yuzu.local:3000")
         self.ws.onMessage = { [weak self] msg in
             guard let self else { return }
@@ -65,6 +67,7 @@ final class ServiceContainer {
 
     func start() async {
         PushHandler.shared.services = self
+        await MainActor.run { keyboard.start(terminal: terminal) }
         ws.connect()
         await feed.loadInitial(api: api)
     }
