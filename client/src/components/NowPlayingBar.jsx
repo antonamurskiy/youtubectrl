@@ -62,7 +62,10 @@ function AudioOutputButton() {
   const [current, setCurrent] = useState('')
   const [open, setOpen] = useState(false)
   const [btDevices, setBtDevices] = useState([])
-  const [showBt, setShowBt] = useState(false)
+  // Both subsections default to open — switching outputs / connecting
+  // headphones is the whole point of opening this menu.
+  const [showBt, setShowBt] = useState(true)
+  const [showOutputs, setShowOutputs] = useState(true)
   const [volume, setVolumeState] = useState(50)
   const [muted, setMuted] = useState(false)
   const volInFlight = useRef(false)
@@ -198,21 +201,43 @@ function AudioOutputButton() {
             minWidth: 240, maxWidth: 360, maxHeight: '60vh', overflowY: 'auto',
             userSelect: 'none', WebkitUserSelect: 'none', WebkitTouchCallout: 'none',
           }}>
-            {outputs.length === 0 && (
-              <div className="secret-menu-item" style={{ color: 'var(--text-dim)' }}>No outputs</div>
+            {/* Audio outputs section — collapsible header that mirrors
+                the Bluetooth section below. Defaults open. */}
+            <button
+              className="secret-menu-item"
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              onClick={() => { hapticTick(); setShowOutputs(v => !v) }}
+            >
+              <AudioOutputIcon name={current} />
+              <span style={{ flex: 1 }}>Output</span>
+              <span style={{ color: 'var(--text-dim)' }}>{showOutputs ? '▾' : '▸'}</span>
+            </button>
+            {showOutputs && outputs.length === 0 && (
+              <div className="secret-menu-item sub" style={{ color: 'var(--text-dim)', paddingLeft: 24 }}>No outputs</div>
             )}
-            {outputs.map(name => (
-              <button
-                key={name}
-                className="secret-menu-item"
-                style={{ display: 'flex', alignItems: 'center', gap: 8, color: name === current ? 'var(--accent)' : 'var(--text)' }}
-                onClick={() => pick(name)}
-              >
-                <AudioOutputIcon name={name} />
-                <span style={{ flex: 1 }}>{name}</span>
-                {name === current && <span>●</span>}
-              </button>
-            ))}
+            {showOutputs && outputs.map(name => {
+              const active = name === current
+              return (
+                <button
+                  key={name}
+                  className="secret-menu-item sub"
+                  style={{
+                    paddingLeft: 24,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    color: active ? 'var(--green)' : 'var(--text)',
+                    background: active ? 'rgba(126,142,80,0.18)' : undefined,
+                    borderLeft: active ? '3px solid var(--green)' : '3px solid transparent',
+                  }}
+                  onClick={() => pick(name)}
+                >
+                  <AudioOutputIcon name={name} />
+                  <span style={{ flex: 1 }}>{name}</span>
+                  {active && <span style={{ color: 'var(--green)' }}>●</span>}
+                </button>
+              )
+            })}
             {/* Bluetooth section — same connect/disconnect pattern as the
                 secret menu. Collapsed by default. */}
             <button
@@ -240,8 +265,16 @@ function AudioOutputButton() {
               return (
                 <button
                   key={d.address}
-                  className="secret-menu-item"
-                  style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                  className="secret-menu-item sub"
+                  style={{
+                    paddingLeft: 24,
+                    color: d.connected ? 'var(--blue)' : 'var(--text)',
+                    background: d.connected ? 'rgba(108,153,187,0.18)' : undefined,
+                    borderLeft: d.connected ? '3px solid var(--blue)' : '3px solid transparent',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                  }}
                   onClick={() => toggleBtDevice(d)}
                 >
                   <span>{d.connected ? '● ' : '  '}{d.name}</span>
@@ -440,12 +473,27 @@ export default function NowPlayingBar({ send, frontApp, refreshStatus, exiting }
   // Only applied while the terminal panel is open — the tint is a
   // terminal-context affordance, not a global theme override.
   const terminalOpen = useSyncStore(s => s.terminalOpen)
+  const activeTab = useUIStore(s => s.activeTab)
   const activeTmuxColor = usePlaybackStore(s => {
     const list = Array.isArray(s.tmuxWindows) ? s.tmuxWindows : null
     const active = list?.find(w => w.active)
-    return active && s.tmuxColors ? s.tmuxColors[active.name] : null
+    if (!active) return null
+    // Live preview override (rename modal) takes precedence over
+    // server-broadcast tmuxColors so swatch picks paint the bar
+    // immediately, before commit.
+    if (s.tmuxColorPreview && active.name in s.tmuxColorPreview) {
+      return s.tmuxColorPreview[active.name] || null
+    }
+    return s.tmuxColors?.[active.name] || null
   })
-  const tmuxTint = terminalOpen ? activeTmuxColor : null
+  // Per-tab tint (matches App.jsx TAB_TINTS) so the now-playing bar
+  // recolors when the user switches feed tabs (history → green) even
+  // when the terminal is closed.
+  const TAB_TINTS = { history: '#1f3d24', live: '#a13a36', ru: '#4f8a5c' }
+  const tabTint = TAB_TINTS[activeTab] || null
+  // Terminal tmux tint takes precedence; otherwise fall back to the
+  // active tab tint.
+  const tmuxTint = terminalOpen ? activeTmuxColor : tabTint
   const phoneOpen = useSyncStore(s => s.phoneOpen)
   const phoneOnlyUrl = useSyncStore(s => s.phoneOnlyUrl)
   const setPhoneOpen = useSyncStore(s => s.setPhoneOpen)

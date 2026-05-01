@@ -45,7 +45,7 @@ function mixHex(color, base, mix) {
   return '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
 }
 
-export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmuxColors, visible }) {
+export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmuxColors, tmuxColorPreview, visible }) {
   const termRef = useRef(null)
   const wsRef = useRef(null)
   const xtermRef = useRef(null)
@@ -68,7 +68,16 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
   // Active window's tint colour, looked up by name in the color map.
   // null/undefined = no tint (default theme bg).
   const activeWindow = Array.isArray(tmuxWindows) ? tmuxWindows.find(w => w.active) : null
-  const activeColor = activeWindow && tmuxColors ? tmuxColors[activeWindow.name] : null
+  // Live preview override (set by the rename modal) takes precedence
+  // over the server-broadcast tmuxColors so swatch picks animate the
+  // terminal pane immediately, before the user commits.
+  const activeColor = (() => {
+    if (!activeWindow) return null
+    if (tmuxColorPreview && activeWindow.name in tmuxColorPreview) {
+      return tmuxColorPreview[activeWindow.name] || null
+    }
+    return tmuxColors?.[activeWindow.name] || null
+  })()
   const activeColorRef = useRef(activeColor)
   useEffect(() => { activeColorRef.current = activeColor }, [activeColor])
 
@@ -515,10 +524,16 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     // for body + html. Just set the bg here — the rule fires the fade.
     html.style.background = tintBg
     body.style.background = tintBg
+    // Sync the --gutter-bg CSS var so the fixed .safe-area-cover
+    // band follows the terminal tint (was permanently var(--bg) gray).
+    const prevGutter = html.style.getPropertyValue('--gutter-bg')
+    html.style.setProperty('--gutter-bg', tintBg)
     NativePlayer.setSafeAreaBackground?.(tintBg)?.catch?.(() => {})
     return () => {
       html.style.background = prevHtml
       body.style.background = prevBody
+      if (prevGutter) html.style.setProperty('--gutter-bg', prevGutter)
+      else html.style.removeProperty('--gutter-bg')
       NativePlayer.setSafeAreaBackground?.('')?.catch?.(() => {})
     }
   }, [visible, activeColor])

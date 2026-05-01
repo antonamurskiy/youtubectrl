@@ -61,36 +61,43 @@ function brightenHex(hex, mix) {
 
 const TMUX_COLOR_SWATCHES = [
   { value: '', label: 'clear' },
-  // Reds
+  // ── Dim row ────────────────────────────────────────────────
   { value: '#5a1f1c', label: 'red' },
   { value: '#3a1414', label: 'maroon' },
   { value: '#5a2828', label: 'brick' },
-  // Oranges / browns
   { value: '#5e3414', label: 'orange' },
   { value: '#4a2810', label: 'rust' },
   { value: '#3d2a1c', label: 'brown' },
-  // Yellows / olives
   { value: '#5c4416', label: 'amber' },
   { value: '#4a4416', label: 'olive' },
   { value: '#3f4416', label: 'green' },
   { value: '#2c3812', label: 'moss' },
-  // Greens
   { value: '#1f3d24', label: 'forest' },
   { value: '#2e4a3a', label: 'teal' },
-  // Cyans / blues
   { value: '#1c4548', label: 'cyan' },
   { value: '#1f3d49', label: 'blue' },
   { value: '#1c2c4a', label: 'navy' },
   { value: '#2c2e4a', label: 'indigo' },
-  // Purples / pinks
   { value: '#3a2647', label: 'violet' },
   { value: '#4a2e44', label: 'purple' },
   { value: '#4a2438', label: 'plum' },
   { value: '#4a2030', label: 'wine' },
-  // Neutrals
   { value: '#2a2a2a', label: 'graphite' },
   { value: '#3a342e', label: 'taupe' },
   { value: '#2e3438', label: 'slate' },
+  // ── Brighter (gruvbox medium-ish, more saturated but not neon) ──
+  { value: '#a13a36', label: 'red+' },
+  { value: '#b85e22', label: 'orange+' },
+  { value: '#c58a25', label: 'amber+' },
+  { value: '#7a8a30', label: 'olive+' },
+  { value: '#4f8a5c', label: 'green+' },
+  { value: '#3f8a8c', label: 'teal+' },
+  { value: '#3f7099', label: 'blue+' },
+  { value: '#5a5fa3', label: 'indigo+' },
+  { value: '#8a5a96', label: 'purple+' },
+  { value: '#a05680', label: 'plum+' },
+  { value: '#7a5a4a', label: 'mocha+' },
+  { value: '#6a6a6a', label: 'graphite+' },
 ]
 
 function TmuxTabButton({ window: w, color }) {
@@ -103,24 +110,57 @@ function TmuxTabButton({ window: w, color }) {
   // so the new name immediately picks up the chosen tint.
   const [pendingColor, setPendingColor] = useState(color || '')
 
+  // Snapshot of the original color taken when editing begins. Used
+  // to revert the optimistic preview if the user cancels.
+  const originalColorRef = useRef(color || '')
+
+  // Apply a swatch to the live store immediately so the whole app
+  // (terminal, body, gutter, tabs, FAB, now-playing) previews the
+  // pick without requiring the user to commit first. Writes to a
+  // dedicated `tmuxColorPreview` map (read first, fallback to
+  // tmuxColors) so the 1Hz server WS broadcast doesn't overwrite
+  // the optimistic value mid-preview. Cleared on commit / cancel.
+  const setLivePreview = (hex) => {
+    const cur = usePlaybackStore.getState().tmuxColorPreview || {}
+    const next = { ...cur }
+    if (hex) next[w.name] = hex
+    else next[w.name] = ''  // explicit clear (distinct from absent)
+    usePlaybackStore.getState().update({ tmuxColorPreview: next })
+  }
+  const clearLivePreview = () => {
+    const cur = usePlaybackStore.getState().tmuxColorPreview || {}
+    if (!(w.name in cur)) return
+    const next = { ...cur }
+    delete next[w.name]
+    usePlaybackStore.getState().update({ tmuxColorPreview: next })
+  }
+
   const commit = () => {
     const next = value.trim()
     const renamed = next && next !== w.name
-    const colorChanged = (pendingColor || '') !== (color || '')
+    const colorChanged = (pendingColor || '') !== (originalColorRef.current || '')
     if (renamed) {
       fetch('/api/tmux-rename', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ index: w.index, name: next }) }).catch(() => {})
     }
     if (colorChanged || renamed) {
-      // Save under whichever name the window will end up with.
       const targetName = renamed ? next : w.name
       fetch('/api/tmux-color', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: targetName, color: pendingColor || null }) }).catch(() => {})
     }
+    // Drop the preview override; once the server's broadcast lands
+    // tmuxColors will hold the new value.
+    clearLivePreview()
     setEditing(false)
   }
-  const cancel = () => { setValue(w.name); setPendingColor(color || ''); setEditing(false) }
+  const cancel = () => {
+    clearLivePreview()
+    setValue(w.name)
+    setPendingColor(originalColorRef.current || '')
+    setEditing(false)
+  }
 
   const enterEdit = () => {
     hapticTick()
+    originalColorRef.current = color || ''
     setValue(w.name)
     setPendingColor(color || '')
     flushSync(() => setEditing(true))
@@ -219,7 +259,12 @@ function TmuxTabButton({ window: w, color }) {
                   style={{ background: s.value || 'transparent' }}
                   aria-label={s.label}
                   onMouseDown={(e) => e.preventDefault()}
-                  onClick={(e) => { e.preventDefault(); e.stopPropagation(); hapticTick(); setPendingColor(s.value); inputRef.current?.focus() }}
+                  onClick={(e) => {
+                    e.preventDefault(); e.stopPropagation(); hapticTick()
+                    setPendingColor(s.value)
+                    setLivePreview(s.value)
+                    inputRef.current?.focus()
+                  }}
                 >
                   {s.value ? '' : '×'}
                 </button>
@@ -292,7 +337,7 @@ function App() {
       refreshing: s.refreshing,
     }))
   )
-  const { playing, rawClaudeState, claudeOptions, claudeQuestion, tmuxWindows, tmuxColors } = usePlaybackStore(
+  const { playing, rawClaudeState, claudeOptions, claudeQuestion, tmuxWindows, tmuxColors, tmuxColorPreview } = usePlaybackStore(
     useShallow(s => ({
       playing: s.playing,
       rawClaudeState: s.claudeState,
@@ -300,15 +345,25 @@ function App() {
       claudeQuestion: s.claudeQuestion,
       tmuxWindows: s.tmuxWindows,
       tmuxColors: s.tmuxColors,
+      tmuxColorPreview: s.tmuxColorPreview,
     }))
   )
+  // Resolve a window's effective color: live preview override first
+  // (set by the rename modal so swatch taps animate the whole UI
+  // before commit), then the server-broadcast tmuxColors map.
+  const resolveColor = (name) => {
+    if (tmuxColorPreview && name in tmuxColorPreview) {
+      return tmuxColorPreview[name] || null
+    }
+    return tmuxColors?.[name] || null
+  }
   // Active tmux tint for theming the FAB buttons + tab marker — only
   // while the terminal panel is open (the tint is a terminal-context
   // affordance, see NowPlayingBar's same rule).
   const activeTmuxColor = (() => {
     const list = Array.isArray(tmuxWindows) ? tmuxWindows : null
     const active = list?.find(w => w.active)
-    return active && tmuxColors ? tmuxColors[active.name] : null
+    return active ? resolveColor(active.name) : null
   })()
   const { connected, phoneOpen, terminalOpen, setTerminalOpen } = useSyncStore(
     useShallow(s => ({
@@ -396,8 +451,54 @@ function App() {
     setTimeout(() => fetch('/api/mac-status').then(r => r.json()).then(setMacStatus).catch(() => {}), 500)
   }, [])
 
-  const tabs = ['rec', 'subs', 'live', 'ru', 'history']
+  const tabs = ['rec', 'history', 'subs', 'ru', 'live']
   const tabLabels = { rec: 'Rec', subs: 'Subs', live: 'Live', ru: 'Ru', history: 'Hist' }
+  // Per-tab tint applied to body / html / safe-area gutter while on
+  // that tab. Same darken pipeline as the tmux window color picker.
+  // Picked the first-tmux-panel forest green for History so it
+  // visually echoes the editor pane that's most often what's
+  // playing.
+  const TAB_TINTS = { history: '#1f3d24', live: '#a13a36', ru: '#4f8a5c' }
+  const activeTabTint = TAB_TINTS[activeTab] || null
+
+  // Apply per-tab tint to body/html + native safe-area. NO cleanup
+  // function — when terminal opens its own effect captures the
+  // current bg as prevBody and restores it on close. A cleanup here
+  // would race Terminal's effect on transition and leave the page
+  // gray. Effect is idempotent: just sets bg to the right value
+  // based on (terminalOpen, activeTabTint).
+  useEffect(() => {
+    if (terminalOpen) return  // Terminal effect owns the theme while open
+    const html = document.documentElement
+    const body = document.body
+    const baseBg = getComputedStyle(body).getPropertyValue('--bg').trim() || '#282828'
+    const tintBg = activeTabTint ? darkenHex(activeTabTint) : baseBg
+    html.style.background = tintBg
+    body.style.background = tintBg
+    // The fixed .safe-area-cover reads --gutter-bg; sync it so the
+    // Dynamic Island band follows the active tint instead of being
+    // permanently var(--bg) gray. Same for --header-bg on .header
+    // (the tabs strip).
+    html.style.setProperty('--gutter-bg', tintBg)
+    html.style.setProperty('--header-bg', tintBg)
+    // Active-tab pill highlight: a slightly LIGHTER variant of the
+    // tint so it stands out against the header bg. Falls back to
+    // --surface gray when no tint is active.
+    if (activeTabTint) {
+      // Re-use darkenHex but apply an inverse-ish "lighten" by
+      // mixing toward white at ~25%.
+      const c = activeTabTint.replace('#', '')
+      const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+      const lr = Math.min(255, Math.round(parseInt(h.slice(0, 2), 16) * 0.85 + 255 * 0.15))
+      const lg = Math.min(255, Math.round(parseInt(h.slice(2, 4), 16) * 0.85 + 255 * 0.15))
+      const lb = Math.min(255, Math.round(parseInt(h.slice(4, 6), 16) * 0.85 + 255 * 0.15))
+      const lighter = '#' + [lr, lg, lb].map(v => v.toString(16).padStart(2, '0')).join('')
+      html.style.setProperty('--tab-active-bg', lighter)
+    } else {
+      html.style.removeProperty('--tab-active-bg')
+    }
+    NativePlayer.setSafeAreaBackground?.(tintBg)?.catch?.(() => {})
+  }, [activeTabTint, terminalOpen])
 
   // Pull-to-refresh: pull down from top to refresh the current tab
   const doRefresh = useCallback(() => {
@@ -416,8 +517,71 @@ function App() {
     indicatorEl: useCallback(() => ptrIndicatorRef.current, []),
   })
 
+  // Horizontal feed swipe: drag left → next tab, drag right → prev.
+  // Same heuristic as the tmux pane swipe in Terminal.jsx (≥80px
+  // horizontal travel, dominated >1.5x vs vertical, under 500ms).
+  // Skips channel/search/filtered "side" tabs since those don't
+  // belong in the carousel ordering.
+  const feedSwipeRef = useRef(null)
+  const onFeedTouchStart = (e) => {
+    if (terminalOpen || phoneOpen) return
+    if (e.touches.length !== 1) { feedSwipeRef.current = null; return }
+    const t = e.touches[0]
+    feedSwipeRef.current = { x: t.clientX, y: t.clientY, at: Date.now(), locked: false }
+  }
+  const onFeedTouchEnd = (e) => {
+    const start = feedSwipeRef.current
+    feedSwipeRef.current = null
+    if (!start) return
+    const t = e.changedTouches[0]
+    if (!t) return
+    const dx = t.clientX - start.x
+    const dy = t.clientY - start.y
+    const dt = Date.now() - start.at
+    if (dt > 500) return
+    if (Math.abs(dx) < 80) return
+    if (Math.abs(dx) < Math.abs(dy) * 1.5) return
+    const idx = tabs.indexOf(activeTab)
+    if (idx < 0) return  // channel / search / filtered → no carousel
+    const next = tabs[(idx + (dx < 0 ? 1 : -1) + tabs.length) % tabs.length]
+    if (next && next !== activeTab) {
+      hapticTick()
+      setTab(next)
+    }
+  }
+  // Native non-passive touchmove on the feed body so once a gesture
+  // commits horizontal we can preventDefault and stop the page from
+  // scrolling vertically alongside the swipe. React's synthetic
+  // onTouchMove is passive — preventDefault there is a no-op.
+  useEffect(() => {
+    const el = ptrBodyRef.current
+    if (!el) return
+    const onMove = (e) => {
+      const start = feedSwipeRef.current
+      if (!start) return
+      if (!e.touches || e.touches.length !== 1) return
+      const t = e.touches[0]
+      const dx = t.clientX - start.x
+      const dy = t.clientY - start.y
+      // Lock direction once the touch travels enough: if the user
+      // committed to horizontal (dx ≥ 16 AND dx > dy*1.2), prevent
+      // vertical scroll for the rest of the gesture. If they
+      // committed to vertical, leave us alone.
+      if (!start.locked) {
+        const adx = Math.abs(dx)
+        const ady = Math.abs(dy)
+        if (adx < 16 && ady < 16) return
+        start.locked = adx > ady * 1.2 ? 'h' : 'v'
+      }
+      if (start.locked === 'h' && e.cancelable) e.preventDefault()
+    }
+    el.addEventListener('touchmove', onMove, { passive: false })
+    return () => el.removeEventListener('touchmove', onMove)
+  }, [terminalOpen, phoneOpen])
+
   return (
     <>
+      <div className="safe-area-cover" aria-hidden="true" />
       {phoneOpen && (
         <Suspense fallback={null}>
           <PhonePlayer send={send} />
@@ -452,6 +616,9 @@ function App() {
       </div>
       <div
         ref={ptrBodyRef}
+        onTouchStart={onFeedTouchStart}
+        onTouchEnd={onFeedTouchEnd}
+        onTouchCancel={() => { feedSwipeRef.current = null }}
         style={{
           ...(terminalOpen ? { display: 'none' } : undefined),
         }}
@@ -505,7 +672,7 @@ function App() {
       {terminalOpen && tmuxWindows && tmuxWindows.length > 1 && (
         <div className="tmux-tabs">
           {tmuxWindows.map(w => (
-            <TmuxTabButton key={w.index} window={w} color={tmuxColors?.[w.name]} />
+            <TmuxTabButton key={w.index} window={w} color={resolveColor(w.name)} />
           ))}
         </div>
       )}
@@ -591,7 +758,7 @@ function App() {
       {terminalEverOpened && (
         <Suspense fallback={null}>
           <div style={{ display: terminalOpen ? '' : 'none' }}>
-            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} visible={terminalOpen} />
+            <Terminal onClose={() => setTerminalOpen(false)} hasNowPlaying={playing} tmuxWindows={tmuxWindows} tmuxColors={tmuxColors} tmuxColorPreview={tmuxColorPreview} visible={terminalOpen} />
           </div>
         </Suspense>
       )}

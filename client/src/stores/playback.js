@@ -26,6 +26,11 @@ export const usePlaybackStore = create((set) => ({
   serverTs: 0,
   tmuxWindows: [],
   tmuxColors: {},
+  // Per-window color overrides used during the rename modal's live
+  // preview — read first, then fall back to tmuxColors. Survives the
+  // 1Hz WS broadcast that would otherwise overwrite the optimistic
+  // tmuxColors update with the server's persisted state.
+  tmuxColorPreview: {},
 
   update: (state) => set(state),
   reset: () => set({

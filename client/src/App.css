@@ -110,9 +110,32 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   top: 0;
   left: 0;
   right: 0;
-  background: var(--bg);
+  /* Driven by --header-bg so the tabs strip follows the active tint
+   * (per-tab green, etc.) instead of staying var(--bg) gray. */
+  background: var(--header-bg, var(--bg));
   border-bottom: 1px solid var(--border);
   z-index: 50;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+/* Solid band of --bg pinned to the top of the screen that always
+ * covers the safe-area / Dynamic Island gutter, regardless of
+ * scroll. Without this, video cards scrolling under the sticky
+ * header peek into the gap above the header (header height ~36px
+ * < safe-area inset ~50px). position:fixed so it doesn't depend
+ * on the sticky header's resolved position. */
+.safe-area-cover {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: env(safe-area-inset-top, 0px);
+  /* Driven by --gutter-bg so the cover follows the active tint
+   * (per-tab green, tmux window color, terminal default). Falls
+   * back to --bg if no tint is active. */
+  background: var(--gutter-bg, var(--bg));
+  z-index: 60;
+  pointer-events: none;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .header-inner {
@@ -167,8 +190,11 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 }
 
 .tab.active {
-  background: var(--surface);
+  /* Driven by --tab-active-bg (set per-tab tint in App.jsx) so the
+   * highlight matches the active theme color. */
+  background: var(--tab-active-bg, var(--surface));
   color: var(--text);
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 /* ── Search ── */
@@ -1770,7 +1796,9 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
 
 /* Centered modal portal for the rename popover. Avoids the position:fixed
  * + iOS soft-keyboard interaction that was clipping the inline strip
- * variant off-screen. */
+ * variant off-screen. Overlay is transparent + pointer-events:none so
+ * the live tint preview behind the card stays visible while the user
+ * cycles swatches; only the card itself catches input. */
 .tmux-edit-overlay {
   position: fixed;
   inset: 0;
@@ -1779,8 +1807,8 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
   align-items: flex-start;
   justify-content: center;
   padding-top: max(env(safe-area-inset-top, 0px), 12vh);
-  background: rgba(0, 0, 0, 0.45);
-  pointer-events: auto;
+  background: transparent;
+  pointer-events: none;
 }
 .tmux-edit-card {
   display: flex;
@@ -1791,6 +1819,7 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
   border: 1px solid var(--border);
   min-width: 240px;
   max-width: 90vw;
+  pointer-events: auto;
 }
 .tmux-edit-card .tmux-tab-input {
   width: 100%;

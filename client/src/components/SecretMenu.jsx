@@ -570,7 +570,10 @@ export default function SecretMenu() {
   const setVolume = (v) => { setVolumeLocal(v); setCachedVolume(v) }
   const [audioOutputs, setAudioOutputs] = useState([])
   const [currentOutput, setCurrentOutput] = useState('')
-  const [showOutputs, setShowOutputs] = useState(false)
+  // Audio output picker defaults to open — same reasoning as the
+  // Bluetooth list in the NowPlayingBar audio menu: this is the
+  // most common reason to open the secret menu.
+  const [showOutputs, setShowOutputs] = useState(true)
   const [muted, setMuted] = useState(false)
   const [btDevices, setBtDevices] = useState([])
   const [showBt, setShowBt] = useState(false)
@@ -750,16 +753,29 @@ export default function SecretMenu() {
           <AudioOutputIcon name={currentOutput} />
           Audio: {currentOutput || '...'}
         </button>
-        {showOutputs && audioOutputs.map(name => (
-          <button
-            key={name}
-            className="secret-menu-item sub"
-            style={{ paddingLeft: 24, color: name === currentOutput ? 'var(--accent)' : 'var(--text)' }}
-            onClick={() => { hapticTick(); switchOutput(name) }}
-          >
-            {name === currentOutput ? '● ' : '  '}{name}
-          </button>
-        ))}
+        {showOutputs && audioOutputs.map(name => {
+          const active = name === currentOutput
+          return (
+            <button
+              key={name}
+              className="secret-menu-item sub"
+              style={{
+                paddingLeft: 24,
+                color: active ? 'var(--green)' : 'var(--text)',
+                background: active ? 'rgba(126,142,80,0.18)' : undefined,
+                borderLeft: active ? '3px solid var(--green)' : '3px solid transparent',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+              }}
+              onClick={() => { hapticTick(); switchOutput(name) }}
+            >
+              <AudioOutputIcon name={name} />
+              <span style={{ flex: 1 }}>{name}</span>
+              {active && <span style={{ color: 'var(--green)' }}>●</span>}
+            </button>
+          )
+        })}
 
         <button className="secret-menu-item" style={ICON_BTN_STYLE} onClick={() => {
           hapticTick()
@@ -784,7 +800,15 @@ export default function SecretMenu() {
             <button
               key={d.address}
               className="secret-menu-item sub"
-              style={{ paddingLeft: 24, color: d.connected ? 'var(--accent)' : 'var(--text)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+              style={{
+                paddingLeft: 24,
+                color: d.connected ? 'var(--blue)' : 'var(--text)',
+                background: d.connected ? 'rgba(108,153,187,0.18)' : undefined,
+                borderLeft: d.connected ? '3px solid var(--blue)' : '3px solid transparent',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
               onClick={() => {
                 hapticThump()
                 const action = d.connected ? 'disconnect' : 'connect'
