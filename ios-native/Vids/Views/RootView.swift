@@ -19,6 +19,7 @@ struct RootView: View {
 
     @State private var searchFocused = false
     @State private var npBarHeight: CGFloat = 0
+    @Environment(\.horizontalSizeClass) private var hSize
 
     var body: some View {
         // Read fonts.generation here so a font load/change triggers a
@@ -52,37 +53,60 @@ struct RootView: View {
                     return .handled
                 }
 
-            // Feed always mounted — preserves scroll position across
-            // terminal toggles. Hidden via opacity (not removal) so
-            // SwiftUI doesn't re-create the UICollectionView.
-            feedView
-                .opacity(terminal.open ? 0 : 1)
-                .allowsHitTesting(!terminal.open)
-
-            // Terminal cross-fades over the feed.
-            if terminal.open {
-                TerminalView()
-                    .transition(.opacity)
+            // iPad / landscape regular: feed and terminal side-by-side
+            // (50/50 split). iPhone compact: cross-fade as before.
+            if hSize == .regular {
+                HStack(spacing: 0) {
+                    feedView
+                        .frame(maxWidth: .infinity)
+                    if terminal.open {
+                        TerminalView()
+                            .frame(maxWidth: .infinity)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+            } else {
+                feedView
+                    .opacity(terminal.open ? 0 : 1)
+                    .allowsHitTesting(!terminal.open)
+                if terminal.open {
+                    TerminalView()
+                        .transition(.opacity)
+                }
             }
 
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
+            // Sized via GeometryReader from the parent so it adapts to
+            // landscape + iPad regular size class.
             if phoneMode.mode == .sync || phoneMode.mode == .phoneOnly {
-                VStack(spacing: 0) {
-                    GeometryReader { geo in
+                GeometryReader { outer in
+                    let availW = outer.size.width
+                    let availH = outer.size.height - 90  // header + safe area
+                    let widthBound = availW * 9 / 16
+                    let heightBound = availH
+                    // Pick whichever 16:9 fit doesn't overflow.
+                    let h: CGFloat = min(widthBound, heightBound)
+                    let w: CGFloat = h * 16 / 9
+                    VStack(spacing: 0) {
                         PhonePlayerView(host: services.avHost)
-                            .frame(width: geo.size.width, height: geo.size.width * 9 / 16)
+                            .frame(width: w, height: h)
+                            .frame(maxWidth: .infinity)
+                        Spacer(minLength: 0)
                     }
-                    .frame(height: UIScreen.main.bounds.width * 9 / 16)
-                    Spacer(minLength: 0)
+                    .padding(.top, 70)
                 }
-                .padding(.top, 70)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .zIndex(5)
             }
 
-            // Now-playing bar — hidden when terminal+keyboard.
+            // Now-playing bar — hidden when terminal+keyboard. On
+            // regular size class (iPad / landscape iPhone Pro Max),
+            // cap its width so it doesn't span the whole screen.
             if playback.playing && !(terminal.open && terminal.keyboardOpen) {
                 NowPlayingBar()
+                    .frame(maxWidth: hSize == .regular ? 600 : .infinity)
+                    .frame(maxWidth: .infinity)
+                    .ignoresSafeArea(.container, edges: .bottom)
                     .background(GeometryReader { geo in
                         Color.clear.preference(key: NPBarHeightKey.self, value: geo.size.height)
                     })

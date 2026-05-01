@@ -17,14 +17,19 @@ struct FABStack: View {
         }
     }
 
+    /// Default FAB chrome — translucent dark grey + cream text.
+    /// Matches React's .fab-* (rgba(40,40,40,0.7) bg, --text-dim).
+    private static let fabBg = Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
+    private static let fabFg = Color(hex: "#a89984")
+
     var body: some View {
         VStack(spacing: 12) {
             Button(action: { terminal.toggle() }) {
                 Image(systemName: "terminal")
                     .font(Font.app(14, weight: .bold))
                     .frame(width: 44, height: 44)
-                    .background((claudeColor ?? Color.white).opacity(claudeColor != nil ? 0.18 : 0.1))
-                    .foregroundStyle(claudeColor ?? Color.white)
+                    .background(claudeColor != nil ? claudeColor!.opacity(0.18) : Self.fabBg)
+                    .foregroundStyle(claudeColor ?? Self.fabFg)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(claudeColor ?? Color.clear, lineWidth: 1.5))
                     .scaleEffect(claudePulse ? 1.08 : 1)
@@ -41,8 +46,8 @@ struct FABStack: View {
                 Image(systemName: "arrow.clockwise")
                     .font(Font.app(14, weight: .bold))
                     .frame(width: 44, height: 44)
-                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : .white.opacity(0.1))
-                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : .white)
+                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : Self.fabBg)
+                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : Self.fabFg)
                     .clipShape(Circle())
                     .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
                     .animation(
