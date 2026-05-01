@@ -120,7 +120,8 @@ final class ScrubberUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard let pb = playback else { return }
-        let h: CGFloat = 5
+        // Apple Music-style: thin track that grows when dragging.
+        let h: CGFloat = dragging ? 8 : 4
         let r = bounds.insetBy(dx: 14, dy: (bounds.height - h) / 2)
         track.path = UIBezierPath(roundedRect: r, cornerRadius: h/2).cgPath
 
@@ -150,7 +151,8 @@ final class ScrubberUIView: UIView {
             chapters.path = nil
         }
 
-        let thumbR: CGFloat = 9
+        // Knob expands when dragging, like Music.app + Now Playing.
+        let thumbR: CGFloat = dragging ? 11 : 7
         let cx = r.minX + r.width * pct
         let cy = r.midY
         thumb.path = UIBezierPath(ovalIn: CGRect(x: cx - thumbR, y: cy - thumbR, width: thumbR * 2, height: thumbR * 2)).cgPath
@@ -158,13 +160,21 @@ final class ScrubberUIView: UIView {
 
     @objc private func onPan(_ g: UIPanGestureRecognizer) {
         let p = g.location(in: self)
-        let r = bounds.insetBy(dx: 12, dy: 0)
+        let r = bounds.insetBy(dx: 14, dy: 0)
         let pct = max(0, min(1, (p.x - r.minX) / r.width))
         switch g.state {
         case .began:
             dragging = true; dragPct = pct
             previewLabel.isHidden = false
             previewView.isHidden = false
+            // Animate the track/thumb growth.
+            UIView.animate(withDuration: 0.18,
+                           delay: 0,
+                           usingSpringWithDamping: 0.85,
+                           initialSpringVelocity: 0,
+                           options: [.beginFromCurrentState]) { [weak self] in
+                self?.layoutIfNeeded()
+            }
         case .changed:
             dragPct = pct
             updatePreviewLabel()
@@ -174,6 +184,13 @@ final class ScrubberUIView: UIView {
             previewLabel.isHidden = true
             previewView.isHidden = true
             onSeek?(pct)
+            UIView.animate(withDuration: 0.22,
+                           delay: 0,
+                           usingSpringWithDamping: 0.85,
+                           initialSpringVelocity: 0,
+                           options: [.beginFromCurrentState]) { [weak self] in
+                self?.layoutIfNeeded()
+            }
         default: break
         }
         setNeedsLayout()
@@ -197,7 +214,7 @@ final class ScrubberUIView: UIView {
         let col = frameOnPage % cols
         let row = frameOnPage / cols
 
-        let r = bounds.insetBy(dx: 12, dy: 0)
+        let r = bounds.insetBy(dx: 14, dy: 0)
         let cx = r.minX + r.width * dragPct
         let prevW: CGFloat = 132, prevH = prevW * CGFloat(tileH) / CGFloat(tileW)
         previewView.frame = CGRect(x: max(8, min(bounds.width - prevW - 8, cx - prevW / 2)),
@@ -245,7 +262,7 @@ final class ScrubberUIView: UIView {
         previewLabel.text = pb.isLive
             ? "-\(formatTime(pb.duration - target))"
             : formatTime(target)
-        let r = bounds.insetBy(dx: 12, dy: 0)
+        let r = bounds.insetBy(dx: 14, dy: 0)
         let cx = r.minX + r.width * dragPct
         let labelW: CGFloat = 60, labelH: CGFloat = 18
         previewLabel.frame = CGRect(x: cx - labelW / 2, y: -labelH - 4, width: labelW, height: labelH)
@@ -259,7 +276,7 @@ final class ScrubberUIView: UIView {
 
     @objc private func onTap(_ g: UITapGestureRecognizer) {
         let p = g.location(in: self)
-        let r = bounds.insetBy(dx: 12, dy: 0)
+        let r = bounds.insetBy(dx: 14, dy: 0)
         let pct = max(0, min(1, (p.x - r.minX) / r.width))
         onSeek?(pct)
     }

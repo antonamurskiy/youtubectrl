@@ -9,56 +9,46 @@ struct VideoCellView: View {
         let _ = fonts.generation
         let _ = fonts.label
         return VStack(alignment: .leading, spacing: 6) {
-            ZStack(alignment: .bottomTrailing) {
-                // Unified frame: black box always sized 16:9 to the
-                // available width. Image draws inside it via .scaledToFill
-                // + clipped — so loaded/unloaded states have IDENTICAL
-                // intrinsic size, otherwise the cell triggers recursive
-                // _updateVisibleCellsNow on iOS 26.3.1.
-                Color.black.opacity(0.6)
-                    .aspectRatio(16.0/9.0, contentMode: .fit)
-                    .frame(maxWidth: .infinity)
-                    .overlay {
-                        if let img = thumbnail {
-                            Image(uiImage: img)
-                                .resizable()
-                                .scaledToFill()
-                        }
+            // Single thumbnail container — overlays attach directly so
+            // the layout doesn't have an unstable ZStack with multiple
+            // .frame(maxWidth:.infinity) siblings. iOS 26 was hitting
+            // recursive _updateVisibleCellsNow when the size cycled
+            // through children.
+            Color.black.opacity(0.6)
+                .aspectRatio(16.0/9.0, contentMode: .fit)
+                .overlay {
+                    if let img = thumbnail {
+                        Image(uiImage: img).resizable().scaledToFill()
                     }
-                    .clipped()
-
-                if let dur = video.duration, !dur.isEmpty {
-                    Text(dur == "LIVE" ? "LIVE" : dur)
-                        .font(Font.app(11, weight: .semibold, design: .monospaced))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.black.opacity(0.75))
-                        .foregroundStyle(Color.appText)
-                        .padding(8)
                 }
-                // Watched-progress strip at the bottom of the thumbnail.
-                // GeometryReader inside UIHostingConfiguration causes
-                // recursive _updateVisibleCellsNow on iOS 26.3.1 (cell
-                // intrinsic size never converges → app crash on refresh).
-                // LinearGradient with hard stops gives the same visual
-                // without the layout feedback loop.
-                if let pos = video.savedPosition, let dur = video.savedDuration, dur > 0, pos > 0 {
-                    let pct = min(max(pos / dur, 0), 1)
-                    LinearGradient(
-                        stops: [
-                            .init(color: Color(hex: "#cc4040"), location: 0),
-                            .init(color: Color(hex: "#cc4040"), location: pct),
-                            .init(color: .black.opacity(0.5),  location: pct),
-                            .init(color: .black.opacity(0.5),  location: 1),
-                        ],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .frame(height: 3)
-                    .frame(maxWidth: .infinity, alignment: .bottom)
-                    .allowsHitTesting(false)
+                .overlay(alignment: .bottomTrailing) {
+                    if let dur = video.duration, !dur.isEmpty {
+                        Text(dur == "LIVE" ? "LIVE" : dur)
+                            .font(Font.app(11, weight: .semibold, design: .monospaced))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(.black.opacity(0.75))
+                            .foregroundStyle(Color.appText)
+                            .padding(8)
+                    }
                 }
-            }
-            .clipped()
+                .overlay(alignment: .bottom) {
+                    if let pos = video.savedPosition, let dur = video.savedDuration, dur > 0, pos > 0 {
+                        let pct = min(max(pos / dur, 0), 1)
+                        LinearGradient(
+                            stops: [
+                                .init(color: Color(hex: "#cc4040"), location: 0),
+                                .init(color: Color(hex: "#cc4040"), location: pct),
+                                .init(color: .black.opacity(0.5),  location: pct),
+                                .init(color: .black.opacity(0.5),  location: 1),
+                            ],
+                            startPoint: .leading, endPoint: .trailing
+                        )
+                        .frame(height: 3)
+                        .allowsHitTesting(false)
+                    }
+                }
+                .clipped()
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(video.title ?? "")
