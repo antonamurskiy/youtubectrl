@@ -72,6 +72,14 @@ final class ScrubberUIView: UIView {
         layer.addSublayer(chapters)
         layer.addSublayer(thumb)
         chapters.fillColor = UIColor.white.withAlphaComponent(0.6).cgColor
+        // Thumb gets a soft drop shadow + thin stroke so it lifts off
+        // the translucent glass bar and reads as a tactile pill.
+        thumb.shadowColor = UIColor.black.cgColor
+        thumb.shadowOpacity = 0.45
+        thumb.shadowRadius = 4
+        thumb.shadowOffset = CGSize(width: 0, height: 1)
+        thumb.strokeColor = UIColor.white.withAlphaComponent(0.35).cgColor
+        thumb.lineWidth = 1
         previewView.isHidden = true
         previewView.contentMode = .scaleAspectFill
         previewView.clipsToBounds = true
@@ -112,8 +120,8 @@ final class ScrubberUIView: UIView {
     override func layoutSubviews() {
         super.layoutSubviews()
         guard let pb = playback else { return }
-        let h: CGFloat = 4
-        let r = bounds.insetBy(dx: 12, dy: (bounds.height - h) / 2)
+        let h: CGFloat = 5
+        let r = bounds.insetBy(dx: 14, dy: (bounds.height - h) / 2)
         track.path = UIBezierPath(roundedRect: r, cornerRadius: h/2).cgPath
 
         let pct: Double
@@ -142,7 +150,7 @@ final class ScrubberUIView: UIView {
             chapters.path = nil
         }
 
-        let thumbR: CGFloat = 8
+        let thumbR: CGFloat = 9
         let cx = r.minX + r.width * pct
         let cy = r.midY
         thumb.path = UIBezierPath(ovalIn: CGRect(x: cx - thumbR, y: cy - thumbR, width: thumbR * 2, height: thumbR * 2)).cgPath

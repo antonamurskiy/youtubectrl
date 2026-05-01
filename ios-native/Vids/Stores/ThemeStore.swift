@@ -22,8 +22,10 @@ final class ThemeStore {
 
     /// Darkened version used as background. Matches the JS darkenHex(0.55).
     var resolvedSurface: Color { resolved?.darken(0.55) ?? Color(hex: "#282828") }
-    var resolvedFill: Color { resolved ?? Color(hex: "#a89984") }
-    var resolvedTrack: Color { resolved?.darken(0.4) ?? Color(hex: "#3c3836") }
+    var resolvedFill: Color { resolved ?? Color(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255) }
+    /// Translucent over the glass mini-player surface — solid #3c3836
+    /// looked muddy against the new Liquid Glass bar.
+    var resolvedTrack: Color { resolved?.darken(0.4).opacity(0.4) ?? Color.white.opacity(0.18) }
 
     func setTabTint(for tab: FeedTab) {
         activeTabTint = Self.tabTints[tab]
