@@ -47,8 +47,8 @@ struct ScrubPreviewOverlay: View {
         let trackWidth = screen.width - scrubInset * 2
         let cx = scrubInset + trackWidth * scrub.pct
 
-        let tileW: CGFloat = 132
-        let tileH: CGFloat = 76
+        let tileW: CGFloat = 200
+        let tileH: CGFloat = 113 // 16:9
         let lo: CGFloat = 8
         let hi: CGFloat = screen.width - tileW - 8
         let tileX: CGFloat = max(lo, min(hi, cx - tileW / 2))
