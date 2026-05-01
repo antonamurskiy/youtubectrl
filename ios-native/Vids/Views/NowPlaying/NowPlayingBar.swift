@@ -134,35 +134,14 @@ struct NowPlayingBar: View {
         // bar's rounded-rect shape. .glassEffect(in: shape) applies
         // the shape as a clip mask to descendants too, which was
         // hiding the storyboard preview that floats above the bar.
-        // Background-layered glass so the scrubber preview tile can
-        // overflow above without being clipped by the glass `in:`
-        // shape mask. Tint follows the active theme — same source the
-        // FAB stack uses (theme.resolved.darken(0.55) → #282828 fallback)
-        // so the whole UI cohere when the user picks a tmux pane color
-        // or a tinted feed tab.
-        .background {
-            RoundedRectangle(cornerRadius: 28, style: .continuous)
-                .fill(Color.clear)
-                .glassEffect(
-                    .regular.tint(barTint).interactive(),
-                    in: RoundedRectangle(cornerRadius: 28, style: .continuous)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 28, style: .continuous)
-                        .strokeBorder(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.45),
-                                    Color.white.opacity(0.18),
-                                    Color.white.opacity(0.04),
-                                    Color.black.opacity(0.18),
-                                ],
-                                startPoint: .top, endPoint: .bottom
-                            ),
-                            lineWidth: 0.75
-                        )
-                )
-        }
+        // Match FAB stack: direct .glassEffect with the same tint
+        // computation. No extra strokeBorder rim — Liquid Glass
+        // already paints its own directional highlight, and any
+        // additional stroke fights the system rim.
+        .glassEffect(
+            .regular.tint(barTint).interactive(),
+            in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+        )
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
