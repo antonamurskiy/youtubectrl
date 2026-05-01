@@ -54,9 +54,11 @@ struct ClaudeQuickReply: View {
                     .stroke(Color(hex: "#b16286"), lineWidth: 1.5)
             )
             .clipShape(RoundedRectangle(cornerRadius: 10))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             .padding(.horizontal, 12)
-            .padding(.bottom, playback.playing ? 280 : 80)
+            // Sit directly above the terminal FAB. FAB padding = 210 (NP visible)
+            // or 32 (idle); FAB stack itself is ~110pt tall (two 44pt FABs + spacing).
+            .padding(.bottom, (playback.playing ? 210 : 32) + 110 + 8)
             .allowsHitTesting(true)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }

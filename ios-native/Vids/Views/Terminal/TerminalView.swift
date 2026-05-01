@@ -27,12 +27,14 @@ struct TerminalView: View {
                              terminal.dismissKeyboard = { [weak tv] in
                                  _ = tv?.resignFirstResponder()
                              }
-                             terminal.themeAccessory = { [weak tv] in
-                                 themeAccessoryView(tv?.inputAccessoryView)
+                             terminal.themeAccessory = { [weak tv, weak theme] in
+                                 let tint = theme?.activeTmuxTint.flatMap { UIColor($0) }
+                                 themeAccessoryView(tv?.inputAccessoryView, paneTint: tint)
                              }
-                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
+                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv, weak theme] in
                                  tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
-                                 themeAccessoryView(tv?.inputAccessoryView)
+                                 let tint = theme?.activeTmuxTint.flatMap { UIColor($0) }
+                                 themeAccessoryView(tv?.inputAccessoryView, paneTint: tint)
                              }
                          })
                     .background(theme.resolvedSurface)
@@ -146,6 +148,12 @@ struct TerminalView: View {
 /// so this override is allowed (method_setImplementation swizzling the
 /// same selector wasn't taking; subclass is more reliable).
 extension UIColor {
+    func darkened(_ factor: CGFloat) -> UIColor {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        getRed(&r, green: &g, blue: &b, alpha: &a)
+        return UIColor(red: r * factor, green: g * factor, blue: b * factor, alpha: a)
+    }
+
     static func lerp(from a: UIColor, to b: UIColor, t: CGFloat) -> UIColor {
         var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
         var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
@@ -166,13 +174,15 @@ extension UIColor {
 }
 
 /// Walks an inputAccessoryView's button-shaped subviews and tints
-/// them with our cream/dark theme. Re-runs whenever the keyboard
-/// appears since SwiftTerm rebuilds buttons per show.
-func themeAccessoryView(_ root: UIView?) {
+/// them with the active tmux pane color (or default panel bg if no
+/// pane tint). Re-runs every keyboard show.
+func themeAccessoryView(_ root: UIView?, paneTint: UIColor? = nil) {
     guard let root else { return }
-    let bg = UIColor(red: 0x15/255, green: 0x15/255, blue: 0x15/255, alpha: 1)
-    let chipBg = UIColor(red: 0x28/255, green: 0x28/255, blue: 0x28/255, alpha: 1)
     let cream = UIColor(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255, alpha: 1)
+    // Panel bg = darken(paneTint, 0.55) if active, else default.
+    let bg: UIColor = paneTint?.darkened(0.55) ?? UIColor(red: 0x15/255, green: 0x15/255, blue: 0x15/255, alpha: 1)
+    // Chip bg = paneTint at 0.6 alpha so buttons sit visibly atop bg.
+    let chipBg: UIColor = paneTint?.withAlphaComponent(0.6) ?? UIColor(red: 0x28/255, green: 0x28/255, blue: 0x28/255, alpha: 1)
     root.backgroundColor = bg
     root.tintColor = cream
     func walk(_ v: UIView) {

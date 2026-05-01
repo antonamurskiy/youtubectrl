@@ -21,6 +21,13 @@ final class KeyboardObserver {
                 self?.terminal?.keyboardOpen = true
                 self?.terminal?.keyboardHeight = h
             }
+            // Theme on willShow + didShow + 100ms after — SwiftTerm
+            // builds the accessory at any of these moments.
+            for delay in [0.0, 0.05, 0.15] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    self?.onKeyboardDidShow?()
+                }
+            }
         })
         observers.append(nc.addObserver(forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main) { [weak self] note in
             let h = (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect)?.height ?? 336
