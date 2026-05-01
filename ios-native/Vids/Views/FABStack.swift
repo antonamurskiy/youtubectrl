@@ -41,9 +41,16 @@ struct FABStack: View {
                 Image(systemName: "arrow.clockwise")
                     .font(Font.app(14, weight: .bold))
                     .frame(width: 44, height: 44)
-                    .background(.white.opacity(0.1))
-                    .foregroundStyle(.white)
+                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : .white.opacity(0.1))
+                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : .white)
                     .clipShape(Circle())
+                    .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
+                    .animation(
+                        feed.isCurrentTabLoading
+                            ? .linear(duration: 0.9).repeatForever(autoreverses: false)
+                            : .default,
+                        value: feed.isCurrentTabLoading
+                    )
             }
             .simultaneousGesture(
                 LongPressGesture(minimumDuration: 0.5)

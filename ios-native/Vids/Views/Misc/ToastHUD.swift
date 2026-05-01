@@ -57,26 +57,45 @@ struct ClaudeFeedView: View {
     @Environment(TerminalStore.self) private var terminal
 
     var body: some View {
-        // React's .claude-feed: top of screen, left-aligned, dark
-        // surface + cream text + dim border, multi-line wrapping.
         VStack(alignment: .leading, spacing: 3) {
             ForEach(terminal.open ? [] : Array(push.feed.suffix(8).reversed())) { line in
-                Text(line.text)
-                    .font(Font.app(12))
-                    .tracking(1)
-                    .foregroundStyle(Color(hex: "#ebdbb2"))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Color(hex: "#151515").opacity(0.95))
-                    .overlay(Rectangle().stroke(Color(hex: "#a89984"), lineWidth: 1))
-                    .transition(.opacity)
+                FeedLineView(line: line, lifetime: push.lifetime)
             }
         }
         .padding(.horizontal, 12)
         .padding(.top, 60)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .allowsHitTesting(false)
-        .animation(.easeOut(duration: 0.2), value: push.feed.count)
+        .animation(.easeOut(duration: 0.25), value: push.feed.count)
+    }
+}
+
+private struct FeedLineView: View {
+    let line: FeedLine
+    let lifetime: TimeInterval
+    @State private var visible: Bool = false
+    @State private var fading: Bool = false
+
+    var body: some View {
+        Text(line.text)
+            .font(Font.app(12))
+            .tracking(1)
+            .foregroundStyle(Color(hex: "#ebdbb2"))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color(hex: "#151515").opacity(0.95))
+            .overlay(Rectangle().stroke(Color(hex: "#a89984"), lineWidth: 1))
+            .opacity(visible && !fading ? 1 : 0)
+            .scaleEffect(y: fading ? 0.7 : 1, anchor: .top)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.2)) { visible = true }
+                // Start fade-out 1.5s before the prune timer drops the line.
+                let fadeStart = max(0, lifetime - 1.5)
+                DispatchQueue.main.asyncAfter(deadline: .now() + fadeStart) {
+                    withAnimation(.easeIn(duration: 1.4)) { fading = true }
+                }
+            }
+            .transition(.opacity)
     }
 }

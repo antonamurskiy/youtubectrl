@@ -58,20 +58,28 @@ final class PushHandler: NSObject, UNUserNotificationCenterDelegate {
                                 withCompletionHandler completionHandler: @escaping () -> Void) {
         defer { completionHandler() }
         let id = response.actionIdentifier
-        // ANSWER_1 / ANSWER_2 / ... pattern; or default tap.
         guard id.hasPrefix("ANSWER_"), let n = Int(id.dropFirst("ANSWER_".count)) else { return }
         let userInfo = response.notification.request.content.userInfo
-        guard let window = userInfo["tmuxWindow"] as? String else { return }
-        let key = "\(window):\(n)"
+        let window = userInfo["tmuxWindow"] as? String
+        let windowIndex = userInfo["tmuxIndex"] as? Int
+        let key = "\(window ?? "?"):\(n)"
         let now = Date()
         if let prev = recentTaps[key], now.timeIntervalSince(prev) < 5 { return }
         recentTaps[key] = now
         Task { [weak self] in
             guard let self, let api = self.services?.api else { return }
-            // Try to select the named window first (tmux-select-by-name
-            // would be nicer but the existing API takes index — phase 8b).
-            let windowsList = self.services?.playback.macStatus // placeholder
-            _ = windowsList
+            // Select the right tmux window FIRST so the digit lands in
+            // the pane that asked the question. Without this, /api/tmux-send
+            // hits whatever window is currently active.
+            let windows = self.services?.terminal.windows ?? []
+            if let idx = windowIndex {
+                try? await api.tmuxSelect(index: idx)
+            } else if let name = window,
+                      let target = windows.first(where: { $0.name == name }) {
+                try? await api.tmuxSelect(index: target.index)
+            }
+            // Tiny pause so tmux's window-switch lands before we send.
+            try? await Task.sleep(nanoseconds: 80_000_000)
             try? await api.tmuxSend(String(n))
         }
     }

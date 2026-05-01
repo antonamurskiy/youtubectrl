@@ -15,6 +15,7 @@ final class FeedStore {
     private(set) var shortsByTab: [FeedTab: [Short]] = [:]
     private(set) var nextPageByTab: [FeedTab: String] = [:]
     private(set) var loadingByTab: [FeedTab: Bool] = [:]
+    var isCurrentTabLoading: Bool { loadingByTab[activeTab] == true }
 
     var currentVideos: [Video] { videosByTab[activeTab] ?? [] }
     var currentShorts: [Short] { shortsByTab[activeTab] ?? [] }
