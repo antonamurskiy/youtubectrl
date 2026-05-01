@@ -54,13 +54,10 @@ struct SecretMenu: View {
     @ViewBuilder
     private func glassCard<Content: View>(_ content: Content) -> some View {
         content
-            // Apple iOS 26 Settings card metrics: 16pt horizontal,
-            // 14pt vertical inner padding; 26pt corner radius.
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
+            .padding(.horizontal, 18)
+            .padding(.top, 18)
+            .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            // Light tint on a dim backdrop so the cards read as raised
-            // glass rather than disappearing into the dark sheet bg.
             .glassEffect(.regular.tint(.white.opacity(0.18)),
                          in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
@@ -70,21 +67,37 @@ struct SecretMenu: View {
             .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
     }
 
-    /// Section with an optional header label and rows.
-    /// Apple iOS 26 spec: 8pt below header → first row, 12pt between rows.
+    /// Section with a stronger header (subheadline.bold), rows separated
+    /// by hairlines for the iOS Settings-style structure.
     @ViewBuilder
     private func cardSection<Content: View>(_ header: String? = nil,
                                             @ViewBuilder _ content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             if let header {
                 Text(header)
-                    .font(.caption.weight(.semibold))
-                    .textCase(.uppercase)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 10)
+                    .font(.subheadline.weight(.bold))
+                    .foregroundStyle(.primary)
+                    .padding(.bottom, 14)
             }
-            VStack(alignment: .leading, spacing: 12) {
+            // _VariadicView_Tree forwards each child as a Subview, letting
+            // us interleave Dividers between them — Apple's Settings card
+            // pattern, which is what gives the card its "structure."
+            _VariadicView.Tree(SeparatedRows()) {
                 content()
+            }
+        }
+    }
+
+    private struct SeparatedRows: _VariadicView_MultiViewRoot {
+        @ViewBuilder
+        func body(children: _VariadicView.Children) -> some View {
+            let last = children.last?.id
+            ForEach(children) { child in
+                child
+                    .padding(.vertical, 4)
+                if child.id != last {
+                    Divider().background(Color.white.opacity(0.08))
+                }
             }
         }
     }
