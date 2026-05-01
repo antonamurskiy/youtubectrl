@@ -295,7 +295,20 @@ struct TermHost: UIViewRepresentable {
 
         func send(source: SwiftTerm.TerminalView, data: ArraySlice<UInt8>) {
             guard let ws else { return }
-            // Server expects strings; PTY-bound bytes are typically ASCII / UTF-8.
+            // Hard gate: drop any send while a swipe-tab is in flight.
+            // Both SwiftTerm send paths (send(data:) and send(source:data:))
+            // funnel here, so this is the single chokepoint.
+            if let v = source as? NoPasteTerminalView, v.swipeInProgress {
+                NSLog("[NoPaste] delegate.send DROPPED \(data.count) bytes during swipe")
+                return
+            }
+            // Heuristic: drop any large send that's clearly not a keystroke
+            // (single-press keys are 1-3 bytes; cursor/PFn keys up to ~6).
+            // The auto-paste was emitting 100+ byte chunks of screen content.
+            if data.count > 16 {
+                NSLog("[NoPaste] delegate.send DROPPED suspicious large send: \(data.count) bytes")
+                return
+            }
             if let s = String(bytes: data, encoding: .utf8) {
                 ws.send(.string(s)) { _ in }
             } else {
