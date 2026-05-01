@@ -805,6 +805,15 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
             // wall-clock moment. We don't try to fast-forward fraction
             // anymore — that overcorrected because the bridge round-
             // trip is variable.
+            // playerContainer is a SIBLING of webView (added to
+            // wv.superview), so animating wv.superview's bg drives
+            // compositing on the same parent that hosts the AVPlayer
+            // layer — that competed with video decode and made PiP
+            // skip + the live-sync drift loop fail to stabilize.
+            // Skip both playerContainer AND its parent (wv.superview)
+            // from the animation. The WebView itself still animates.
+            let playerView = self.playerContainer
+            let playerHost = playerView?.superview
             let timing = UICubicTimingParameters(
                 controlPoint1: CGPoint(x: 0.25, y: 0.1),
                 controlPoint2: CGPoint(x: 0.25, y: 1.0)
@@ -815,11 +824,13 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
                 webView.scrollView.backgroundColor = color
                 var v: UIView? = webView
                 while v != nil {
-                    v?.backgroundColor = color
+                    if v !== playerView && v !== playerHost {
+                        v?.backgroundColor = color
+                    }
                     v = v?.superview
                 }
                 if let window = webView.window {
-                    for sub in window.subviews {
+                    for sub in window.subviews where sub !== playerView && sub !== playerHost {
                         sub.backgroundColor = color
                     }
                 }

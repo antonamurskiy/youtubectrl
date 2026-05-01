@@ -51,6 +51,8 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
   const xtermRef = useRef(null)
   const fitAddonRef = useRef(null)
   const touchStartXRef = useRef(null)
+  const touchStartTRef = useRef(0)
+  const touchStartButtonRef = useRef(null)
   // Pane-swipe state. Captures start coords + time on touchstart;
   // touchend reads tmuxWindows from the latest render via a ref so
   // the handler doesn't go stale between window changes.
@@ -236,12 +238,19 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     // right-edge .terminal-scroll-zone overlay sits on TOP and handles
     // explicit scroll via xterm.scrollLines().
     const lockSubtree = () => {
-      const xterm = termEl.querySelector('.xterm')
-      if (!xterm) return
-      xterm.style.setProperty('pointer-events', 'none', 'important')
-      // Also lock viewport just in case browser ever generates scroll.
+      // Target the canvas/screen + viewport ONLY, NOT the whole .xterm
+      // root. Setting pointer-events: none on the root made iOS dismiss
+      // the soft keyboard whenever the active window's MutationObserver
+      // re-applied — the focused .xterm-helper-textarea was an
+      // ancestor-of-non-interactive descendant, which iOS treats as
+      // "no longer interactive" and auto-closes the keyboard. Locking
+      // just the screen + viewport stops xterm forwarding touch to
+      // tmux while leaving the helper-textarea's interactivity intact.
+      const screen = termEl.querySelector('.xterm-screen')
+      if (screen) screen.style.setProperty('pointer-events', 'none', 'important')
       const v = termEl.querySelector('.xterm-viewport')
       if (v) {
+        v.style.setProperty('pointer-events', 'none', 'important')
         v.style.setProperty('touch-action', 'none', 'important')
         v.style.setProperty('overflow', 'hidden', 'important')
       }
@@ -625,14 +634,47 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
           fetch('/api/tmux-cancel-copy-mode', { method: 'POST' }).catch(() => {})
         }}
       />
-      <div className="terminal-keys" onMouseDown={(e) => e.preventDefault()} onTouchStart={(e) => { touchStartXRef.current = e.touches[0].clientX; }} onTouchEnd={(e) => { const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0)); if (dx > 10) return; e.preventDefault(); const btn = e.target.closest('button'); if (btn) btn.click(); }}>
+      <div
+        className="terminal-keys"
+        onMouseDown={(e) => e.preventDefault()}
+        onTouchStart={(e) => {
+          touchStartXRef.current = e.touches[0].clientX
+          touchStartTRef.current = Date.now()
+          // Latch the button under the finger AT touchstart. Without
+          // this, tapping the xterm area would sometimes fire a key
+          // button: opening the iOS keyboard between touchstart and
+          // touchend shifted the layout, and a synthetic touchend
+          // landed on a key (commonly ^Z) → Claude got suspended.
+          touchStartButtonRef.current = e.target?.closest?.('button') || null
+        }}
+        onTouchEnd={(e) => {
+          const startBtn = touchStartButtonRef.current
+          touchStartButtonRef.current = null
+          if (!startBtn) return
+          const dx = Math.abs((e.changedTouches[0]?.clientX || 0) - (touchStartXRef.current || 0))
+          if (dx > 10) return
+          // Touch must end on the same button it began on.
+          const endBtn = e.target?.closest?.('button')
+          if (endBtn !== startBtn) return
+          e.preventDefault()
+          // ^Z and ^D get a long-press requirement (≥400ms hold) — short
+          // taps were too easy to mis-fire and ^Z was suspending Claude
+          // out from under the user. Anything else fires on tap.
+          const requiresHold = startBtn.dataset.requireHold === '1'
+          if (requiresHold) {
+            const dur = Date.now() - (touchStartTRef.current || 0)
+            if (dur < 400) return
+          }
+          startBtn.click()
+        }}
+      >
         <button onClick={() => sendKey('\x01')}>^A</button>
         <button onClick={() => sendKey('\x02')}>^B</button>
         <button onClick={() => sendKey('\x03')}>^C</button>
         <button onClick={() => sendKey('\x0c')}>^L</button>
-        <button onClick={() => sendKey('\x04')}>^D</button>
+        <button data-require-hold="1" onClick={() => sendKey('\x04')}>^D</button>
         <button onClick={() => sendKey('\x0f')}>^O</button>
-        <button onClick={() => sendKey('\x1a')}>^Z</button>
+        <button data-require-hold="1" onClick={() => sendKey('\x1a')}>^Z</button>
         <button onClick={() => sendKey('\x1b')}>esc</button>
         <button onClick={() => sendKey('\t')}>tab</button>
         <button onClick={() => sendKey('\x1b[A')}>↑</button>

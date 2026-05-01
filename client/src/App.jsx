@@ -61,13 +61,36 @@ function brightenHex(hex, mix) {
 
 const TMUX_COLOR_SWATCHES = [
   { value: '', label: 'clear' },
+  // Reds
   { value: '#5a1f1c', label: 'red' },
+  { value: '#3a1414', label: 'maroon' },
+  { value: '#5a2828', label: 'brick' },
+  // Oranges / browns
   { value: '#5e3414', label: 'orange' },
-  { value: '#5c4416', label: 'yellow' },
+  { value: '#4a2810', label: 'rust' },
+  { value: '#3d2a1c', label: 'brown' },
+  // Yellows / olives
+  { value: '#5c4416', label: 'amber' },
+  { value: '#4a4416', label: 'olive' },
   { value: '#3f4416', label: 'green' },
+  { value: '#2c3812', label: 'moss' },
+  // Greens
+  { value: '#1f3d24', label: 'forest' },
   { value: '#2e4a3a', label: 'teal' },
+  // Cyans / blues
+  { value: '#1c4548', label: 'cyan' },
   { value: '#1f3d49', label: 'blue' },
+  { value: '#1c2c4a', label: 'navy' },
+  { value: '#2c2e4a', label: 'indigo' },
+  // Purples / pinks
+  { value: '#3a2647', label: 'violet' },
   { value: '#4a2e44', label: 'purple' },
+  { value: '#4a2438', label: 'plum' },
+  { value: '#4a2030', label: 'wine' },
+  // Neutrals
+  { value: '#2a2a2a', label: 'graphite' },
+  { value: '#3a342e', label: 'taupe' },
+  { value: '#2e3438', label: 'slate' },
 ]
 
 function TmuxTabButton({ window: w, color }) {
@@ -101,11 +124,22 @@ function TmuxTabButton({ window: w, color }) {
     setValue(w.name)
     setPendingColor(color || '')
     flushSync(() => setEditing(true))
-    if (inputRef.current) {
-      inputRef.current.focus()
-      const len = inputRef.current.value.length
-      inputRef.current.setSelectionRange(len, len)
-    }
+    // Defer focus to the next event-loop tick. flushSync mounts the
+    // portal synchronously but iOS hasn't laid it out yet, and
+    // focus() on a not-yet-laid-out input was getting silently
+    // dropped — modal showed, keyboard never came up, user couldn't
+    // type. Two-step: rAF for layout, setTimeout(0) to escape any
+    // remaining gesture-handler stack frame so iOS still treats this
+    // as in-gesture for keyboard activation.
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      try {
+        const len = el.value.length
+        el.setSelectionRange(len, len)
+      } catch {}
+    })
   }
 
   const handleEnd = (e) => {
@@ -162,6 +196,12 @@ function TmuxTabButton({ window: w, color }) {
             <input
               ref={inputRef}
               className="tmux-tab-input"
+              type="text"
+              autoFocus
+              autoCapitalize="off"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
               value={value}
               onChange={(e) => setValue(e.target.value)}
               onKeyDown={(e) => {
