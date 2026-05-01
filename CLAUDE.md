@@ -1002,6 +1002,123 @@ one. **If you add a new tinted surface, give it the same
 `transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1)`
 or it'll snap and break the illusion.**
 
+#### CSS-var driven surfaces
+
+Several surfaces have static `--bg` defaults that need to follow the
+active tint dynamically. Instead of inline-styling every component on
+every theme change, drive these via CSS variables set on
+`document.documentElement`:
+
+- `--gutter-bg` → `.safe-area-cover` (fixed div at top:0 covering
+  the Dynamic Island gutter so video cards scrolling under the
+  sticky header can't peek into the safe area)
+- `--header-bg` → `.header` (the sticky tabs strip — was always
+  `var(--bg)` gray and the tab strip stayed gray when tab tints
+  were applied to body)
+- `--tab-active-bg` → `.tab.active` (active tab pill highlight; set
+  to a "lightened" version of the tint so it stands out against the
+  tinted header)
+- `--terminal-bg` → `.xterm-viewport` (already existed, panel chrome
+  inline style sets it)
+- `--terminal-key-bg` / `--terminal-key-bg-active` → shortcut keys
+- `--np-fill` / `--np-fill-pattern` / `--np-track` /
+  `--np-track-pattern` → now-playing scrubber bar
+- `--fab-bg` / `--fab-bg-active` / `--fab-border` → FAB buttons
+
+Keeping these as CSS vars (with the same 400ms ease transition rule
+on the consuming selector) means tint changes happen via a single
+`html.style.setProperty('--var', value)` call instead of forcing
+React re-renders on every component.
+
+#### Live preview during the rename modal
+
+Tapping a swatch should immediately repaint the entire UI in that
+color (terminal, body, gutter, tabs, FAB, now-playing) without the
+user committing first. Naively writing the optimistic value to
+`tmuxColors` doesn't work — the server's 1Hz WS broadcast keeps
+overwriting it with persisted state, snapping the preview back to
+the original color mid-cycle.
+
+Fix: a separate `tmuxColorPreview: { [name]: hex }` map in the
+playback store that the server NEVER touches. Consumers
+(TmuxTabButton, App's `resolveColor`, Terminal's `activeColor`,
+NowPlayingBar's `tmuxTint`) check `tmuxColorPreview[name]` first
+and fall back to `tmuxColors[name]`. Modal commit/cancel clears
+the entry; once the server's broadcast lands the new color via
+`tmuxColors`, the preview override is gone and the resolved color
+is identical.
+
+The modal overlay is `background: transparent; pointer-events: none`
+with `pointer-events: auto` on the card so the live preview stays
+visible behind the popover while the user cycles colors.
+
+#### Per-tab tinting
+
+A `TAB_TINTS` map in App.jsx mirrors the same darken pipeline tmux
+windows use. Currently:
+- `history` → `#1f3d24` (forest green)
+- `live` → `#a13a36` (red+)
+- `ru` → `#4f8a5c` (green+)
+
+When `terminalOpen` is false, the active tab's tint paints body,
+html, the gutter cover, the header bg, the active-tab pill (via
+the lighten-by-15% derivation), and the native safe-area. When
+terminal opens, that effect early-returns and Terminal's effect
+takes over; on close, Terminal's cleanup restores body bg to what
+the tab effect last set.
+
+Critical: the per-tab tint effect has **NO cleanup function**. An
+earlier version with cleanup raced Terminal's effect on the
+open transition — App's cleanup restored body to the pre-history
+gray AFTER Terminal had already painted its tint, leaving the
+terminal pane gray. Now the App effect just sets bg idempotently
+based on `(terminalOpen, activeTabTint)`; on transitions, Terminal's
+effect captures the latest body bg as `prevBody` and restores it
+correctly on close. NowPlayingBar reads its own copy of TAB_TINTS
++ `activeTab` from `useUIStore` and falls through to the tab tint
+when terminal is closed, so the bar (including scrubber) follows
+the active tab too.
+
+#### Native plugin animator excludes the player view
+
+`setSafeAreaBackground`'s parent walk + window-children loop animates
+`backgroundColor` on every UIView from the WebView up to UIWindow.
+`playerContainer` is added as a SIBLING of the WebView (under
+`wv.superview`), so the loop was hitting both `playerContainer` AND
+its host (`wv.superview`). Animating either drives compositing on
+the same UIView that hosts the AVPlayerLayer, which competes with
+video decode AND the live-sync drift loop's
+`AVPlayerItem.currentDate()` sampling. PiP visibly skipped, drift
+never converged. Fix: skip both `playerContainer` and `playerHost`
+from the animation. WebView itself still animates so the body fade
+still has its colored backdrop.
+
+#### Source-map of "the gutter is gray / late"
+
+Whenever the Dynamic Island gutter looks wrong, walk this list:
+
+- **Gray when terminal is closed but on a tab with a TAB_TINTS entry**:
+  `--gutter-bg` not being set. Verify the per-tab tint effect ran
+  (look for `terminalOpen=false`).
+- **Gray inside terminal**: Terminal's tint effect didn't fire — check
+  `activeColor` resolution (preview override + tmuxColors fallback).
+  Or its bg got overwritten by App's per-tab effect cleanup (which
+  shouldn't exist anymore — see "Per-tab tinting" above).
+- **Late by a fixed delay (~50ms)**: bridge IPC. Don't try to
+  compensate with `transition-delay` or `fractionComplete`
+  fast-forward — both fail because bridge latency is variable. The
+  fix is overlay-mode (overlaysWebView=true permanent) so body
+  covers the gutter and its CSS transition drives the visible fade
+  directly.
+- **Snaps while body fades**: a surface that needs `transition:
+  background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1)` doesn't
+  have one. Audit every visible-bg surface (header, panel, FAB, NP
+  bar, tabs, scrubber, gutter cover, etc).
+- **xterm-specific snap**: xterm's `theme.background` doesn't
+  animate. Drive it through the `requestAnimationFrame`
+  interpolator in Terminal.jsx (Newton-Raphson on the cubic-bezier
+  for matching curve).
+
 #### Rename popover (centered portal modal)
 
 Long-press any tmux tab → `createPortal(modalNode, document.body)`
@@ -1065,6 +1182,78 @@ back. Multiple defenses stacked because each only solves part:
    needed once pointer-events: none was added). Bails on `dx > 12`
    / `dy > 12` / `dt > 500ms` so swipes between panes don't pop the
    iOS keyboard via auto-focus on the helper-textarea.
+
+#### Feed swipe navigation
+
+Horizontal swipe on the body wrapper (`ptrBodyRef`) cycles between
+`['rec', 'history', 'subs', 'ru', 'live']`. Same heuristic as the
+tmux pane swipe: `dx > 80 && dx > dy*1.5 && dt < 500ms`. Channel /
+search / filtered "side" tabs are skipped — they aren't part of
+the carousel.
+
+A native non-passive `touchmove` listener locks direction at
+`dx ≥ 16`. Locked-horizontal touches `preventDefault()` for the
+rest of the gesture so the page can't scroll vertically while
+swiping. React's synthetic `onTouchMove` is passive — `preventDefault`
+there is a no-op, hence the native listener.
+
+#### Terminal keys safety
+
+The `.terminal-keys` row uses event delegation: the parent's
+`onTouchEnd` fires `e.target.closest('button').click()` on tap. iOS
+pops the keyboard on xterm focus taps, layout shifts, and a
+synthetic `touchend` was landing on a key (most often ^Z, since
+it sat in the middle of the row) → Claude got suspended out from
+under the user.
+
+Two-stage fix:
+1. **`touchStartButtonRef`** latches the button under the finger at
+   `touchstart`. `touchend` requires `closest('button')` to return
+   the SAME element. Touches that begin on xterm and end on a key
+   no-op.
+2. **`data-require-hold="1"`** on ^Z and ^D buttons. Even if start
+   and end button match, the parent handler reads the data attribute
+   and gates on `Date.now() - touchStartTRef.current >= 400`.
+   Accidental taps no-op; deliberate hold fires.
+
+#### Tap-vs-scroll on xterm
+
+When the user taps to focus the helper-textarea (bring up keyboard),
+`refocusOnTap` reads `tapStartRef` to skip swipe gestures (`dx > 12`
+/ `dy > 12` / `dt > 500`) so the keyboard doesn't pop on every
+pane swipe.
+
+`pointer-events: none !important` is set on `.xterm-screen` and
+`.xterm-viewport` (NOT the `.xterm` root — that auto-dismissed the
+keyboard on every active-window switch by treating the focused
+helper-textarea as ancestor-of-non-interactive).
+
+Right-edge `.terminal-scroll-zone` (64px overlay) is the ONLY way
+to scroll. Touchmove sends SGR mouse-wheel sequences over the WS
+to drive tmux's copy-mode scroll (`\x1b[<64;X;YM` up,
+`\x1b[<65;X;YM` down). On `touchend` / `touchcancel`, fires
+`POST /api/tmux-cancel-copy-mode` (which runs `tmux send-keys -X cancel`)
+so the user doesn't get stuck in copy-mode after every scroll
+gesture (would otherwise need to manually press `q` to type again).
+
+### Audio output menu (NowPlayingBar)
+
+Tapping the audio output icon in the NowPlayingBar opens a popover
+with two collapsible submenus — both default open:
+
+- **Output** (collapsible header with `AudioOutputIcon` + chevron):
+  the macOS audio output devices. Active device gets
+  `color: var(--green)`, `background: rgba(126,142,80,0.18)`, and
+  a `3px solid var(--green)` left stripe. Indented `paddingLeft: 24`.
+- **Bluetooth** (same header pattern): system BT devices.
+  **Connected** items get blue treatment instead of green — `var(--blue)`
+  text, `rgba(108,153,187,0.18)` overlay, `3px solid var(--blue)`
+  left stripe. Distinct from green-active output rows so you can
+  tell at a glance which is "currently routing audio" (green) vs
+  "connected but not active" (blue).
+
+Same active-color treatment in SecretMenu's audio outputs (defaults
+open) and BT items.
 
 ### Secret-menu submenu styling
 
