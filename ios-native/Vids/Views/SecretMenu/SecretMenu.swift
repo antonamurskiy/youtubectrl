@@ -62,7 +62,7 @@ struct SecretMenu: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             // Black-tinted glass instead of white — pale-but-not-white
             // surface that fades into the dim sheet bg.
-            .glassEffect(.regular.tint(.black.opacity(0.18)),
+            .glassEffect(.regular.tint(.black.opacity(0.10)),
                          in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
