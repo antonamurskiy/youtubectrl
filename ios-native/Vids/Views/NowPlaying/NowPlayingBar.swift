@@ -12,6 +12,9 @@ struct NowPlayingBar: View {
         VStack(spacing: 0) {
             ScrubberView()
                 .frame(height: 28)
+                .padding(.top, 6)
+
+            hairline.padding(.top, 8)
 
             // Sub-row: -10, time, eye, LIVE/GO LIVE, audio, PiP, duration, +10
             HStack(spacing: 8) {
@@ -45,8 +48,11 @@ struct NowPlayingBar: View {
                     .frame(minWidth: 36, alignment: .trailing)
                 skipBtn("+10") { Task { try? await services.api.skip(10) } }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 4)
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+
+            hairline
 
             // Button row: monitor laptop / LG, maximize, fullscreen, mode, stop
             HStack(spacing: 8) {
@@ -70,8 +76,11 @@ struct NowPlayingBar: View {
                     Task { try? await services.api.stop() }
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 6)
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 10)
+
+            hairline
 
             // Title + transport
             HStack(spacing: 12) {
@@ -109,11 +118,15 @@ struct NowPlayingBar: View {
                 .foregroundStyle(Color.appText)
                 .font(Font.app(18, weight: .medium))
             }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 16)
+            .padding(.horizontal, 14)
+            .padding(.top, 12)
+            .padding(.bottom, 14)
         }
         .frame(maxWidth: .infinity)
+        // Absorb touches across the whole bar — without this, taps in
+        // the empty regions between buttons fall through to the video
+        // cells underneath.
+        .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         // iOS 26 Liquid Glass mini-player: floating glass surface with
         // a top hairline. Sheet-style instead of the flat dark bar.
         .glassEffect(.regular.tint(.white.opacity(0.06)),
@@ -125,6 +138,15 @@ struct NowPlayingBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
+    }
+
+    /// Faint divider that gives the rows visual structure on the
+    /// translucent glass surface — same hairline pattern as the
+    /// secret menu cards.
+    private var hairline: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.08))
+            .frame(height: 0.5)
     }
 
     // MARK: helpers
