@@ -32,7 +32,9 @@ struct SecretMenu: View {
                     glassCard(brightnessSection)
                 }
                 .padding(.horizontal, 20)
-                .padding(.top, 12)
+                // Clearance for the sheet's drag indicator handle —
+                // without this the first card sits right under it.
+                .padding(.top, 28)
                 .padding(.bottom, 28)
             }
         }
