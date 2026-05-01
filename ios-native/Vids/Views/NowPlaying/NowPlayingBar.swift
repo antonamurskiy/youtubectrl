@@ -145,10 +145,6 @@ struct NowPlayingBar: View {
         // Publish the bar's frame in screen-global coords so the
         // ScrubPreviewOverlay (rendered as a SIBLING of this bar, not
         // a descendant) can place its floating tile above us.
-        .background(GeometryReader { geo in
-            Color.clear.preference(key: NPBarFrameKey.self,
-                                   value: geo.frame(in: .named("root")))
-        })
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
