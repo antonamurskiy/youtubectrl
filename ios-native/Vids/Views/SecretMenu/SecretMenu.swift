@@ -193,19 +193,23 @@ struct SecretMenu: View {
 
     private var syncOffsetSection: some View {
         cardSection("Live sync offset") {
-            HStack {
-                Spacer()
-                Text("\(Int(syncOffsetMs)) ms")
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-            }
-            Slider(value: Binding(
-                get: { syncOffsetMs },
-                set: { v in
-                    syncOffsetMs = v
-                    Task { try? await services.api.setSyncOffset(v) }
+            // Single composed child → no divider between the readout
+            // and the slider (they're one control, not two rows).
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Spacer()
+                    Text("\(Int(syncOffsetMs)) ms")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
                 }
-            ), in: -8000...8000, step: 100)
+                Slider(value: Binding(
+                    get: { syncOffsetMs },
+                    set: { v in
+                        syncOffsetMs = v
+                        Task { try? await services.api.setSyncOffset(v) }
+                    }
+                ), in: -8000...8000, step: 100)
+            }
         }
     }
 
