@@ -8,6 +8,7 @@ struct HeaderView: View {
     @Binding var searchFocused: Bool
     @State private var searchText: String = ""
     @State private var searchTask: Task<Void, Never>? = nil
+    @FocusState private var fieldFocus: Bool
 
     var body: some View {
         // Single row: home / search / tabs / status dots — matches React.
@@ -24,6 +25,9 @@ struct HeaderView: View {
                 .submitLabel(.search)
                 .foregroundStyle(.white)
                 .tint(.white)
+                .focused($fieldFocus)
+                .contentShape(Rectangle())
+                .onTapGesture { fieldFocus = true }
                 .onChange(of: searchText) { _, new in
                     searchTask?.cancel()
                     searchTask = Task { @MainActor in
@@ -37,6 +41,7 @@ struct HeaderView: View {
                     Task { await feed.search(searchText, api: services.api) }
                 }
                 .frame(maxWidth: .infinity, minHeight: 26)
+                .padding(.vertical, 4)
 
             // Inline tabs — same font as everything else, just compact.
             HStack(spacing: 2) {
@@ -75,6 +80,8 @@ struct HeaderView: View {
     private func home() {
         feed.activeTab = .rec
         searchText = ""
+        fieldFocus = false
+        Task { await feed.load(tab: .rec, api: services.api) }
     }
 }
 

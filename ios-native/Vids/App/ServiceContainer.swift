@@ -66,6 +66,15 @@ final class ServiceContainer {
         }
         self.avHost.onVolumeButton = { [weak self] step in
             Task { try? await self?.api.volumeBump(step) }
+            // Show on-phone volume HUD too. Server is authoritative on
+            // current Mac volume; for the snappier feel we just hint
+            // direction +/- without a poll.
+            Task { @MainActor in
+                let pct: Int
+                if let v = try? await self?.api.volumeStatus().volume { pct = Int(v * 100) }
+                else { pct = step > 0 ? 60 : 40 }
+                self?.ui.showVolume(pct)
+            }
         }
         self.liveSync.attach(host: self.avHost, clockOffset: 0)
     }

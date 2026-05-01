@@ -55,10 +55,17 @@ struct FeedListView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UICollectionView, context: Context) {
-        // Read videos/shorts here so SwiftUI tracks them as deps of this view.
         let videos = feed.currentVideos
         let shorts = feed.currentShorts
+        let tick = feed.refreshTick
         context.coordinator.refresh(uiView, videos: videos, shorts: shorts)
+        // Scroll to top whenever the refresh FAB has bumped the tick.
+        if tick != context.coordinator.lastRefreshTick {
+            context.coordinator.lastRefreshTick = tick
+            if videos.count > 0 || shorts.count > 0 {
+                uiView.setContentOffset(.zero, animated: true)
+            }
+        }
     }
 
     final class Coordinator: NSObject, UICollectionViewDelegate, UICollectionViewDataSourcePrefetching, UIGestureRecognizerDelegate {
@@ -67,6 +74,7 @@ struct FeedListView: UIViewRepresentable {
         private let onSwipe: (Int) -> Void
         private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
         private var swipeStart: CGPoint?
+        var lastRefreshTick: Int = 0
 
         enum Section: Hashable { case videos, shorts }
         enum Item: Hashable {

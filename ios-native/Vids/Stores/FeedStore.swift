@@ -7,6 +7,9 @@ final class FeedStore {
     var searchQuery: String = ""
     var channelQuery: String? = nil
     var lastError: String? = nil
+    /// Bumps when the user explicitly hits the refresh FAB so the
+    /// feed view can scroll to top on each press.
+    var refreshTick: Int = 0
 
     private(set) var videosByTab: [FeedTab: [Video]] = [:]
     private(set) var shortsByTab: [FeedTab: [Short]] = [:]

@@ -53,6 +53,7 @@ struct FABStack: View {
     }
 
     private func refresh() {
+        feed.refreshTick &+= 1
         Task { await feed.load(tab: feed.activeTab, api: services.api) }
     }
 }

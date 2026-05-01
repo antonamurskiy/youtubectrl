@@ -272,9 +272,12 @@ struct SecretMenu: View {
             .foregroundStyle(.white.opacity(0.85))
             .background(Color(hex: "#0a0a0a"))
             .task {
-                if !brightnessLoaded {
+                // Poll while menu open so slider reflects Mac-side
+                // changes (brightness keys on the Mac, etc.).
+                while !Task.isCancelled {
                     if let b = try? await services.api.brightness() { brightness = b }
                     brightnessLoaded = true
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
                 }
             }
 
