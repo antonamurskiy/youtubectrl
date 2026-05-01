@@ -123,14 +123,14 @@ struct RootView: View {
             //   ~72 clearance) — matches React's body.keyboard-open rule
             // - NP bar visible: ~250 (bar with three rows + safe area)
             // - otherwise: 24 from bottom
-            // FAB stack — pushed to the right via .frame(maxWidth: .infinity,
-            // alignment: .trailing). The frame's transparent area
-            // doesn't capture hits because nothing's painted there;
-            // only the FAB buttons themselves are hit-testable.
+            // FAB stack — full-screen frame with bottom-trailing
+            // alignment. SwiftUI's hit testing only fires where the
+            // FAB content is painted; empty padding region passes
+            // through to the feed below.
             FABStack()
                 .padding(.trailing, 16)
                 .padding(.bottom, fabBottomPadding)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
                 .transaction { $0.animation = nil }
                 .ignoresSafeArea(.keyboard, edges: .bottom)
                 .zIndex(20)
@@ -255,6 +255,7 @@ struct RootView: View {
             }
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
+                    .ignoresSafeArea(.container, edges: .bottom)
                 if feed.currentVideos.isEmpty {
                     if let err = feed.lastError {
                         Text(err)

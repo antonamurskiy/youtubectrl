@@ -38,6 +38,11 @@ struct FeedListView: UIViewRepresentable {
         cv.alwaysBounceVertical = true
         cv.delegate = context.coordinator
         cv.prefetchDataSource = context.coordinator
+        // Don't auto-inset for safe area / NP bar; we manage bottom
+        // padding via the section's contentInsets so scroll extends
+        // visually past the bar, and the last row can be scrolled
+        // above it.
+        cv.contentInsetAdjustmentBehavior = .never
         let rc = UIRefreshControl()
         rc.tintColor = .white
         rc.addTarget(context.coordinator, action: #selector(Coordinator.onRefresh(_:)), for: .valueChanged)
