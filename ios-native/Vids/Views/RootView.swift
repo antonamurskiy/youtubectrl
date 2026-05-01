@@ -126,6 +126,24 @@ struct RootView: View {
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
+        .onChange(of: terminal.activeWindow?.name ?? "") { _, _ in
+            // When the active tmux window changes, paint the body bg
+            // with that window's color so the whole app shifts to
+            // match the pane you're working in.
+            if let name = terminal.activeWindow?.name,
+               let hex = terminal.resolveColor(name) {
+                theme.activeTmuxTint = Color(hex: hex)
+            } else {
+                theme.activeTmuxTint = nil
+            }
+        }
+        .onChange(of: terminal.colors) { _, _ in
+            // Color picker commit also updates the active tint live.
+            if let name = terminal.activeWindow?.name,
+               let hex = terminal.resolveColor(name) {
+                theme.activeTmuxTint = Color(hex: hex)
+            }
+        }
         .onChange(of: playback.playing) { _, new in
             // Hardware volume buttons drive the Mac whenever something
             // is playing on it, regardless of phone mode (matches React).

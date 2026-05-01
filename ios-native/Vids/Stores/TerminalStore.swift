@@ -16,6 +16,11 @@ final class TerminalStore {
     /// Matches the React app's `wasKbOpenAtCloseRef` behavior so users don't
     /// have to re-tap to type after every toggle.
     var wasKeyboardOpenAtClose: Bool = false
+    /// Set by TermHost.makeUIView, read by TerminalView's dismiss button so
+    /// it can call resignFirstResponder() directly on the SwiftTerm view.
+    /// Global sendAction(resignFirstResponder:) doesn't route correctly to
+    /// SwiftTerm's UIScrollView-based input handling.
+    var dismissKeyboard: (() -> Void)? = nil
 
     var activeWindow: TmuxWindow? { windows.first(where: { $0.active }) }
 

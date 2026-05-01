@@ -14,6 +14,7 @@ struct TerminalView: View {
             // Tmux tab strip — only shows when server reports >1 window.
             if terminal.windows.count > 1 {
                 HStack(spacing: 6) {
+                    Spacer(minLength: 0)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(terminal.windows) { w in
@@ -47,7 +48,12 @@ struct TerminalView: View {
             ZStack(alignment: .trailing) {
                 TermHost(host: services.serverHost,
                          autoFocus: terminal.wasKeyboardOpenAtClose,
-                         onSwipe: switchTmuxWindow(by:))
+                         onSwipe: switchTmuxWindow(by:),
+                         onMounted: { tv in
+                             terminal.dismissKeyboard = { [weak tv] in
+                                 _ = tv?.resignFirstResponder()
+                             }
+                         })
                     .background(theme.resolvedSurface)
                 ScrollZoneOverlay()
                     .frame(width: 56)
@@ -88,7 +94,10 @@ struct TerminalView: View {
     }
 
     private func dismissKeyboard() {
-        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+        // Global sendAction didn't route correctly to SwiftTerm's
+        // UIScrollView-based UIKeyInput conformance. Call resign
+        // directly on the captured TerminalView reference.
+        terminal.dismissKeyboard?()
     }
 
     private func switchTmuxWindow(by delta: Int) {
@@ -166,6 +175,7 @@ struct TermHost: UIViewRepresentable {
     let host: String
     let autoFocus: Bool
     let onSwipe: (Int) -> Void  // called with -1 (prev) or +1 (next)
+    let onMounted: (SwiftTerm.TerminalView) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -199,14 +209,11 @@ struct TermHost: UIViewRepresentable {
         // recurring 0.5s tick to keep nuking newly-added pans.
         context.coordinator.startPanKiller(on: tv, ourPan: pan)
         if autoFocus {
-            // Restore keyboard state from previous close — slight delay
-            // so iOS's transition animation finishes before we ask for
-            // first-responder (race-y otherwise; keyboard sometimes
-            // pops then immediately dismisses).
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak tv] in
                 _ = tv?.becomeFirstResponder()
             }
         }
+        onMounted(tv)
         return tv
     }
 
