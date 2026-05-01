@@ -34,49 +34,55 @@ struct FABStack: View {
     private var fabFg: Color { FABStack.fabFgDefault }
 
     var body: some View {
-        VStack(spacing: 12) {
-            Button(action: { terminal.toggle() }) {
-                Image(systemName: "terminal")
-                    // SF Symbols MUST use the system font path —
-                    // .app() returns JetBrains Mono which has no
-                    // symbol glyphs, so the symbol fell back into an
-                    // off-center metric box (looked "crooked" while
-                    // rotating).
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 44, height: 44)
-                    .background(claudeColor != nil ? claudeColor!.opacity(0.18) : fabBg)
-                    .foregroundStyle(claudeColor ?? fabFg)
-                    .clipShape(Circle())
-                    .overlay(Circle().stroke(claudeColor ?? Color.clear, lineWidth: 1.5))
-                    .scaleEffect(claudePulse ? 1.08 : 1)
-                    .animation(claudeColor != nil
-                                ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
+        // GlassEffectContainer lets the two FABs share a single Liquid
+        // Glass field — they refract together, like Apple's Camera /
+        // Photos floating controls on iOS 26.
+        GlassEffectContainer(spacing: 12) {
+            VStack(spacing: 12) {
+                Button(action: { terminal.toggle() }) {
+                    Image(systemName: "terminal")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(claudeColor ?? fabFg)
+                        .scaleEffect(claudePulse ? 1.08 : 1)
+                        .animation(claudeColor != nil
+                                    ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
+                                    : .default,
+                                   value: claudePulse)
+                }
+                .glassEffect(
+                    .regular.tint(claudeColor.map { $0.opacity(0.45) } ?? fabBg).interactive(),
+                    in: Circle()
+                )
+                .onChange(of: playback.claudeState) { _, _ in
+                    claudePulse = (claudeColor != nil)
+                }
+                .task { claudePulse = (claudeColor != nil) }
+
+                Button(action: refresh) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : fabFg)
+                        .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
+                        .animation(
+                            feed.isCurrentTabLoading
+                                ? .linear(duration: 0.9).repeatForever(autoreverses: false)
                                 : .default,
-                               value: claudePulse)
+                            value: feed.isCurrentTabLoading
+                        )
+                }
+                .glassEffect(
+                    .regular.tint(feed.isCurrentTabLoading
+                                  ? Color(hex: "#8ec07c").opacity(0.35)
+                                  : fabBg).interactive(),
+                    in: Circle()
+                )
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5)
+                        .onEnded { _ in ui.secretMenuOpen = true }
+                )
             }
-            .onChange(of: playback.claudeState) { _, _ in
-                claudePulse = (claudeColor != nil)
-            }
-            .task { claudePulse = (claudeColor != nil) }
-            Button(action: refresh) {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 14, weight: .bold))
-                    .frame(width: 44, height: 44)
-                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : fabBg)
-                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : fabFg)
-                    .clipShape(Circle())
-                    .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
-                    .animation(
-                        feed.isCurrentTabLoading
-                            ? .linear(duration: 0.9).repeatForever(autoreverses: false)
-                            : .default,
-                        value: feed.isCurrentTabLoading
-                    )
-            }
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.5)
-                    .onEnded { _ in ui.secretMenuOpen = true }
-            )
         }
     }
 

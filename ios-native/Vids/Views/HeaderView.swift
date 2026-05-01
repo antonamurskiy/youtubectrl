@@ -79,40 +79,45 @@ private struct TabsRow: View {
     @Namespace private var ns
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(FeedTab.allCases) { tab in
-                let active = activeTab == tab
-                Button(action: { onTap(tab) }) {
-                    Text(tab.label)
-                        .font(Font.app(10))
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 3)
-                        .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.45))
-                        .background(
-                            ZStack {
-                                if active {
-                                    Color.appText.opacity(0.22)
-                                        .matchedGeometryEffect(id: "tab.bg", in: ns)
-                                }
-                            }
-                        )
-                        .overlay(alignment: .bottom) {
-                            ZStack {
-                                if active {
-                                    Color(hex: "#ebdbb2")
-                                        .frame(height: 1.5)
-                                        .matchedGeometryEffect(id: "tab.underline", in: ns)
-                                }
-                            }
-                            .frame(height: 1.5)
-                        }
-                        .clipShape(RoundedRectangle(cornerRadius: 2))
+        // GlassEffectContainer lets the active tab pill morph through
+        // glass between tabs — same Liquid Glass union that Apple uses
+        // on the iOS 26 Camera mode picker.
+        GlassEffectContainer(spacing: 2) {
+            HStack(spacing: 2) {
+                ForEach(FeedTab.allCases) { tab in
+                    let active = activeTab == tab
+                    Button(action: { onTap(tab) }) {
+                        Text(tab.label)
+                            .font(Font.app(10))
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 4)
+                            .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
+                    }
+                    .buttonStyle(.plain)
+                    .modifier(ActiveTabGlass(active: active, ns: ns, id: tab.label))
                 }
-                .buttonStyle(.plain)
             }
+            .fixedSize()
         }
-        .fixedSize()
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: activeTab)
+    }
+}
+
+/// Apply the Liquid Glass pill only to the active tab — `glassEffectID`
+/// lets the pill morph between tabs as the active one changes.
+private struct ActiveTabGlass: ViewModifier {
+    let active: Bool
+    let ns: Namespace.ID
+    let id: String
+    func body(content: Content) -> some View {
+        if active {
+            content
+                .glassEffect(.regular.tint(Color.appText.opacity(0.18)).interactive(),
+                             in: Capsule())
+                .glassEffectID(id, in: ns)
+        } else {
+            content
+        }
     }
 }
 
