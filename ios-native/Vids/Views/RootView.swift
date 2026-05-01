@@ -159,16 +159,14 @@ struct RootView: View {
     }
 
     private var fabBottomPadding: CGFloat {
+        // FABs only move based on whether keyboard is up. Terminal
+        // toggle alone (with keyboard down) shouldn't shift them.
         if terminal.keyboardOpen {
-            return terminal.keyboardHeight + 24
+            return terminal.keyboardHeight + 16
         }
-        if terminal.open { return 24 }
-        // Hardcoded clearance — the measured npBarHeight was flapping
-        // between two layout passes (parent re-renders), causing the
-        // FAB stack to bounce. 280 covers the worst-case 3-row bar
-        // height with a comfortable margin.
-        if playback.playing { return 280 }
-        return 70
+        // Just above the now-playing bar (~200pt rendered) when
+        // playing, otherwise just above the home indicator.
+        return playback.playing ? 210 : 32
     }
 
     private var feedView: some View {
