@@ -59,15 +59,22 @@ struct ScrubPreviewOverlay: View {
         let tileY: CGFloat = screen.height - barHeight - tileH - 28
 
         VStack(spacing: 6) {
-            ZStack {
-                Color.black
+            // Show the image at its natural aspect — let the IMAGE
+            // determine the frame, not the other way around. Anything
+            // we predefine for the frame will mismatch the source by
+            // ~0.5–2pt and produce visible bars or crop.
+            Group {
                 if let img = scrub.image {
-                    // tileH derives from scrub.aspect, matching the
-                    // source — scaledToFill edge-aligns without crop.
-                    Image(uiImage: img).resizable().scaledToFill()
+                    Image(uiImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: tileW)
+                } else {
+                    Color.black
+                        .aspectRatio(scrub.aspect, contentMode: .fit)
+                        .frame(width: tileW)
                 }
             }
-            .frame(width: tileW, height: tileH)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
