@@ -39,6 +39,11 @@ final class FontStore {
     var label: String
     var size: CGFloat
     private(set) var registered: Set<String> = []
+    /// Maps a label to the actual PostScript name discovered after
+    /// downloading + registering the .ttf. Google Fonts files don't
+    /// always match our hardcoded guesses (e.g. JetBrains Mono ships
+    /// "JetBrainsMonoRoman-Regular" not "JetBrainsMono-Regular").
+    private(set) var resolvedNames: [String: String] = [:]
     /// Bumps when a download finishes — views observing this property
     /// re-render and pick up the newly-available font.
     private(set) var generation: Int = 0
@@ -74,48 +79,73 @@ final class FontStore {
         if entry.postScript == "<system>" {
             return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
         }
+        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) { return f }
         if let f = UIFont(name: entry.postScript, size: s) { return f }
         return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
+    }
+
+    /// Resolved PostScript name for the active font (or nil if the
+    /// system font is selected / family isn't registered yet).
+    func resolvedPostScript() -> String? {
+        guard let entry = Self.entries.first(where: { $0.label == label }),
+              entry.postScript != "<system>"
+        else { return nil }
+        if let resolved = resolvedNames[label],
+           UIFont(name: resolved, size: 12) != nil { return resolved }
+        if UIFont(name: entry.postScript, size: 12) != nil { return entry.postScript }
+        return nil
     }
 
     func ensureRegistered(label: String) {
         guard let entry = Self.entries.first(where: { $0.label == label }),
               !entry.bundled,
-              let css = entry.cssFamily,
-              !registered.contains(label),
-              UIFont(name: entry.postScript, size: 12) == nil
+              let css = entry.cssFamily
         else {
             generation += 1
             return
         }
+        // Already loaded?
+        if resolvedNames[label] != nil || UIFont(name: entry.postScript, size: 12) != nil {
+            generation += 1
+            return
+        }
+        if registered.contains(label) { return }
         registered.insert(label)
         Task.detached { [weak self] in
-            await self?.downloadAndRegister(family: css)
-            await MainActor.run { self?.generation += 1 }
+            let name = await self?.downloadAndRegister(family: css)
+            await MainActor.run {
+                if let n = name { self?.resolvedNames[label] = n }
+                self?.generation += 1
+            }
         }
     }
 
-    private func downloadAndRegister(family: String) async {
-        // 1) Fetch the Google Fonts CSS endpoint with a TTF-friendly UA.
-        guard let cssURL = URL(string: "https://fonts.googleapis.com/css2?family=\(family):wght@400&display=swap") else { return }
+    private func downloadAndRegister(family: String) async -> String? {
+        guard let cssURL = URL(string: "https://fonts.googleapis.com/css2?family=\(family):wght@400&display=swap") else { return nil }
         var req = URLRequest(url: cssURL)
-        // iOS Safari UA gets ttf URLs back (woff2 is the modern default but
-        // CTFontManager doesn't read woff2).
         req.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 12_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/12.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
         guard let (cssData, _) = try? await URLSession.shared.data(for: req),
-              let css = String(data: cssData, encoding: .utf8) else { return }
-        // Find the ttf URL in @font-face's src: url(...).
+              let css = String(data: cssData, encoding: .utf8) else { return nil }
         let pattern = #"url\((https://[^)]+\.ttf)\)"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
               let match = regex.firstMatch(in: css, range: NSRange(css.startIndex..., in: css)),
-              let urlRange = Range(match.range(at: 1), in: css) else { return }
-        guard let ttfURL = URL(string: String(css[urlRange])) else { return }
-        guard let (ttfData, _) = try? await URLSession.shared.data(from: ttfURL) else { return }
+              let urlRange = Range(match.range(at: 1), in: css),
+              let ttfURL = URL(string: String(css[urlRange])),
+              let (ttfData, _) = try? await URLSession.shared.data(from: ttfURL)
+        else { return nil }
         let cacheDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         let dest = cacheDir.appendingPathComponent("\(family).ttf")
         try? ttfData.write(to: dest)
         var error: Unmanaged<CFError>?
         CTFontManagerRegisterFontsForURL(dest as CFURL, .process, &error)
+        // Read the actual PostScript name out of the registered file.
+        // The hardcoded guesses (e.g. "JetBrainsMono-Regular") often
+        // don't match what the TTF declares (e.g.
+        // "JetBrainsMonoRoman-Regular"), causing UIFont(name:) lookups
+        // to fail and the app to fall back to .system.
+        guard let provider = CGDataProvider(url: dest as CFURL) else { return nil }
+        let cgFont = CGFont(provider)
+        return cgFont?.postScriptName as String?
     }
 }
 
@@ -126,16 +156,11 @@ extension Font {
     @MainActor
     static func app(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
         guard let store = FontStore.shared,
-              let entry = FontStore.entries.first(where: { $0.label == store.label }),
-              entry.postScript != "<system>",
-              UIFont(name: entry.postScript, size: size) != nil
+              let postScript = store.resolvedPostScript()
         else {
             return .system(size: size, weight: weight, design: design)
         }
-        // Bumping `generation` in FontStore re-renders observers; the
-        // resolved size we hand back also tracks store.size if the
-        // caller passed the implicit default.
-        _ = store.generation
-        return .custom(entry.postScript, size: size).weight(weight)
+        _ = store.generation  // tie observation
+        return .custom(postScript, size: size).weight(weight)
     }
 }
