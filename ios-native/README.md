@@ -69,7 +69,7 @@ Vids/
 | 7 | SwiftTerm + tmux tabs | ✅ (PTY + tabs working; rename popover + color picker + scroll zone TODO) |
 | 8 | APNs token register + action button delivery | ✅ basic |
 | 9 | SecretMenu + ClaudeFeed + ToastHUD + VolumeHUD | ✅ shells (output picker, FindMy proximity, brightness slider TODO) |
-| 10 | Delete `ios-app/` and `client/`, archive React docs | 🛑 **HELD** — won't delete until phases 5+6 are validated on real live streams. The native phone-mode UI isn't wired yet (AVPlayerHost is built but no SwiftUI mount path triggers it). React app remains the daily driver. |
+| 10 | ~~Delete `ios-app/` and `client/`~~ | 🚫 **CANCELLED** — Anton uses the React site (`client/`) on desktop occasionally. Native iOS Vids becomes the daily mobile driver; React + Capacitor stay for desktop browser access. The two share the same `server.js` so neither blocks the other. |
 
 ## Things deliberately NOT done in phase 1
 
