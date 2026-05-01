@@ -48,6 +48,7 @@ struct TerminalView: View {
             ZStack(alignment: .trailing) {
                 TermHost(host: services.serverHost,
                          autoFocus: terminal.wasKeyboardOpenAtClose,
+                         bgColor: UIColor(theme.resolvedSurface),
                          onSwipe: switchTmuxWindow(by:),
                          onMounted: { tv in
                              terminal.dismissKeyboard = { [weak tv] in
@@ -174,6 +175,7 @@ final class NoPasteTerminalView: SwiftTerm.TerminalView {
 struct TermHost: UIViewRepresentable {
     let host: String
     let autoFocus: Bool
+    let bgColor: UIColor
     let onSwipe: (Int) -> Void  // called with -1 (prev) or +1 (next)
     let onMounted: (SwiftTerm.TerminalView) -> Void
 
@@ -181,14 +183,11 @@ struct TermHost: UIViewRepresentable {
 
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
         let tv = NoPasteTerminalView(frame: .zero)
-        // pasteConfiguration with no acceptable types blocks the iOS
-        // "paste from <other device>" suggestion banner that was
-        // dumping screenshot data into the PTY when user tapped to type.
         tv.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [])
         tv.terminalDelegate = context.coordinator
-        tv.backgroundColor = UIColor(red: 0x28/255.0, green: 0x28/255.0, blue: 0x28/255.0, alpha: 1)
+        tv.backgroundColor = bgColor
         tv.nativeForegroundColor = UIColor(red: 0xeb/255.0, green: 0xdb/255.0, blue: 0xb2/255.0, alpha: 1)
-        tv.nativeBackgroundColor = UIColor(red: 0x28/255.0, green: 0x28/255.0, blue: 0x28/255.0, alpha: 1)
+        tv.nativeBackgroundColor = bgColor
         if let font = UIFont(name: "Menlo-Regular", size: 13) {
             tv.font = font
         }
@@ -219,6 +218,14 @@ struct TermHost: UIViewRepresentable {
 
     func updateUIView(_ uiView: SwiftTerm.TerminalView, context: Context) {
         context.coordinator.ensureConnected(host: host)
+        // Keep terminal bg in sync with the active tmux window's tint.
+        // SwiftTerm's WebGL/Metal renderer reads nativeBackgroundColor
+        // for cell fills; backgroundColor covers the surrounding chrome.
+        if uiView.nativeBackgroundColor != bgColor {
+            uiView.nativeBackgroundColor = bgColor
+            uiView.backgroundColor = bgColor
+            uiView.setNeedsDisplay()
+        }
     }
 
     static func dismantleUIView(_ uiView: SwiftTerm.TerminalView, coordinator: Coordinator) {
