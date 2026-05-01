@@ -73,6 +73,17 @@ struct TerminalView: View {
     }
 }
 
+/// SwiftTerm subclass that overrides paste(_:) to a no-op. SwiftTerm's
+/// implementation reads UIPasteboard.general.string and sends it
+/// through to the PTY — iOS's Universal Clipboard auto-paste was
+/// firing this without any user tap. paste(_:) is `open` in SwiftTerm
+/// so this override is allowed (method_setImplementation swizzling the
+/// same selector wasn't taking; subclass is more reliable).
+final class NoPasteTerminalView: SwiftTerm.TerminalView {
+    override func paste(_ sender: Any?) { /* swallow */ }
+    override func copy(_ sender: Any?) { super.copy(sender) }
+}
+
 /// SwiftTerm host wired to the server's `/ws/terminal` PTY endpoint.
 /// Receives raw bytes (ANSI escape codes), feeds them to SwiftTerm's
 /// emulator. Sends user keypresses back as bytes.
@@ -83,7 +94,7 @@ struct TermHost: UIViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
-        let tv = SwiftTerm.TerminalView(frame: .zero)
+        let tv = NoPasteTerminalView(frame: .zero)
         // pasteConfiguration with no acceptable types blocks the iOS
         // "paste from <other device>" suggestion banner that was
         // dumping screenshot data into the PTY when user tapped to type.
