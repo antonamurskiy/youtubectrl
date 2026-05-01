@@ -129,8 +129,15 @@ struct NowPlayingBar: View {
         .contentShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
         // iOS 26 Liquid Glass mini-player: floating glass surface with
         // a top hairline. Sheet-style instead of the flat dark bar.
-        .glassEffect(.regular.tint(.black.opacity(0.22)),
-                     in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        // Match the FAB stack's glassiness: same #282828 70% tint and
+        // .interactive() modifier so the NP bar refracts/highlights
+        // the same way the FABs do.
+        .glassEffect(
+            .regular
+                .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                .interactive(),
+            in: RoundedRectangle(cornerRadius: 28, style: .continuous)
+        )
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(Color.white.opacity(0.08))
