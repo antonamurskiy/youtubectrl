@@ -86,7 +86,7 @@ struct TerminalView: View {
         }
         .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
-        .ignoresSafeArea(.container, edges: bottomInset > 0 ? [] : .bottom)
+        .ignoresSafeArea(.container, edges: .bottom)
         .overlay(alignment: .bottomTrailing) {
             if terminal.keyboardOpen {
                 Button(action: dismissKeyboard) {

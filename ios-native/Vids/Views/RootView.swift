@@ -56,9 +56,16 @@ struct RootView: View {
             // iPad / landscape regular: feed and terminal side-by-side
             // (50/50 split). iPhone compact: cross-fade as before.
             // Push terminal content up when the now-playing bar is
-            // visible underneath so the last rows aren't covered.
+            // visible underneath. npBarHeight is measured WITHOUT the
+            // safe-area extension (bar's .ignoresSafeArea fires after
+            // background), so add the home-indicator inset on top.
+            let safeBottom: CGFloat = {
+                let scenes = UIApplication.shared.connectedScenes
+                let win = scenes.compactMap { ($0 as? UIWindowScene)?.keyWindow }.first
+                return win?.safeAreaInsets.bottom ?? 0
+            }()
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen && npBarHeight > 0)
-                ? npBarHeight
+                ? npBarHeight + safeBottom
                 : 0
             if hSize == .regular {
                 HStack(spacing: 0) {
