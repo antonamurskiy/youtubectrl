@@ -36,6 +36,7 @@
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
 		B286EBE1F4C705F0CCA021AF /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865103F6DE2AF3C66792596A /* Skeleton.swift */; };
 		B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */; };
+		B41C2EC4A91F9FA1A1F3E9F2 /* ClaudeQuickReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */; };
 		BBF6D487F7176B512230EC73 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 346B82D17260E7978B885929 /* TerminalStore.swift */; };
 		C3B59EFA6E8035C00EB557DA /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65572894BBBB3AB5F3216CEA /* AppDelegate.swift */; };
 		C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */; };
@@ -72,6 +73,7 @@
 		8E7DB4C9E774298C79886938 /* VidsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VidsApp.swift; sourceTree = "<group>"; };
 		8FA7931C65256F257CD6A648 /* FABStack.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FABStack.swift; sourceTree = "<group>"; };
 		948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */ = {isa = PBXFileReference; lastKnownFileType = file; path = "JetBrainsMono-Regular.ttf"; sourceTree = "<group>"; };
+		98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeQuickReply.swift; sourceTree = "<group>"; };
 		9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStore.swift; sourceTree = "<group>"; };
 		9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastHUD.swift; sourceTree = "<group>"; };
 		AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
@@ -189,6 +191,7 @@
 		BFEE1F56F52D6C68567DCFAA /* Misc */ = {
 			isa = PBXGroup;
 			children = (
+				98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */,
 				9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */,
 			);
 			path = Misc;
@@ -355,6 +358,7 @@
 				CD42B7C824BA8122439A88E2 /* ApiTypes.swift in Sources */,
 				C3B59EFA6E8035C00EB557DA /* AppDelegate.swift in Sources */,
 				9F4003B6DE9EF1A22E8F1C9E /* AudioOutputSheet.swift in Sources */,
+				B41C2EC4A91F9FA1A1F3E9F2 /* ClaudeQuickReply.swift in Sources */,
 				0B6E57F1A8D04E074EC694E9 /* CommentsPanel.swift in Sources */,
 				464D5B4427C251EDAD0D2E3B /* FABStack.swift in Sources */,
 				92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */,

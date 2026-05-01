@@ -143,6 +143,7 @@ struct RootView: View {
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
+            ClaudeQuickReply().zIndex(28)
 
             if ui.secretMenuOpen {
                 SecretMenu()

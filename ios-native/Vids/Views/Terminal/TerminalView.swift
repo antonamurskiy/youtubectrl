@@ -29,6 +29,9 @@ struct TerminalView: View {
                              }
                              DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
                                  tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
+                                 // Theme the keyboard accessory after
+                                 // SwiftTerm has built it.
+                                 themeAccessoryView(tv?.inputAccessoryView)
                              }
                          })
                     .background(theme.resolvedSurface)
@@ -159,6 +162,28 @@ extension UIColor {
         other.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
         return abs(ar - br) < 0.005 && abs(ag - bg) < 0.005 && abs(ab - bb) < 0.005 && abs(aa - ba) < 0.005
     }
+}
+
+/// Walks an inputAccessoryView's button-shaped subviews and tints
+/// them with our cream/dark theme.
+func themeAccessoryView(_ root: UIView?) {
+    guard let root else { return }
+    let bg = UIColor(red: 0x15/255, green: 0x15/255, blue: 0x15/255, alpha: 1)
+    let chipBg = UIColor(red: 0x28/255, green: 0x28/255, blue: 0x28/255, alpha: 1)
+    let cream = UIColor(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255, alpha: 1)
+    root.backgroundColor = bg
+    root.tintColor = cream
+    func walk(_ v: UIView) {
+        if let btn = v as? UIButton {
+            btn.backgroundColor = chipBg
+            btn.setTitleColor(cream, for: .normal)
+            btn.layer.cornerRadius = 4
+            btn.layer.borderWidth = 0
+            return
+        }
+        for s in v.subviews { walk(s) }
+    }
+    for s in root.subviews { walk(s) }
 }
 
 final class NoPasteTerminalView: SwiftTerm.TerminalView {
