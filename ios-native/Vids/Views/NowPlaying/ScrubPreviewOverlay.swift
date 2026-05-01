@@ -56,11 +56,14 @@ struct ScrubPreviewOverlay: View {
         let tileY: CGFloat = screen.height - barHeight - tileH - 28
 
         VStack(spacing: 6) {
-            Group {
+            ZStack {
+                Color.black
                 if let img = scrub.image {
-                    Image(uiImage: img).resizable().scaledToFill()
-                } else {
-                    Color.black.opacity(0.5)
+                    // .scaledToFit keeps the storyboard tile's full
+                    // aspect visible — .scaledToFill was cropping the
+                    // top/bottom because 132×76 is slightly narrower
+                    // than 16:9.
+                    Image(uiImage: img).resizable().scaledToFit()
                 }
             }
             .frame(width: tileW, height: tileH)
