@@ -59,10 +59,13 @@ struct ScrubPreviewOverlay: View {
             ZStack {
                 Color.black
                 if let img = scrub.image {
-                    // tileH is now exactly tileW * 9/16, matching the
-                    // storyboard tile's 16:9 aspect — scaledToFill
-                    // edge-aligns without cropping.
-                    Image(uiImage: img).resizable().scaledToFill()
+                    // .scaledToFit fits the image inside the frame
+                    // without overflowing — .scaledToFill was making
+                    // the image render larger than the 200×112 box
+                    // because the source storyboard crop is at full
+                    // ytimg resolution (e.g. 320×180) and scaledToFill
+                    // sizes by the longer side.
+                    Image(uiImage: img).resizable().scaledToFit()
                 }
             }
             .frame(width: tileW, height: tileH)
