@@ -192,9 +192,22 @@ actor ApiClient {
         try await post("/api/not-interested", body: ["token": token])
     }
 
-    struct VolumeStatus: Codable { let volume: Double?; let muted: Bool? }
-    func volumeStatus() async throws -> VolumeStatus { try await get("/api/volume-status") }
-    func setVolume(_ v: Double) async throws { try await post("/api/volume", body: ["volume": v]) }
+    struct VolumeStatusRaw: Codable { let volume: Int?; let muted: Bool? }
+    struct VolumeStatus { let volume: Double?; let muted: Bool? }
+    func volumeStatus() async throws -> VolumeStatus {
+        // Server returns volume as 0–100 int; convert to 0..1 for the slider.
+        let raw: VolumeStatusRaw = try await get("/api/volume-status")
+        return VolumeStatus(
+            volume: raw.volume.map { Double($0) / 100.0 },
+            muted: raw.muted
+        )
+    }
+    /// `v` is 0..1 — server expects 0–100 int. Server does parseInt() so a
+    /// raw 0.5 rounds to 0 → mute. Always send as integer percent.
+    func setVolume(_ v: Double) async throws {
+        let pct = Int((max(0, min(1, v)) * 100).rounded())
+        try await post("/api/volume", body: ["volume": pct])
+    }
 
     struct BluetoothDevice: Codable, Hashable, Identifiable {
         let address: String
