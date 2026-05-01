@@ -19,8 +19,19 @@ struct FABStack: View {
 
     /// Default FAB chrome — translucent dark grey + cream text.
     /// Matches React's .fab-* (rgba(40,40,40,0.7) bg, --text-dim).
-    private static let fabBg = Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
-    private static let fabFg = Color(hex: "#a89984")
+    private static let fabBgDefault = Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
+    private static let fabFgDefault = Color(hex: "#a89984")
+
+    /// Track the tmux pane tint when terminal is open so FABs blend
+    /// with the surrounding panel chrome instead of looking out of
+    /// place against the colored bg.
+    private var fabBg: Color {
+        if terminal.open, let tint = theme.activeTmuxTint {
+            return tint.opacity(0.5)
+        }
+        return FABStack.fabBgDefault
+    }
+    private var fabFg: Color { FABStack.fabFgDefault }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -33,8 +44,8 @@ struct FABStack: View {
                     // rotating).
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
-                    .background(claudeColor != nil ? claudeColor!.opacity(0.18) : Self.fabBg)
-                    .foregroundStyle(claudeColor ?? Self.fabFg)
+                    .background(claudeColor != nil ? claudeColor!.opacity(0.18) : fabBg)
+                    .foregroundStyle(claudeColor ?? fabFg)
                     .clipShape(Circle())
                     .overlay(Circle().stroke(claudeColor ?? Color.clear, lineWidth: 1.5))
                     .scaleEffect(claudePulse ? 1.08 : 1)
@@ -51,8 +62,8 @@ struct FABStack: View {
                 Image(systemName: "arrow.clockwise")
                     .font(.system(size: 14, weight: .bold))
                     .frame(width: 44, height: 44)
-                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : Self.fabBg)
-                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : Self.fabFg)
+                    .background(feed.isCurrentTabLoading ? Color(hex: "#8ec07c").opacity(0.18) : fabBg)
+                    .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : fabFg)
                     .clipShape(Circle())
                     .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
                     .animation(

@@ -123,6 +123,10 @@ struct RootView: View {
             //   ~72 clearance) — matches React's body.keyboard-open rule
             // - NP bar visible: ~250 (bar with three rows + safe area)
             // - otherwise: 24 from bottom
+            // Position FABs in the bottom-right via Spacer pseudo-frame
+            // but disable hit-testing on the wrapper so the empty
+            // space (Spacers) doesn't intercept feed scroll on the
+            // right side. Re-enable on the FABStack itself.
             VStack {
                 Spacer()
                 HStack {
@@ -130,17 +134,12 @@ struct RootView: View {
                     FABStack()
                         .padding(.trailing, 16)
                         .padding(.bottom, fabBottomPadding)
-                        // Disable any animation inherited from parent.
-                        // Parent has .animation(.easeOut, value: terminal.open)
-                        // and .animation(.easeInOut, value: theme.resolvedSurface)
-                        // which were animating FAB position on unrelated
-                        // state changes — looked like the FABs were
-                        // bouncing for no reason.
                         .transaction { $0.animation = nil }
+                        .allowsHitTesting(true)
                 }
             }
             .ignoresSafeArea(.keyboard, edges: .bottom)
-            .allowsHitTesting(true)
+            .allowsHitTesting(false)
             .zIndex(20)
 
             ToastHUD().zIndex(30)
