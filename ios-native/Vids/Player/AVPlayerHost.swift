@@ -12,6 +12,22 @@ import Observation
 /// MPRemoteCommandCenter wiring, hardware-volume KVO) are documented
 /// inline. Subclass / extend rather than rewrite — the existing rules
 /// took multiple iterations to get right.
+/// UIView whose backing layer IS the AVPlayerLayer (set via
+/// layerClass). Auto-sizes the player layer with the view — no manual
+/// frame sync, no sublayer dance.
+final class PlayerHostView: UIView {
+    override class var layerClass: AnyClass { AVPlayerLayer.self }
+    var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+    init(player: AVPlayer) {
+        super.init(frame: .zero)
+        backgroundColor = .black
+        playerLayer.player = player
+        playerLayer.videoGravity = .resizeAspect
+        isHidden = true
+    }
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 /// All UI-touching methods are explicitly @MainActor; class itself is
 /// not isolated so it can be instantiated from ServiceContainer init.
 @Observable
@@ -25,16 +41,13 @@ final class AVPlayerHost: NSObject {
         return p
     }()
 
-    /// UIView holding the AVPlayerLayer. SwiftUI hosts this via
-    /// UIViewRepresentable when sync-mode is active.
-    let containerView: UIView = {
-        let v = UIView()
-        v.backgroundColor = .black
-        v.isHidden = true
-        return v
-    }()
+    /// UIView holding the AVPlayerLayer. Custom subclass so the layer
+    /// auto-resizes with the view (default UIView's backing layer is a
+    /// CALayer, not AVPlayerLayer, and adding the layer as a sublayer
+    /// requires manual frame sync on every layout pass).
+    let containerView: PlayerHostView
 
-    private let playerLayer: AVPlayerLayer
+    private var playerLayer: AVPlayerLayer { containerView.playerLayer }
     private var pip: AVPictureInPictureController?
     private var rateObserver: NSKeyValueObservation?
     private var statusObserver: NSKeyValueObservation?
@@ -52,10 +65,8 @@ final class AVPlayerHost: NSObject {
     var onRemoteSeek: ((Double) -> Void)?
 
     override init() {
-        playerLayer = AVPlayerLayer(player: player)
-        playerLayer.videoGravity = .resizeAspect
+        containerView = PlayerHostView(player: player)
         super.init()
-        containerView.layer.addSublayer(playerLayer)
         configureAudioSession()
         installRateObserver()
         installPipController()
@@ -97,7 +108,8 @@ final class AVPlayerHost: NSObject {
             player.play()
             UIApplication.shared.isIdleTimerDisabled = true
         }
-        playerLayer.player = player
+        // playerLayer.player already set in PlayerHostView.init.
+        containerView.isHidden = false
     }
 
     private func buildCompositionItem(videoURL: URL, audioURL: URL, durationHint: Double) async throws -> AVPlayerItem {
@@ -198,9 +210,9 @@ final class AVPlayerHost: NSObject {
     func setLayerFrame(_ rect: CGRect, visible: Bool) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        playerLayer.frame = containerView.bounds
         containerView.frame = rect
         containerView.isHidden = !visible
+        containerView.setNeedsLayout()
         if let pip, !pip.isPictureInPictureActive {
             pip.canStartPictureInPictureAutomaticallyFromInline = visible
         }

@@ -29,11 +29,17 @@ struct RootView: View {
 
             // Phone-sync video frame, hosting AVPlayerHost.containerView.
             if phoneMode.mode == .sync {
-                PhonePlayerView(host: services.avHost)
-                    .aspectRatio(16.0/9.0, contentMode: .fit)
-                    .frame(maxWidth: .infinity, alignment: .top)
-                    .padding(.top, 70)
-                    .zIndex(5)
+                VStack(spacing: 0) {
+                    GeometryReader { geo in
+                        PhonePlayerView(host: services.avHost)
+                            .frame(width: geo.size.width, height: geo.size.width * 9 / 16)
+                    }
+                    .frame(height: UIScreen.main.bounds.width * 9 / 16)
+                    Spacer(minLength: 0)
+                }
+                .padding(.top, 70)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .zIndex(5)
             }
 
             // Now-playing bar — hidden when terminal+keyboard.
