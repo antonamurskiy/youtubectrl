@@ -12,8 +12,8 @@ final class PushStore {
     private(set) var feed: [FeedLine] = []
     var apnsToken: String? = nil
     private var pruneTimer: Timer?
-    /// Lifetime in seconds. Matches the React app's pruneClaudeFeed cutoff.
-    let lifetime: TimeInterval = 30
+    /// Lifetime in seconds.
+    let lifetime: TimeInterval = 8
 
     init() {
         // Prune every second so lines fade off without piling up forever.
