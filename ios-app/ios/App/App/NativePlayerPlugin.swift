@@ -776,33 +776,58 @@ public class NativePlayerPlugin: CAPPlugin, CAPBridgedPlugin, AVPictureInPicture
     /// status-bar UIView area. Pass null/empty to revert.
     @objc func setSafeAreaBackground(_ call: CAPPluginCall) {
         let hex = call.getString("color") ?? ""
+        // Default 400ms matches the CSS `transition: background-color
+        // 400ms ease` on body so the Dynamic Island gutter fades in
+        // sync with the body bg instead of snapping.
+        let durMs = call.getDouble("durationMs") ?? 400
+        // JS captures wall-clock at the moment it sets body.style.background.
+        // We use it to fast-forward the native animator's fractionComplete
+        // to compensate for bridge IPC latency — without it, the gutter
+        // animation lags the body fade by ~30-50ms (the dispatch round-
+        // trip). With it, both animations occupy the same wall-clock
+        // window even though they don't START at the same wall-clock.
+        let cssStartWallMs = call.getDouble("cssStartWallMs") ?? 0
         DispatchQueue.main.async {
             let color = NativePlayerPlugin.colorFromHex(hex) ?? UIColor(red: 33.0/255, green: 33.0/255, blue: 33.0/255, alpha: 1)
-            guard let webView = self.bridge?.webView else { return }
-            webView.backgroundColor = color
-            webView.scrollView.backgroundColor = color
-            webView.isOpaque = false
-            webView.superview?.backgroundColor = color
-            webView.window?.backgroundColor = color
-            // Walk up parents (UIViewController.view, UIWindow) and
-            // also paint EVERY direct child of the window — Capacitor's
-            // iOS status-bar plugin (when overlaysWebView=false) inserts
-            // a tinted UIView at the top of the window stack that
-            // covers our WebView's tinted bg. Recoloring all window
-            // children catches it without us having to identify it
-            // by name.
-            var v: UIView? = webView
-            while v != nil {
-                v?.backgroundColor = color
-                v = v?.superview
+            guard let webView = self.bridge?.webView else {
+                call.resolve(["ok": false])
+                return
             }
-            if let window = webView.window {
-                for sub in window.subviews {
-                    sub.backgroundColor = color
+            webView.isOpaque = false
+            // Wrap every assignment in a UIView animation so the gutter
+            // fade matches CSS body bg fade. Walk parents up to UIWindow
+            // + every direct child of the window — Capacitor's status-bar
+            // plugin inserts a tinted UIView above the WebView that we
+            // need to recolor too.
+            // Animate at 400ms ease (CSS-matched cubic). JS-side
+            // delays its body CSS transition by an empirically-tuned
+            // bridge latency so both fades start at roughly the same
+            // wall-clock moment. We don't try to fast-forward fraction
+            // anymore — that overcorrected because the bridge round-
+            // trip is variable.
+            let timing = UICubicTimingParameters(
+                controlPoint1: CGPoint(x: 0.25, y: 0.1),
+                controlPoint2: CGPoint(x: 0.25, y: 1.0)
+            )
+            let animator = UIViewPropertyAnimator(duration: durMs / 1000.0, timingParameters: timing)
+            animator.addAnimations {
+                webView.backgroundColor = color
+                webView.scrollView.backgroundColor = color
+                var v: UIView? = webView
+                while v != nil {
+                    v?.backgroundColor = color
+                    v = v?.superview
+                }
+                if let window = webView.window {
+                    for sub in window.subviews {
+                        sub.backgroundColor = color
+                    }
                 }
             }
+            animator.startAnimation()
+            call.resolve(["ok": true])
+            _ = cssStartWallMs
         }
-        call.resolve(["ok": true])
     }
 
     private static func colorFromHex(_ hex: String) -> UIColor? {

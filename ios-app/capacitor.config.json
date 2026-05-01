@@ -18,7 +18,7 @@
     "webContentsDebuggingEnabled": true,
     "allowsLinkPreview": false,
     "scrollEnabled": true,
-    "backgroundColor": "#212121ff"
+    "backgroundColor": "#282828ff"
   },
   "plugins": {
     "SplashScreen": {
@@ -29,7 +29,7 @@
     "StatusBar": {
       "style": "DARK",
       "backgroundColor": "#212121",
-      "overlaysWebView": false
+      "overlaysWebView": true
     }
   }
 }

@@ -53,10 +53,13 @@ export const NativePlayer = {
   },
   // Paints the iOS safe-area regions (Dynamic Island gutter, home
   // indicator strip) the given hex color. Pass empty string to revert
-  // to the default WebView background.
-  async setSafeAreaBackground(color) {
+  // to the default WebView background. cssStartWallMs is the wall-clock
+  // ms when the JS-side CSS transition started — native fast-forwards
+  // its animator to that fraction to compensate for bridge IPC latency
+  // and stay in sync with body's CSS fade.
+  async setSafeAreaBackground(color, cssStartWallMs = 0) {
     if (!plugin) return
-    return plugin.setSafeAreaBackground({ color: color || '' })
+    return plugin.setSafeAreaBackground({ color: color || '', cssStartWallMs })
   },
   addListener(event, handler) {
     if (!plugin) return { remove: () => {} }
@@ -78,13 +81,17 @@ export async function hapticSelection() {
   try { await cap.Plugins.Haptics.selectionStart(); await cap.Plugins.Haptics.selectionChanged(); await cap.Plugins.Haptics.selectionEnd() } catch {}
 }
 
-// Status bar: dark theme matching --bg
+// Status bar: dark theme matching --bg. overlaysWebView=true so the
+// WebView extends behind the Dynamic Island — body bg covers the
+// gutter and its CSS transition drives the fade in sync with the
+// rest of the app. Without this, body stops at the safe-area inset
+// and Capacitor's StatusBar UIView (gray #212121) shows in the
+// gutter regardless of body bg.
 export async function setStatusBarDark() {
   if (!isNativeIOS) return
   try {
     await cap.Plugins.StatusBar.setStyle({ style: 'DARK' })
-    await cap.Plugins.StatusBar.setBackgroundColor({ color: '#212121' })
-    await cap.Plugins.StatusBar.setOverlaysWebView({ overlay: false })
+    await cap.Plugins.StatusBar.setOverlaysWebView({ overlay: true })
   } catch {}
 }
 

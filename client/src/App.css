@@ -57,7 +57,15 @@ body {
   -webkit-tap-highlight-color: transparent;
   font-size: var(--font-lg);
   line-height: 1.4;
-  transition: background-color 400ms ease;
+  /* 400ms ease background-color fade. Matches the manual rAF cubic-
+   * bezier(0.25, 0.1, 0.25, 1) interpolation Terminal.jsx applies to
+   * xterm's theme.background and the UIViewPropertyAnimator native-
+   * side, so body, xterm and the Dynamic Island gutter all fade
+   * through the same curve over the same 400ms window. */
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+html {
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 /* Maria-proximity alert: shift the whole palette to a red-themed
@@ -688,6 +696,7 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   -webkit-transform-style: preserve-3d;
   animation: np-enter 180ms cubic-bezier(0.22, 1, 0.36, 1) both;
   will-change: transform, opacity;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 /* Browsers without backdrop-filter support fall through to a solid
  * --bg so there's no see-through-with-no-blur regression. */
@@ -1313,6 +1322,8 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
   background: var(--bg);
   padding-bottom: 190px;
   padding-bottom: calc(190px + var(--safe-bottom));
+  /* Match the body / xterm / native gutter fade. */
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 .terminal-panel.terminal-full {
@@ -1346,6 +1357,7 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
    * from that zone's touchmove handler. */
   touch-action: none !important;
   overflow: hidden !important;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 /* Right-edge invisible touch zone. Captures touchstart/touchmove and
@@ -1576,6 +1588,7 @@ body.keyboard-open .fab-stack { bottom: 408px; }
   -webkit-user-select: none;
   user-select: none;
   touch-action: manipulation;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1), border-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 .fab-refresh:active, .fab-cmux:active, .fab-tmux:active { background: var(--fab-bg-active, var(--surface-hover)); }
 
@@ -1711,6 +1724,7 @@ body.keyboard-open .claude-quick-reply { bottom: 498px; }
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
+  transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1), border-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1);
 }
 
 /* View Transitions API: smooth reshuffle on silent tab refresh */

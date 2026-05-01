@@ -420,18 +420,65 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     scrollLockUntilRef.current = Date.now() + 1200
   }, [activeIdx])
 
-  // Re-apply the xterm theme whenever the active window's tint changes
-  // so switching tmux windows visibly recolors the terminal pane.
+  // xterm's WebGL theme.background snaps when assigned. To match the
+  // body's 400ms ease CSS fade, animate the xterm bg manually via
+  // requestAnimationFrame interpolating from the previous color to
+  // the new one with the same cubic-bezier(0.25, 0.1, 0.25, 1) curve.
+  // Without this, xterm visibly snapped to the new tint while body
+  // was still fading — exactly the "Dynamic Island late" perception.
+  const xtermBgRef = useRef(null)
   useEffect(() => {
     const term = xtermRef.current
     if (!term) return
     const css = getComputedStyle(document.body)
     const baseBg = css.getPropertyValue('--bg').trim() || '#282828'
-    const tintBg = activeColor ? darkenHex(activeColor) : baseBg
-    try {
-      term.options.theme = { ...term.options.theme, background: tintBg }
-      term.refresh(0, term.rows - 1)
-    } catch {}
+    const target = activeColor ? darkenHex(activeColor) : baseBg
+    const from = xtermBgRef.current || target
+    xtermBgRef.current = target
+    const parse = (hex) => {
+      const c = hex.replace('#', '')
+      const h = c.length === 3 ? c.split('').map(x => x + x).join('') : c.slice(0, 6)
+      return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]
+    }
+    const [fr, fg, fb] = parse(from)
+    const [tr, tg, tb] = parse(target)
+    if (fr === tr && fg === tg && fb === tb) {
+      try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
+      return
+    }
+    // Cubic bezier evaluator for cubic-bezier(0.25, 0.1, 0.25, 1) —
+    // matches CSS `ease`. Newton-Raphson on x to find t.
+    const bz = (t, p1, p2) => 3 * (1 - t) * (1 - t) * t * p1 + 3 * (1 - t) * t * t * p2 + t * t * t
+    const easeY = (x) => {
+      let t = x
+      for (let i = 0; i < 6; i++) {
+        const xt = bz(t, 0.25, 0.25)
+        const dx = 3 * (1 - t) * (1 - t) * 0.25 + 6 * (1 - t) * t * (0.25 - 0.25) + 3 * t * t * (1 - 0.25)
+        t -= (xt - x) / (dx || 1)
+      }
+      return bz(t, 0.1, 1)
+    }
+    const start = performance.now()
+    const dur = 400
+    let raf = 0
+    let cancelled = false
+    const tick = () => {
+      if (cancelled) return
+      const elapsed = performance.now() - start
+      const x = Math.min(1, elapsed / dur)
+      const e = easeY(x)
+      const r = Math.round(fr + (tr - fr) * e)
+      const g = Math.round(fg + (tg - fg) * e)
+      const b = Math.round(fb + (tb - fb) * e)
+      const hex = '#' + [r, g, b].map(v => v.toString(16).padStart(2, '0')).join('')
+      try {
+        term.options.theme = { ...term.options.theme, background: hex }
+        term.refresh(0, term.rows - 1)
+      } catch {}
+      if (x < 1) raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => { cancelled = true; cancelAnimationFrame(raf) }
   }, [activeColor])
 
   // Paint the iOS safe-area regions (top under the Dynamic Island,
@@ -447,27 +494,22 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     const prevBody = body.style.background
     const baseBg = getComputedStyle(body).getPropertyValue('--bg').trim() || '#282828'
     const tintBg = activeColor ? darkenHex(activeColor) : baseBg
+    // overlaysWebView is permanently true in capacitor.config.json so
+    // body always extends behind the Dynamic Island. The gutter is
+    // driven by body's CSS transition (400ms ease). Native call just
+    // snaps the WebView/UIWindow bg so it matches when the fade ends
+    // — body covers them during the fade so the snap is invisible.
+    // Toggling overlay at runtime caused a ~50ms gutter-late seam
+    // because the WebView-frame relayout took longer than the body
+    // bg flip.
+    // CSS rules in App.css carry the 400ms cubic-bezier transitions
+    // for body + html. Just set the bg here — the rule fires the fade.
     html.style.background = tintBg
     body.style.background = tintBg
-    // The Dynamic Island gutter is painted by the iOS status bar
-    // (overlaysWebView=false in capacitor.config.json), so body bg
-    // doesn't reach it — push the same color via the StatusBar plugin.
-    // The Dynamic Island gutter is painted by the iOS status bar.
-    // Setting it requires BOTH:
-    //   1. setOverlaysWebView({overlay: true}) so the status bar is
-    //      transparent and the WebView extends behind it.
-    //   2. Painting every UIView in the WebView's stack (window,
-    //      WebView, scrollView, superview) the tint color so the
-    //      status-bar area picks it up — body bg alone doesn't reach
-    //      that region in WKWebView. setBackgroundColor on the
-    //      StatusBar plugin is an Android-only no-op on v8.
-    const sb = window.Capacitor?.Plugins?.StatusBar
-    try { sb?.setOverlaysWebView?.({ overlay: true })?.catch?.(() => {}) } catch {}
     NativePlayer.setSafeAreaBackground?.(tintBg)?.catch?.(() => {})
     return () => {
       html.style.background = prevHtml
       body.style.background = prevBody
-      try { sb?.setOverlaysWebView?.({ overlay: false })?.catch?.(() => {}) } catch {}
       NativePlayer.setSafeAreaBackground?.('')?.catch?.(() => {})
     }
   }, [visible, activeColor])
