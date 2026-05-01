@@ -134,13 +134,17 @@ struct NowPlayingBar: View {
         // bar's rounded-rect shape. .glassEffect(in: shape) applies
         // the shape as a clip mask to descendants too, which was
         // hiding the storyboard preview that floats above the bar.
+        // Background-layered glass so the scrubber preview tile can
+        // overflow above without being clipped by the glass `in:`
+        // shape mask. Tint follows the active theme — same source the
+        // FAB stack uses (theme.resolved.darken(0.55) → #282828 fallback)
+        // so the whole UI cohere when the user picks a tmux pane color
+        // or a tinted feed tab.
         .background {
             RoundedRectangle(cornerRadius: 28, style: .continuous)
                 .fill(Color.clear)
                 .glassEffect(
-                    .regular
-                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                        .interactive(),
+                    .regular.tint(barTint).interactive(),
                     in: RoundedRectangle(cornerRadius: 28, style: .continuous)
                 )
                 .overlay(
@@ -161,6 +165,15 @@ struct NowPlayingBar: View {
         }
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
+    }
+
+    /// Glass tint mirrors the FAB stack: tmux pane color when the
+    /// terminal is open, per-tab color otherwise, dark fallback.
+    private var barTint: Color {
+        if let r = theme.resolved {
+            return r.darken(0.55).opacity(0.7)
+        }
+        return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
     }
 
     /// Faint divider that gives the rows visual structure on the
