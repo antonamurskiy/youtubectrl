@@ -4,6 +4,7 @@ struct NowPlayingBar: View {
     @Environment(PlaybackStore.self) private var playback
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
+    @Environment(PhoneModeStore.self) private var phoneMode
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +24,10 @@ struct NowPlayingBar: View {
                 }
                 Spacer()
                 HStack(spacing: 16) {
+                    Button(action: { Task { await phoneMode.toggle(services: services) } }) {
+                        Image(systemName: phoneMode.mode == .sync ? "iphone.gen3" : "macbook")
+                            .opacity(phoneMode.loading ? 0.4 : 1)
+                    }
                     Button(action: { Task { try? await services.api.skip(-15) } }) {
                         Image(systemName: "gobackward.15")
                     }

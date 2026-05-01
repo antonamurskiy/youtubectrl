@@ -15,6 +15,7 @@ final class ServiceContainer {
     let ui: UIStore
     let avHost: AVPlayerHost
     let liveSync: LiveSyncEngine
+    let phoneMode: PhoneModeStore
 
     init() {
         self.api = ApiClient(host: "yuzu.local:3000")
@@ -26,6 +27,7 @@ final class ServiceContainer {
         self.ui = UIStore()
         self.avHost = AVPlayerHost()
         self.liveSync = LiveSyncEngine()
+        self.phoneMode = PhoneModeStore()
         self.ws = WSClient(host: "yuzu.local:3000")
         self.ws.onMessage = { [weak self] msg in
             guard let self else { return }

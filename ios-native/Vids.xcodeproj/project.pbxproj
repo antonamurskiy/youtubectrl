@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0AFD226C3495A4B16FACED63 /* VidsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E7DB4C9E774298C79886938 /* VidsApp.swift */; };
+		10F3E3D1F18ABC690EBF3566 /* PhonePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */; };
 		1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA16E099AF62AF37E5C3C310 /* WSClient.swift */; };
 		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
@@ -32,12 +33,14 @@
 		C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */; };
 		CD42B7C824BA8122439A88E2 /* ApiTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE012FEFD2349F3E85379D /* ApiTypes.swift */; };
 		E40BA8E9B1FF19AB78BD3214 /* PushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B7CFE15E3082B8C87ABCBB /* PushHandler.swift */; };
+		E623387647B43F0B8FC3BCC6 /* PhoneModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA06C97010812FA4311BB5E /* PhoneModeStore.swift */; };
 		E77C9A0A21504CCE3D4217BC /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0C52D6101F3F7D06A77584 /* ThumbnailCache.swift */; };
 		F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretMenu.swift; sourceTree = "<group>"; };
+		16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonePlayerView.swift; sourceTree = "<group>"; };
 		1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBar.swift; sourceTree = "<group>"; };
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
@@ -63,6 +66,7 @@
 		E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedStore.swift; sourceTree = "<group>"; };
 		E521EA57B7C296650D408D49 /* ServiceContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceContainer.swift; sourceTree = "<group>"; };
 		EACE012FEFD2349F3E85379D /* ApiTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiTypes.swift; sourceTree = "<group>"; };
+		EFA06C97010812FA4311BB5E /* PhoneModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneModeStore.swift; sourceTree = "<group>"; };
 		F728C5D3839372BE65C948DD /* Vids.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Vids.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -100,6 +104,7 @@
 			isa = PBXGroup;
 			children = (
 				1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */,
+				16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */,
 				2E7A60F533EA88740A8701DF /* ScrubberView.swift */,
 			);
 			path = NowPlaying;
@@ -191,6 +196,7 @@
 			isa = PBXGroup;
 			children = (
 				E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */,
+				EFA06C97010812FA4311BB5E /* PhoneModeStore.swift */,
 				9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */,
 				7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */,
 				346B82D17260E7978B885929 /* TerminalStore.swift */,
@@ -288,6 +294,8 @@
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
 				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
 				452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */,
+				E623387647B43F0B8FC3BCC6 /* PhoneModeStore.swift in Sources */,
+				10F3E3D1F18ABC690EBF3566 /* PhonePlayerView.swift in Sources */,
 				9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */,
 				E40BA8E9B1FF19AB78BD3214 /* PushHandler.swift in Sources */,
 				2CEB249AFD0ABD0A09F3570F /* PushStore.swift in Sources */,

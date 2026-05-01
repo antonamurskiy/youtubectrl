@@ -79,6 +79,29 @@ actor ApiClient {
         try await post("/api/apns-register", body: ["token": token])
     }
 
+    struct WatchOnPhoneResponse: Codable {
+        let streamUrl: String?
+        let videoUrl: String?
+        let audioUrl: String?
+        let seconds: Double?
+        let videoId: String?
+        let isLive: Bool?
+        let durationSec: Double?
+    }
+
+    func watchOnPhone() async throws -> WatchOnPhoneResponse {
+        var req = URLRequest(url: url("/api/watch-on-phone"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
+        let (data, _) = try await session.data(for: req)
+        return try decoder.decode(WatchOnPhoneResponse.self, from: data)
+    }
+
+    func stopPhoneStream() async throws {
+        try await post("/api/stop-phone-stream")
+    }
+
     func previewURL(videoId: String, isLive: Bool = false) async throws -> String? {
         var q = [URLQueryItem(name: "id", value: videoId)]
         if isLive { q.append(URLQueryItem(name: "live", value: "1")) }

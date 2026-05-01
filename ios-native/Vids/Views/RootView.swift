@@ -7,6 +7,7 @@ struct RootView: View {
     @Environment(TerminalStore.self) private var terminal
     @Environment(ThemeStore.self) private var theme
     @Environment(UIStore.self) private var ui
+    @Environment(PhoneModeStore.self) private var phoneMode
 
     @State private var searchFocused = false
 
@@ -24,6 +25,15 @@ struct RootView: View {
             if terminal.open {
                 TerminalView()
                     .transition(.identity)
+            }
+
+            // Phone-sync video frame, hosting AVPlayerHost.containerView.
+            if phoneMode.mode == .sync {
+                PhonePlayerView(host: services.avHost)
+                    .aspectRatio(16.0/9.0, contentMode: .fit)
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .padding(.top, 70)
+                    .zIndex(5)
             }
 
             // Now-playing bar — hidden when terminal+keyboard.
