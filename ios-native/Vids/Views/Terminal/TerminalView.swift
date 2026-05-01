@@ -150,16 +150,13 @@ struct TermHost: UIViewRepresentable {
         pan.delaysTouchesEnded = false
         tv.addGestureRecognizer(pan)
         // Disable SwiftTerm's own pan recognizers — its panMouseGesture
-        // forwards drags as SGR mouse sequences to the PTY (tmux selects,
-        // copies into buffer, looks like an "auto-paste"); panSelectionGesture
-        // would copy into UIPasteboard. Both fire at the same time as our
-        // swipe. We provide our own scroll via ScrollZoneOverlay and our
-        // own swipe via this gesture, so the SwiftTerm pans are dead weight.
-        DispatchQueue.main.async {
-            for gr in tv.gestureRecognizers ?? [] where gr !== pan && gr is UIPanGestureRecognizer {
-                gr.isEnabled = false
-            }
-        }
+        // forwards drags as SGR mouse sequences to the PTY (the source
+        // of the swipe-paste bug). panSelectionGesture would copy to
+        // UIPasteboard.
+        // SwiftTerm adds panMouseGesture LATER when tmux turns mouse
+        // mode on, so a one-time disable at init misses it. Use a
+        // recurring 0.5s tick to keep nuking newly-added pans.
+        context.coordinator.startPanKiller(on: tv, ourPan: pan)
         return tv
     }
 
@@ -178,6 +175,21 @@ struct TermHost: UIViewRepresentable {
         private let session = URLSession(configuration: .default)
         var onSwipe: ((Int) -> Void)?
         private var swipeStart: CGPoint?
+        private var panKillerTimer: Timer?
+
+        func startPanKiller(on tv: UIView, ourPan: UIGestureRecognizer) {
+            panKillerTimer?.invalidate()
+            // Re-disable SwiftTerm's pans every 0.5s. They get re-added
+            // when tmux toggles mouse mode; without re-checking, the
+            // newly-added pan forwards drag-as-mouse to the PTY.
+            panKillerTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak tv, weak ourPan] _ in
+                guard let tv else { return }
+                for gr in tv.gestureRecognizers ?? [] where gr !== ourPan && gr is UIPanGestureRecognizer {
+                    gr.isEnabled = false
+                }
+            }
+            panKillerTimer?.fire()
+        }
 
         // Don't run simultaneously with SwiftTerm's gestures — its
         // selection-pan was activating on every swipe, copying whatever
