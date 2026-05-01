@@ -945,6 +945,63 @@ because Capacitor's StatusBar plugin inserts a UIView ABOVE the
 WebView in the window stack that paints with its own configured bg
 and would otherwise hide the tint.
 
+`overlaysWebView` is now PERMANENTLY `true` — set in
+`capacitor.config.json` AND forced via `StatusBar.setOverlaysWebView({overlay: true})`
+in `setStatusBarDark()` at app boot. Do NOT toggle this at runtime
+during a tint change: the WebView frame relayout takes ~50ms and
+during that window the body doesn't reach the gutter, producing
+a "gutter trails body" seam. With overlay=true permanent, the body
+covers the Dynamic Island gutter from boot, so its CSS `transition`
+drives the gutter fade. Default WebView `backgroundColor` is
+`#282828` (matches `--bg`) so any momentary peek where body briefly
+doesn't cover (keyboard / safe-area relayout) matches the rest.
+
+#### Synchronizing the tint fade across all surfaces
+
+When the active tmux window's color changes, EVERY tinted surface
+needs to fade through the same color path on the same time axis or
+you get visible seams between layers. The leader was xterm — its
+WebGL `theme.background` snaps when assigned, so naive theme swap
+left xterm at the new color while body's CSS transition was still
+mid-fade ("Dynamic Island late" perception, but actually xterm was
+"too early"). The fix is to give every layer a 400ms
+`cubic-bezier(0.25, 0.1, 0.25, 1)` (= CSS `ease`) transition:
+
+- **body + html**: static CSS rule `transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1)`.
+  Set the rule in CSS, NOT inline in JS — setting `style.transition`
+  and `style.background` in the same JS tick was sometimes batched
+  into a single style-recompute that skipped the fade.
+- **xterm**: drive `term.options.theme.background` via a
+  `requestAnimationFrame` loop in Terminal.jsx, parsing prev + target
+  hex, evaluating cubic-bezier `t` via Newton-Raphson on the x curve
+  each frame, lerping channels, calling `term.refresh(0, rows-1)`.
+  Tracked previous color in `xtermBgRef` so each transition starts
+  from the right place.
+- **Native UIView/UIWindow stack**: `UIViewPropertyAnimator(duration: 0.4)`
+  with `UICubicTimingParameters(controlPoint1: (0.25, 0.1), controlPoint2: (0.25, 1.0))`
+  in `setSafeAreaBackground`. Snap-only or animate-without-matching-curve
+  visibly desyncs from the others.
+- **`.terminal-panel`, `.xterm-viewport`, `.now-playing`,
+  `.tmux-tabs button`, `.fab-*`**: same CSS transition rule. These
+  all set bg via inline React `style` props, which trigger the CSS
+  transition automatically when the property changes.
+
+Things tried that DIDN'T work (don't re-litigate):
+- Compensating bridge IPC latency by passing wall-clock from JS and
+  fast-forwarding the native animator's `fractionComplete` — bridge
+  latency is variable so any fixed compensation is wrong sometimes.
+- `transition-delay` on body to wait out the bridge — same issue,
+  delay needed varies per call.
+- Snap everything to "give up" on the fade — works but ugly. The
+  user wanted the fade.
+
+The actual root cause was forgetting that several surfaces snapped
+silently. Once every visible bg-paintable layer had the same 400ms
+ease transition (or matching rAF in xterm's case), they moved as
+one. **If you add a new tinted surface, give it the same
+`transition: background-color 400ms cubic-bezier(0.25, 0.1, 0.25, 1)`
+or it'll snap and break the illusion.**
+
 #### Rename popover (centered portal modal)
 
 Long-press any tmux tab → `createPortal(modalNode, document.body)`
