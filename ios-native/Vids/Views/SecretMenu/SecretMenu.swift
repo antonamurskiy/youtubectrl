@@ -28,11 +28,20 @@ struct SecretMenu: View {
                 fontSection
                 brightnessSection
             }
-            .listRowBackground(Color.white.opacity(0.05))
-            .listRowSeparatorTint(Color.white.opacity(0.08))
+            // Per-row glass: each cell paints a thin material backdrop
+            // instead of the system grouped-list opaque grey. Section
+            // header bg also goes transparent so the sheet material
+            // shows through between sections.
+            .listRowBackground(
+                Rectangle().fill(.ultraThinMaterial)
+                    .overlay(Color.white.opacity(0.04))
+            )
+            .listRowSeparatorTint(Color.white.opacity(0.1))
+            .listSectionSeparator(.hidden)
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+        .background(.clear)
         .task {
             await loadOutputs()
             await loadVolume()
