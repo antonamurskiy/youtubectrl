@@ -16,18 +16,22 @@ struct SecretMenu: View {
     @State private var friend: ApiClient.FindMyFriend? = nil
 
     var body: some View {
-        Form {
-            statusSection
-            volumeSection
-            findMySection
-            syncOffsetSection
-            macSection
-            audioOutputSection
-            bluetoothSection
-            fontSection
-            brightnessSection
+        List {
+            Group {
+                statusSection
+                volumeSection
+                findMySection
+                syncOffsetSection
+                macSection
+                audioOutputSection
+                bluetoothSection
+                fontSection
+                brightnessSection
+            }
+            .listRowBackground(Color.white.opacity(0.05))
+            .listRowSeparatorTint(Color.white.opacity(0.08))
         }
-        .formStyle(.grouped)
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .task {
             await loadOutputs()

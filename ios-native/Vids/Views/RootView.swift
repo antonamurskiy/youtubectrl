@@ -157,7 +157,7 @@ struct RootView: View {
             SecretMenu()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: Binding(
             get: { ui.commentsOpen },
@@ -166,7 +166,7 @@ struct RootView: View {
             CommentsPanel()
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: Binding(
             get: { ui.qualityMenuOpen },
@@ -175,7 +175,7 @@ struct RootView: View {
             QualityMenu()
                 .presentationDetents([.height(320)])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         .sheet(isPresented: Binding(
             get: { ui.audioSheetOpen },
@@ -184,7 +184,7 @@ struct RootView: View {
             AudioOutputSheet()
                 .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
-                .presentationBackground(.regularMaterial)
+                .presentationBackground(.ultraThinMaterial)
         }
         // Match the SwiftTerm CADisplayLink curve EXACTLY — both
         // use cubic-bezier(0.25, 0.1, 0.25, 1.0) over 0.4s so body bg,
