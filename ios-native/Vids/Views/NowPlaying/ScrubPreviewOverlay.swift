@@ -9,15 +9,13 @@ import SwiftUI
 /// to position the tile horizontally along the scrubber and vertically
 /// just above the bar's top edge.
 struct ScrubPreviewOverlay: View {
-    @Environment(ServiceContainer.self) private var services
+    @Environment(ScrubState.self) private var scrub
     let barFrame: CGRect
 
     var body: some View {
-        let scrub = services.scrub
         if scrub.active && barFrame.width > 0 {
             content(scrub: scrub)
                 .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
-                .animation(.easeOut(duration: 0.15), value: scrub.active)
         }
     }
 

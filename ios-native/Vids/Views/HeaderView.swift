@@ -59,6 +59,7 @@ struct HeaderView: View {
             .contentShape(Rectangle())
             .padding(.horizontal, 4)
             .onLongPressGesture(minimumDuration: 0.5) {
+                Haptics.success()
                 services.ui.secretMenuOpen = true
             }
         }

@@ -78,7 +78,10 @@ struct FABStack: View {
                 )
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5)
-                        .onEnded { _ in ui.secretMenuOpen = true }
+                        .onEnded { _ in
+                            Haptics.success()
+                            ui.secretMenuOpen = true
+                        }
                 )
             }
         }
