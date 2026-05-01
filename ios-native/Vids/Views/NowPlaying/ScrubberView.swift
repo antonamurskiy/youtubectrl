@@ -224,13 +224,18 @@ final class ScrubberUIView: UIView {
     }
 
     private func cropTile(_ image: UIImage, col: Int, row: Int, tileW: Int, tileH: Int) -> UIImage? {
-        let scale = image.scale
-        let rect = CGRect(x: CGFloat(col * tileW) * scale,
-                          y: CGFloat(row * tileH) * scale,
-                          width: CGFloat(tileW) * scale,
-                          height: CGFloat(tileH) * scale)
+        // YouTube storyboards: server's sb.width/height are in PIXELS
+        // and so is the page image we fetched directly via URL (scale
+        // = 1). The previous `* image.scale` multiplier double-applied
+        // the device scale, sliding the crop into the wrong tile and
+        // showing a fragment of the next frame — what looked like
+        // "cut-off" image.
+        let rect = CGRect(x: CGFloat(col * tileW),
+                          y: CGFloat(row * tileH),
+                          width: CGFloat(tileW),
+                          height: CGFloat(tileH))
         guard let cg = image.cgImage?.cropping(to: rect) else { return nil }
-        return UIImage(cgImage: cg, scale: scale, orientation: image.imageOrientation)
+        return UIImage(cgImage: cg, scale: 1, orientation: image.imageOrientation)
     }
 
     private func fetchPage(template: String, page: Int) {
