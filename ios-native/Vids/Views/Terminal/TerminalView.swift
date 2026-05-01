@@ -80,21 +80,28 @@ struct TerminalView: View {
 /// so this override is allowed (method_setImplementation swizzling the
 /// same selector wasn't taking; subclass is more reliable).
 final class NoPasteTerminalView: SwiftTerm.TerminalView {
+    /// Set true while a swipe-tab gesture is in progress. Blocks all
+    /// outbound terminal data (copy/paste round-trips, mouse-drag
+    /// selection forwarding, anything SwiftTerm tries to send to the
+    /// PTY) so a horizontal swipe can't dump screen contents into the
+    /// shell.
+    var swipeInProgress: Bool = false
+
     override func paste(_ sender: Any?) { /* swallow */ }
-    /// Block SwiftTerm's copy(_:) from writing the selection to
-    /// UIPasteboard.general — iOS Universal Clipboard's auto-receive
-    /// then round-trips that text back as an auto-paste on the next
-    /// swipe/tap. Selection-only "copy" disabled; explicit user copy
-    /// can be added later via a long-press menu if ever needed.
     override func copy(_ sender: Any?) { /* swallow */ }
-    /// iOS Universal Clipboard auto-paste delivers via insertText(_:),
-    /// not paste(_:). Drop suspiciously-large insertions (newlines or
-    /// >4 chars) — real keystrokes are single-char.
     override func insertText(_ text: String) {
+        if swipeInProgress { return }
         if text.contains("\n") || text.contains("\r") || text.count > 4 {
             return
         }
         super.insertText(text)
+    }
+    /// Last-line gate: SwiftTerm's send(source:data:) is the single
+    /// exit point for all data heading to the PTY (selection mouse
+    /// forwarding included). Drop anything during a swipe.
+    override func send(source: Terminal, data: ArraySlice<UInt8>) {
+        if swipeInProgress { return }
+        super.send(source: source, data: data)
     }
 }
 
@@ -165,19 +172,27 @@ struct TermHost: UIViewRepresentable {
         }
 
         @objc func onSwipePan(_ g: UIPanGestureRecognizer) {
-            guard let view = g.view else { return }
+            guard let view = g.view as? NoPasteTerminalView else { return }
             switch g.state {
             case .began:
                 swipeStart = g.location(in: view)
+                view.swipeInProgress = true
             case .ended:
-                guard let start = swipeStart else { return }
-                let end = g.location(in: view)
-                let dx = end.x - start.x, dy = end.y - start.y
+                let start = swipeStart
                 swipeStart = nil
+                // Keep PTY blocked until next runloop tick so any
+                // SwiftTerm cleanup (mouse-up forwarding) drops too.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    view.swipeInProgress = false
+                }
+                guard let s = start else { return }
+                let end = g.location(in: view)
+                let dx = end.x - s.x, dy = end.y - s.y
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5 else { return }
-                onSwipe?(dx > 0 ? -1 : 1)  // swipe right = previous window
+                onSwipe?(dx > 0 ? -1 : 1)
             case .cancelled, .failed:
                 swipeStart = nil
+                view.swipeInProgress = false
             default: break
             }
         }
