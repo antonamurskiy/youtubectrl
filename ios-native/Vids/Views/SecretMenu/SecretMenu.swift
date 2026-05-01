@@ -16,12 +16,12 @@ struct SecretMenu: View {
     @State private var friend: ApiClient.FindMyFriend? = nil
 
     var body: some View {
-        // iOS 26 Liquid Glass: each section is a separate glass card,
-        // and `GlassEffectContainer` groups them so they morph and
-        // share lensing/refraction (the iOS 26 long-press preview look).
+        // iOS 26 Liquid Glass spacing — measured against stock Settings
+        // on iPhone 17 Pro. Card insets 20pt from screen edges, 24pt
+        // gap between cards, 26pt corner radius.
         ScrollView {
-            GlassEffectContainer(spacing: 14) {
-                VStack(spacing: 14) {
+            GlassEffectContainer(spacing: 24) {
+                VStack(spacing: 24) {
                     glassCard(volumeSection)
                     glassCard(findMySection)
                     glassCard(syncOffsetSection)
@@ -31,9 +31,9 @@ struct SecretMenu: View {
                     glassCard(fontSection)
                     glassCard(brightnessSection)
                 }
-                .padding(.horizontal, 14)
-                .padding(.top, 8)
-                .padding(.bottom, 24)
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
+                .padding(.bottom, 28)
             }
         }
         .scrollContentBackground(.hidden)
@@ -53,38 +53,40 @@ struct SecretMenu: View {
 
     @ViewBuilder
     private func glassCard<Content: View>(_ content: Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            content
-        }
-        .padding(.vertical, 14)
-        .padding(.horizontal, 16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        // Darker tint pushes the glass forward of the dimmed sheet bg
-        // and a 0.5pt white stroke gives each card a defined edge —
-        // matches how iOS draws the long-press preview blob.
-        // Light tint on a dim backdrop so the cards read as raised
-        // glass rather than disappearing into the dark sheet bg.
-        .glassEffect(.regular.tint(.white.opacity(0.18)),
-                     in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.28), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
+        content
+            // Apple iOS 26 Settings card metrics: 16pt horizontal,
+            // 14pt vertical inner padding; 26pt corner radius.
+            .padding(.horizontal, 16)
+            .padding(.vertical, 14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Light tint on a dim backdrop so the cards read as raised
+            // glass rather than disappearing into the dark sheet bg.
+            .glassEffect(.regular.tint(.white.opacity(0.18)),
+                         in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 26, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
     }
 
-    /// Section with an optional header label, content stacked below.
-    /// Used inside a glass card so each card has its own title.
+    /// Section with an optional header label and rows.
+    /// Apple iOS 26 spec: 8pt below header → first row, 12pt between rows.
     @ViewBuilder
     private func cardSection<Content: View>(_ header: String? = nil,
                                             @ViewBuilder _ content: () -> Content) -> some View {
-        if let header {
-            Text(header)
-                .font(.caption.weight(.semibold))
-                .textCase(.uppercase)
-                .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            if let header {
+                Text(header)
+                    .font(.caption.weight(.semibold))
+                    .textCase(.uppercase)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 10)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
         }
-        content()
     }
 
     // MARK: status

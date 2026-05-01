@@ -7,37 +7,23 @@ import SwiftUI
 struct ClaudeQuickReply: View {
     @Environment(PlaybackStore.self) private var playback
     @Environment(ServiceContainer.self) private var services
-    @State private var dismissedKey: String? = nil
+    @State private var lastShownKey: String = ""
+    @State private var presented: Bool = false
 
     private var promptKey: String {
         let opts = playback.claudeOptions.map { "\($0.n):\($0.text)" }.joined(separator: "|")
         return "\(playback.claudeQuestion ?? "")||\(opts)"
     }
 
-    private var isPresented: Binding<Bool> {
-        Binding(
-            get: {
-                guard playback.claudeState == "waiting",
-                      !playback.claudeOptions.isEmpty,
-                      dismissedKey != promptKey else { return false }
-                return true
-            },
-            set: { newValue in
-                if !newValue {
-                    // Remember this exact prompt was dismissed so we don't
-                    // re-present on every WS tick. New prompt = new key.
-                    dismissedKey = promptKey
-                }
-            }
-        )
-    }
-
     var body: some View {
+        // Anchor the confirmationDialog on a 1pt frame — a 0×0 host
+        // is sometimes pruned from the layout tree on iOS 26, which
+        // makes the dialog never present.
         Color.clear
-            .frame(width: 0, height: 0)
+            .frame(width: 1, height: 1)
             .confirmationDialog(
                 playback.claudeQuestion ?? "Choose",
-                isPresented: isPresented,
+                isPresented: $presented,
                 titleVisibility: .visible
             ) {
                 ForEach(playback.claudeOptions, id: \.n) { opt in
@@ -51,5 +37,19 @@ struct ClaudeQuickReply: View {
                     Text(q)
                 }
             }
+            .onChange(of: playback.claudeState) { _, _ in syncPresent() }
+            .onChange(of: promptKey) { _, _ in syncPresent() }
+    }
+
+    /// Drive presentation state from the server's claude state. New prompt
+    /// (key change) auto-shows; transition out of "waiting" auto-hides.
+    private func syncPresent() {
+        let waiting = playback.claudeState == "waiting" && !playback.claudeOptions.isEmpty
+        if waiting && promptKey != lastShownKey {
+            lastShownKey = promptKey
+            presented = true
+        } else if !waiting {
+            presented = false
+        }
     }
 }
