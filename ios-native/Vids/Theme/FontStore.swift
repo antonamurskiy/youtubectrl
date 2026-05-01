@@ -200,11 +200,21 @@ extension Font {
     @MainActor
     static func app(_ size: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
         guard let store = FontStore.shared,
-              let postScript = store.resolvedPostScript()
+              let postScript = store.resolvedPostScript(),
+              let ui = UIFont(name: postScript, size: size)
         else {
             return .system(size: size, weight: weight, design: design)
         }
-        _ = store.generation  // tie observation
-        return .custom(postScript, size: size).weight(weight)
+        _ = store.generation
+        // Build Font from the already-resolved UIFont — SwiftUI's
+        // Font.custom caches name lookups and doesn't refresh after
+        // late registration. Font(UIFont) bypasses the cache.
+        // Weight + design parameters are intentionally dropped here:
+        // synthesizing weight via UIFontDescriptor traits silently
+        // falls back to a different family when our single-ttf doesn't
+        // have a bold variant (which is why titles + monospaced labels
+        // were rendering in two different fonts). Apply bold via
+        // .bold() / .fontWeight() at the callsite if needed.
+        return Font(ui)
     }
 }
