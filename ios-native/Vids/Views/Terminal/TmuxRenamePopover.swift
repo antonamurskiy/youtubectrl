@@ -12,9 +12,19 @@ struct TmuxRenamePopover: View {
     @State private var name: String = ""
     @State private var color: String = ""
 
+    /// React App.jsx TMUX_COLOR_SWATCHES merged with the original
+    /// native picks. Two rows: dim + saturated.
     static let palette: [String] = [
-        "#a13a36", "#cc7a3f", "#cca35c", "#8b9b4a",
-        "#4f8a5c", "#3a7a8a", "#3a5a8a", "#7a3a8a",
+        // Dim
+        "#5a1f1c", "#3a1414", "#5a2828", "#5e3414", "#4a2810", "#3d2a1c",
+        "#5c4416", "#4a4416", "#3f4416", "#2c3812", "#1f3d24", "#2e4a3a",
+        "#1c4548", "#1f3d49", "#1c2c4a", "#2c2e4a", "#3a2647", "#4a2e44",
+        "#4a2438", "#4a2030", "#2a2a2a", "#3a342e", "#2e3438",
+        // Saturated (gruvbox medium-ish)
+        "#a13a36", "#b85e22", "#c58a25", "#7a8a30", "#4f8a5c", "#3f8a8c",
+        "#3f7099", "#5a5fa3", "#8a5a96", "#a05680", "#7a5a4a", "#6a6a6a",
+        // Original native picks
+        "#cc7a3f", "#cca35c", "#8b9b4a", "#3a7a8a", "#3a5a8a", "#7a3a8a",
     ]
 
     var body: some View {
@@ -32,7 +42,9 @@ struct TmuxRenamePopover: View {
                 .foregroundStyle(.white)
                 .submitLabel(.done)
                 .onSubmit(commit)
-            HStack(spacing: 8) {
+            // Wider palette → flow into a grid. ~7 swatches per row at
+            // 28pt swatch + 6pt spacing fits within the 320pt modal.
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(28), spacing: 6), count: 7), spacing: 6) {
                 ForEach(Self.palette, id: \.self) { hex in
                     Button(action: {
                         color = hex
