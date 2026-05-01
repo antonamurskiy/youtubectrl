@@ -1599,11 +1599,20 @@ html:has(body.maria-proximity) { background: #3a0a0a; }
 }
 body.keyboard-open .fab-stack { bottom: 408px; }
 
+/* While the iOS keyboard is open, hide the now-playing bar entirely.
+ * It sits at bottom: 0 behind the keyboard so the user can't see it
+ * anyway, but its backdrop-filter: blur(24px) layer is GPU-composited
+ * and re-invalidated on every WS scrubber tick (~1Hz). iOS Safari
+ * dismisses keyboard focus when a focused input is near a constantly-
+ * invalidated backdrop-filter layer — this caused random keyboard
+ * dismissal in the terminal panel while video was playing. */
+body.keyboard-open .now-playing { display: none; }
+
 .fab-refresh, .fab-cmux, .fab-tmux {
   width: 40px;
   height: 40px;
   background: var(--fab-bg, rgba(40,40,40,0.7));
-  border: 1px solid var(--fab-border, rgba(60,56,54,0.6));
+  border: none;
   color: var(--text-dim);
   display: flex;
   align-items: center;

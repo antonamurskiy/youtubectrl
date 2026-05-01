@@ -378,21 +378,30 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     const panel = termRef.current?.closest('.terminal-panel')
     const vv = window.visualViewport
     if (vv && panel) {
+      // iOS fires repeated resize/scroll events during the keyboard
+      // slide-up animation. Calling fitAddon.fit() during that window
+      // rebuilds xterm's grid + repositions the helper-textarea, and
+      // iOS dismisses the keyboard for a focused input that moved
+      // mid-animation. Update the panel bottom immediately (so layout
+      // doesn't lag the keyboard), but debounce fit() until events
+      // stop arriving for 250ms.
+      let fitTimer = null
       const update = () => {
-        // visualViewport.height shrinks when keyboard opens
         const totalH = window.innerHeight
         const vvH = vv.height
         const kbH = totalH - vvH
         if (kbH > 100) {
-          // Keyboard open: panel fills from top to above keyboard
           panel.style.bottom = `${Math.max(0, kbH - 10)}px`
           panel.style.paddingBottom = '0px'
         } else {
-          // Keyboard closed: panel fills to above now-playing bar
           panel.style.bottom = '0px'
           panel.style.paddingBottom = ''
         }
-        fitAddon.fit()
+        if (fitTimer) clearTimeout(fitTimer)
+        fitTimer = setTimeout(() => {
+          fitTimer = null
+          try { fitAddon.fit() } catch {}
+        }, 250)
       }
       vv.addEventListener('resize', update)
       vv.addEventListener('scroll', update)
@@ -483,12 +492,44 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
       }
       return bz(t, 0.1, 1)
     }
+    // If the iOS soft keyboard is up (helper-textarea focused), the
+    // per-frame term.refresh() rebuilds xterm's screen DOM and iOS
+    // treats the focused textarea's ancestor as non-interactive →
+    // dismisses the keyboard. Skip the animation in that case and
+    // snap; body's CSS fade still smooths the surrounding surfaces.
+    const isTextareaFocused = () => {
+      const ae = document.activeElement
+      return ae && ae.classList && ae.classList.contains('xterm-helper-textarea')
+    }
+    if (isTextareaFocused()) {
+      try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
+      return
+    }
     const start = performance.now()
     const dur = 400
     let raf = 0
     let cancelled = false
+    // Cancel the rAF synchronously the moment the helper-textarea
+    // gets focus — iOS pops the keyboard within a single frame of
+    // touchend, so checking focus at the next tick is too late.
+    const onFocusIn = (e) => {
+      const t = e.target
+      if (t && t.classList && t.classList.contains('xterm-helper-textarea')) {
+        cancelled = true
+        cancelAnimationFrame(raf)
+        try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
+        document.removeEventListener('focusin', onFocusIn)
+      }
+    }
+    document.addEventListener('focusin', onFocusIn)
     const tick = () => {
       if (cancelled) return
+      // Bail mid-animation if focus moves to the helper-textarea.
+      if (isTextareaFocused()) {
+        try { term.options.theme = { ...term.options.theme, background: target }; term.refresh(0, term.rows - 1) } catch {}
+        document.removeEventListener('focusin', onFocusIn)
+        return
+      }
       const elapsed = performance.now() - start
       const x = Math.min(1, elapsed / dur)
       const e = easeY(x)
@@ -501,9 +542,10 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
         term.refresh(0, term.rows - 1)
       } catch {}
       if (x < 1) raf = requestAnimationFrame(tick)
+      else document.removeEventListener('focusin', onFocusIn)
     }
     raf = requestAnimationFrame(tick)
-    return () => { cancelled = true; cancelAnimationFrame(raf) }
+    return () => { cancelled = true; cancelAnimationFrame(raf); document.removeEventListener('focusin', onFocusIn) }
   }, [activeColor])
 
   // Paint the iOS safe-area regions (top under the Dynamic Island,
