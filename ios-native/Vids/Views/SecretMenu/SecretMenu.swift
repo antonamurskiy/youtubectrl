@@ -60,7 +60,7 @@ struct SecretMenu: View {
             .padding(.top, 18)
             .padding(.bottom, 16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular.tint(.white.opacity(0.18)),
+            .glassEffect(.regular.tint(.white.opacity(0.08)),
                          in: RoundedRectangle(cornerRadius: 26, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 26, style: .continuous)
