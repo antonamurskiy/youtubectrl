@@ -114,13 +114,16 @@ struct RootView: View {
                 NowPlayingBar()
                     .frame(maxWidth: hSize == .regular ? 600 : .infinity)
                     .frame(maxWidth: .infinity)
-                    .ignoresSafeArea(.container, edges: .bottom)
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                    // Measure BEFORE the .ignoresSafeArea modifiers —
+                    // on iOS 26 a GeometryReader behind a view that
+                    // ignores .container reports size 0×0.
                     .background(GeometryReader { geo in
                         Color.clear
                             .preference(key: NPBarHeightKey.self, value: geo.size.height)
                             .preference(key: NPBarFrameKey.self, value: geo.frame(in: .global))
                     })
+                    .ignoresSafeArea(.container, edges: .bottom)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                     // Plain opacity fade — the move(.bottom) transition
                     // started from wherever the keyboard had pushed
                     // the safe area, then snapped to the real bottom
