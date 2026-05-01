@@ -81,7 +81,21 @@ struct TerminalView: View {
 /// same selector wasn't taking; subclass is more reliable).
 final class NoPasteTerminalView: SwiftTerm.TerminalView {
     override func paste(_ sender: Any?) { /* swallow */ }
-    override func copy(_ sender: Any?) { super.copy(sender) }
+    /// Block SwiftTerm's copy(_:) from writing the selection to
+    /// UIPasteboard.general — iOS Universal Clipboard's auto-receive
+    /// then round-trips that text back as an auto-paste on the next
+    /// swipe/tap. Selection-only "copy" disabled; explicit user copy
+    /// can be added later via a long-press menu if ever needed.
+    override func copy(_ sender: Any?) { /* swallow */ }
+    /// iOS Universal Clipboard auto-paste delivers via insertText(_:),
+    /// not paste(_:). Drop suspiciously-large insertions (newlines or
+    /// >4 chars) — real keystrokes are single-char.
+    override func insertText(_ text: String) {
+        if text.contains("\n") || text.contains("\r") || text.count > 4 {
+            return
+        }
+        super.insertText(text)
+    }
 }
 
 /// SwiftTerm host wired to the server's `/ws/terminal` PTY endpoint.
