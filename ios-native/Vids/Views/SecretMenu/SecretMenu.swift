@@ -256,6 +256,8 @@ struct SecretMenu: View {
     @ViewBuilder
     private var miscSection: some View {
         VStack(spacing: 0) {
+            fontPickerRow
+            fontSizeRow
             HStack {
                 Image(systemName: "sun.max")
                 Text("Brightness").font(.system(size: 13))
@@ -374,6 +376,66 @@ struct SecretMenu: View {
     }
 
     // MARK: loaders
+
+    @State private var fontsOpen: Bool = false
+
+    private var fontPickerRow: some View {
+        VStack(spacing: 0) {
+            Button(action: { fontsOpen.toggle() }) {
+                HStack {
+                    Image(systemName: "textformat")
+                    Text("Font").font(.system(size: 13))
+                    Spacer()
+                    Text(services.fonts.label)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.55))
+                    Image(systemName: fontsOpen ? "chevron.up" : "chevron.down")
+                }
+                .foregroundStyle(.white.opacity(0.85))
+                .padding(.horizontal, 24).padding(.vertical, 10)
+                .background(Color(hex: "#0a0a0a"))
+            }
+            .buttonStyle(.plain)
+            if fontsOpen {
+                ForEach(FontStore.entries, id: \.label) { entry in
+                    Button(action: { services.fonts.setLabel(entry.label) }) {
+                        HStack {
+                            Text(entry.label)
+                                .font(.system(size: 12))
+                                .foregroundStyle(services.fonts.label == entry.label ? Color(hex: "#8ec07c") : .white.opacity(0.75))
+                            Spacer()
+                            if services.fonts.label == entry.label { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 36).padding(.vertical, 8)
+                        .background(Color(hex: "#0a0a0a"))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    private var fontSizeRow: some View {
+        HStack {
+            Image(systemName: "textformat.size")
+            Text("Font size").font(.system(size: 13))
+            Spacer()
+            ForEach(FontStore.sizes, id: \.self) { px in
+                Button(action: { services.fonts.setSize(px) }) {
+                    Text("\(Int(px))")
+                        .font(.system(size: 11, design: .monospaced))
+                        .frame(width: 22, height: 22)
+                        .background(services.fonts.size == px ? Color(hex: "#8ec07c").opacity(0.25) : Color.clear)
+                        .foregroundStyle(services.fonts.size == px ? .white : .white.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .foregroundStyle(.white.opacity(0.85))
+        .padding(.horizontal, 24).padding(.vertical, 10)
+        .background(Color(hex: "#0a0a0a"))
+    }
 
     @MainActor private func loadOutputs() async {
         outputs = (try? await services.api.audioOutputs()) ?? []

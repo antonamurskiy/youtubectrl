@@ -6,6 +6,7 @@ struct TerminalView: View {
     @Environment(TerminalStore.self) private var terminal
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
+    @Environment(FontStore.self) private var fonts
     @State private var renaming: TmuxWindow? = nil
     @State private var termCoordinator: TermHost.Coordinator? = nil
 
@@ -49,6 +50,7 @@ struct TerminalView: View {
                 TermHost(host: services.serverHost,
                          autoFocus: terminal.wasKeyboardOpenAtClose,
                          bgColor: UIColor(theme.resolvedSurface),
+                         font: fonts.font(),
                          onSwipe: switchTmuxWindow(by:),
                          onMounted: { tv in
                              terminal.dismissKeyboard = { [weak tv] in
@@ -129,6 +131,26 @@ struct TerminalView: View {
 /// firing this without any user tap. paste(_:) is `open` in SwiftTerm
 /// so this override is allowed (method_setImplementation swizzling the
 /// same selector wasn't taking; subclass is more reliable).
+extension UIColor {
+    static func lerp(from a: UIColor, to b: UIColor, t: CGFloat) -> UIColor {
+        var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
+        var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+        a.getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
+        b.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+        return UIColor(red: ar + (br - ar) * t,
+                       green: ag + (bg - ag) * t,
+                       blue: ab + (bb - ab) * t,
+                       alpha: aa + (ba - aa) * t)
+    }
+    func isApproximatelyEqual(to other: UIColor) -> Bool {
+        var ar: CGFloat = 0, ag: CGFloat = 0, ab: CGFloat = 0, aa: CGFloat = 0
+        var br: CGFloat = 0, bg: CGFloat = 0, bb: CGFloat = 0, ba: CGFloat = 0
+        getRed(&ar, green: &ag, blue: &ab, alpha: &aa)
+        other.getRed(&br, green: &bg, blue: &bb, alpha: &ba)
+        return abs(ar - br) < 0.005 && abs(ag - bg) < 0.005 && abs(ab - bb) < 0.005 && abs(aa - ba) < 0.005
+    }
+}
+
 final class NoPasteTerminalView: SwiftTerm.TerminalView {
     /// Set true while a swipe-tab gesture is in progress. Blocks all
     /// outbound terminal data (copy/paste round-trips, mouse-drag
@@ -176,6 +198,7 @@ struct TermHost: UIViewRepresentable {
     let host: String
     let autoFocus: Bool
     let bgColor: UIColor
+    let font: UIFont
     let onSwipe: (Int) -> Void  // called with -1 (prev) or +1 (next)
     let onMounted: (SwiftTerm.TerminalView) -> Void
 
@@ -188,9 +211,7 @@ struct TermHost: UIViewRepresentable {
         tv.backgroundColor = bgColor
         tv.nativeForegroundColor = UIColor(red: 0xeb/255.0, green: 0xdb/255.0, blue: 0xb2/255.0, alpha: 1)
         tv.nativeBackgroundColor = bgColor
-        if let font = UIFont(name: "Menlo-Regular", size: 13) {
-            tv.font = font
-        }
+        tv.font = font
         context.coordinator.onSwipe = onSwipe
         context.coordinator.attach(tv: tv, host: host)
         let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.onSwipePan(_:)))
@@ -218,14 +239,8 @@ struct TermHost: UIViewRepresentable {
 
     func updateUIView(_ uiView: SwiftTerm.TerminalView, context: Context) {
         context.coordinator.ensureConnected(host: host)
-        // Keep terminal bg in sync with the active tmux window's tint.
-        // SwiftTerm's WebGL/Metal renderer reads nativeBackgroundColor
-        // for cell fills; backgroundColor covers the surrounding chrome.
-        if uiView.nativeBackgroundColor != bgColor {
-            uiView.nativeBackgroundColor = bgColor
-            uiView.backgroundColor = bgColor
-            uiView.setNeedsDisplay()
-        }
+        if uiView.font != font { uiView.font = font }
+        context.coordinator.animateBg(to: bgColor, on: uiView)
     }
 
     static func dismantleUIView(_ uiView: SwiftTerm.TerminalView, coordinator: Coordinator) {
@@ -240,6 +255,65 @@ struct TermHost: UIViewRepresentable {
         var onSwipe: ((Int) -> Void)?
         private var swipeStart: CGPoint?
         private var panKillerTimer: Timer?
+        private var bgAnimLink: CADisplayLink?
+        private var bgAnimStart: CFTimeInterval = 0
+        private var bgAnimFrom: UIColor = .black
+        private var bgAnimTo: UIColor = .black
+        private weak var bgAnimView: SwiftTerm.TerminalView?
+        private var lastBg: UIColor?
+
+        func animateBg(to target: UIColor, on view: SwiftTerm.TerminalView) {
+            // Skip if we're already at (or animating to) this color.
+            if let last = lastBg, last.isApproximatelyEqual(to: target) { return }
+            lastBg = target
+            // Cancel any running animation so the new tween starts fresh.
+            bgAnimLink?.invalidate()
+            bgAnimFrom = view.nativeBackgroundColor ?? target
+            bgAnimTo = target
+            bgAnimView = view
+            bgAnimStart = CACurrentMediaTime()
+            let link = CADisplayLink(target: self, selector: #selector(tickBgAnim))
+            link.add(to: .main, forMode: .common)
+            bgAnimLink = link
+        }
+
+        @objc private func tickBgAnim() {
+            guard let view = bgAnimView else { bgAnimLink?.invalidate(); return }
+            let dur: CFTimeInterval = 0.4
+            let t = min(1, max(0, (CACurrentMediaTime() - bgAnimStart) / dur))
+            // cubic-bezier(0.25, 0.1, 0.25, 1.0) — same curve body uses.
+            let eased = bezier(t: t, p1x: 0.25, p1y: 0.1, p2x: 0.25, p2y: 1.0)
+            let c = UIColor.lerp(from: bgAnimFrom, to: bgAnimTo, t: CGFloat(eased))
+            view.nativeBackgroundColor = c
+            view.backgroundColor = c
+            view.setNeedsDisplay()
+            if t >= 1 {
+                bgAnimLink?.invalidate()
+                bgAnimLink = nil
+            }
+        }
+
+        private func bezier(t: Double, p1x: Double, p1y: Double, p2x: Double, p2y: Double) -> Double {
+            // Solve the cubic-bezier x(s) = t via Newton's method, then
+            // evaluate y(s).
+            func bez(_ s: Double, _ a: Double, _ b: Double) -> Double {
+                let u = 1 - s
+                return 3 * u * u * s * a + 3 * u * s * s * b + s * s * s
+            }
+            func bezDeriv(_ s: Double, _ a: Double, _ b: Double) -> Double {
+                let u = 1 - s
+                return 3 * u * u * a + 6 * u * s * (b - a) + 3 * s * s * (1 - b)
+            }
+            var s = t
+            for _ in 0..<6 {
+                let dx = bez(s, p1x, p2x) - t
+                if abs(dx) < 1e-4 { break }
+                let dxds = bezDeriv(s, p1x, p2x)
+                if abs(dxds) < 1e-6 { break }
+                s -= dx / dxds
+            }
+            return bez(s, p1y, p2y)
+        }
 
         func startPanKiller(on tv: UIView, ourPan: UIGestureRecognizer) {
             panKillerTimer?.invalidate()

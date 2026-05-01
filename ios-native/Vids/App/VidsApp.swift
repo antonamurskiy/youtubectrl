@@ -16,6 +16,7 @@ struct VidsApp: App {
                 .environment(services.push)
                 .environment(services.ui)
                 .environment(services.phoneMode)
+                .environment(services.fonts)
                 .preferredColorScheme(.dark)
                 .task { await services.start() }
                 .onOpenURL { url in services.handleDeepLink(url) }

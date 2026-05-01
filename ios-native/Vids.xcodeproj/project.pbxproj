@@ -12,6 +12,7 @@
 		10F3E3D1F18ABC690EBF3566 /* PhonePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */; };
 		1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA16E099AF62AF37E5C3C310 /* WSClient.swift */; };
 		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
+		22A39A9D83262B14E9665774 /* FontStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2465BFECA4E139AC71688AF1 /* FontStore.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
 		29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581FDCC94E632C0CBFD956B7 /* UIStore.swift */; };
 		2CEB249AFD0ABD0A09F3570F /* PushStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D0DDA0AE561DBE024D8AC3B /* PushStore.swift */; };
@@ -50,6 +51,7 @@
 		16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonePlayerView.swift; sourceTree = "<group>"; };
 		1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBar.swift; sourceTree = "<group>"; };
 		2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TmuxRenamePopover.swift; sourceTree = "<group>"; };
+		2465BFECA4E139AC71688AF1 /* FontStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontStore.swift; sourceTree = "<group>"; };
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
@@ -138,6 +140,14 @@
 			path = Push;
 			sourceTree = "<group>";
 		};
+		61557D84315031FC1767A882 /* Theme */ = {
+			isa = PBXGroup;
+			children = (
+				2465BFECA4E139AC71688AF1 /* FontStore.swift */,
+			);
+			path = Theme;
+			sourceTree = "<group>";
+		};
 		7592853EF14A20248D5D8C27 /* Vids */ = {
 			isa = PBXGroup;
 			children = (
@@ -146,6 +156,7 @@
 				D3D7AB10CFC0761FB2847084 /* Player */,
 				48A23DBDD7E989904205FDD0 /* Push */,
 				F13091BF7F00E18BAEE7A479 /* Stores */,
+				61557D84315031FC1767A882 /* Theme */,
 				F4F8809B3C4EE6F81C85BCAB /* Views */,
 			);
 			path = Vids;
@@ -314,6 +325,7 @@
 				464D5B4427C251EDAD0D2E3B /* FABStack.swift in Sources */,
 				92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */,
 				C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */,
+				22A39A9D83262B14E9665774 /* FontStore.swift in Sources */,
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
 				97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */,
 				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
