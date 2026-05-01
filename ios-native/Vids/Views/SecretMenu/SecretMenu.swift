@@ -4,32 +4,61 @@ struct SecretMenu: View {
     @Environment(UIStore.self) private var ui
     @Environment(PlaybackStore.self) private var playback
     @Environment(ServiceContainer.self) private var services
+
     @State private var miscOpen: Bool = false
+    @State private var btOpen: Bool = false
     @State private var outputs: [ApiClient.AudioOutput] = []
+    @State private var btDevices: [ApiClient.BluetoothDevice] = []
     @State private var brightness: Double = 0.5
     @State private var brightnessLoaded: Bool = false
+    @State private var volume: Double = 0.5
+    @State private var muted: Bool = false
+    @State private var syncOffsetMs: Double = 0
+    @State private var stealth: Bool = false
+    @State private var friend: ApiClient.FindMyFriend? = nil
 
     var body: some View {
         VStack(spacing: 0) {
             Spacer()
-            VStack(spacing: 0) {
-                handle
-                statusRow
-                Divider().background(.white.opacity(0.1))
-                outputsSection
-                Divider().background(.white.opacity(0.1))
-                miscToggle
-                if miscOpen { miscSection }
-                close
+            ScrollView {
+                VStack(spacing: 0) {
+                    handle
+                    statusRow
+                    Divider().background(.white.opacity(0.1))
+                    volumeRow
+                    Divider().background(.white.opacity(0.1))
+                    findMyBlock
+                    Divider().background(.white.opacity(0.1))
+                    syncOffsetRow
+                    Divider().background(.white.opacity(0.1))
+                    keepAwakeRow
+                    Divider().background(.white.opacity(0.1))
+                    outputsSection
+                    Divider().background(.white.opacity(0.1))
+                    btSection
+                    Divider().background(.white.opacity(0.1))
+                    miscToggle
+                    if miscOpen { miscSection }
+                    close
+                }
             }
+            .frame(maxHeight: 640)
             .background(Color(hex: "#151515"))
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .padding(8)
         }
         .background(Color.black.opacity(0.45).ignoresSafeArea())
         .onTapGesture { ui.secretMenuOpen = false }
-        .task { await loadOutputs() }
+        .task {
+            await loadOutputs()
+            await loadVolume()
+            await loadSyncOffset()
+            await loadStealth()
+            await refreshFriend(force: false)
+        }
     }
+
+    // MARK: rows
 
     private var handle: some View {
         Capsule().fill(.white.opacity(0.15)).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 6)
@@ -41,6 +70,7 @@ struct SecretMenu: View {
             statusBadge("ETH", on: playback.macStatus.ethernet ?? false)
             statusBadge("UNLK", on: !(playback.macStatus.locked ?? false))
             statusBadge("SCR", on: !(playback.macStatus.screenOff ?? false))
+            statusBadge("AWK", on: playback.macStatus.keepAwake ?? false)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -56,56 +86,64 @@ struct SecretMenu: View {
             .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 
-    private var outputsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Audio output")
-                    .font(.system(size: 13, weight: .semibold))
-                Spacer()
+    private var volumeRow: some View {
+        HStack(spacing: 10) {
+            Button(action: {
+                muted.toggle()
+                Task { try? await services.api.setVolume(muted ? 0 : volume) }
+            }) {
+                Image(systemName: muted || volume == 0 ? "speaker.slash.fill" : "speaker.wave.2.fill")
+                    .frame(width: 28)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .foregroundStyle(.white.opacity(0.85))
-
-            if outputs.isEmpty {
-                Text("loading…")
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.4))
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 10)
-            } else {
-                ForEach(outputs) { o in
-                    Button(action: { Task { try? await services.api.setAudioOutput(o.name); await loadOutputs() } }) {
-                        HStack {
-                            Text(o.name)
-                                .font(.system(size: 13))
-                                .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
-                            Spacer()
-                            if o.active { Image(systemName: "checkmark") }
-                        }
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 10)
-                        .background(o.active ? Color(hex: "#8ec07c").opacity(0.18) : Color(hex: "#0a0a0a"))
-                        .overlay(alignment: .leading) {
-                            if o.active {
-                                Rectangle().fill(Color(hex: "#8ec07c")).frame(width: 3)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
+            .buttonStyle(.plain)
+            Slider(value: Binding(
+                get: { volume },
+                set: { v in
+                    volume = v
+                    muted = v == 0
+                    Task { try? await services.api.setVolume(v) }
                 }
-            }
+            ), in: 0...1)
         }
-        .padding(.bottom, 6)
+        .foregroundStyle(.white.opacity(0.85))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
-    private var miscToggle: some View {
-        Button(action: { withAnimation { miscOpen.toggle() } }) {
+    private var syncOffsetRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("Misc")
-                    .font(.system(size: 13, weight: .semibold))
+                Text("Live sync offset").font(.system(size: 12, weight: .semibold))
                 Spacer()
-                Image(systemName: miscOpen ? "chevron.up" : "chevron.down")
+                Text("\(Int(syncOffsetMs)) ms")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.55))
+            }
+            Slider(value: Binding(
+                get: { syncOffsetMs },
+                set: { v in
+                    syncOffsetMs = v
+                    Task { try? await services.api.setSyncOffset(v) }
+                }
+            ), in: -8000...8000, step: 100)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .foregroundStyle(.white.opacity(0.85))
+    }
+
+    private var keepAwakeRow: some View {
+        Button(action: {
+            let next = !(playback.macStatus.keepAwake ?? false)
+            Task { try? await services.api.keepAwake(next) }
+        }) {
+            HStack {
+                Image(systemName: "cup.and.saucer")
+                Text("Keep awake").font(.system(size: 13))
+                Spacer()
+                Text(playback.macStatus.keepAwake == true ? "ON" : "OFF")
+                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .foregroundStyle(playback.macStatus.keepAwake == true ? Color(hex: "#8ec07c") : .white.opacity(0.4))
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -114,25 +152,121 @@ struct SecretMenu: View {
         .buttonStyle(.plain)
     }
 
+    private var outputsSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Audio output").font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .foregroundStyle(.white.opacity(0.85))
+
+            if outputs.isEmpty {
+                Text("loading…").font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.horizontal, 24).padding(.vertical, 8)
+            } else {
+                ForEach(outputs) { o in
+                    Button(action: {
+                        Task { try? await services.api.setAudioOutput(o.name); await loadOutputs() }
+                    }) {
+                        HStack {
+                            Text(o.name).font(.system(size: 13))
+                                .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
+                            Spacer()
+                            if o.active { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 24).padding(.vertical, 9)
+                        .background(o.active ? Color(hex: "#8ec07c").opacity(0.18) : Color(hex: "#0a0a0a"))
+                        .overlay(alignment: .leading) {
+                            if o.active { Rectangle().fill(Color(hex: "#8ec07c")).frame(width: 3) }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var btSection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Button(action: {
+                btOpen.toggle()
+                if btOpen { Task { btDevices = (try? await services.api.bluetoothDevices()) ?? [] } }
+            }) {
+                HStack {
+                    Image(systemName: "homepod.and.appletv")
+                    Text("Bluetooth").font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Image(systemName: btOpen ? "chevron.up" : "chevron.down")
+                }
+                .padding(.horizontal, 12).padding(.vertical, 10)
+                .foregroundStyle(.white.opacity(0.85))
+            }
+            .buttonStyle(.plain)
+
+            if btOpen {
+                if btDevices.isEmpty {
+                    Text("no devices").font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.white.opacity(0.4))
+                        .padding(.horizontal, 24).padding(.vertical, 8)
+                }
+                ForEach(btDevices) { d in
+                    Button(action: {
+                        Task {
+                            if d.connected == true { try? await services.api.bluetoothDisconnect(d.address) }
+                            else { try? await services.api.bluetoothConnect(d.address) }
+                            btDevices = (try? await services.api.bluetoothDevices()) ?? []
+                        }
+                    }) {
+                        HStack {
+                            Text(d.name ?? d.address).font(.system(size: 13))
+                                .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .white.opacity(0.85))
+                            Spacer()
+                            if d.connected == true { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 24).padding(.vertical, 9)
+                        .background(d.connected == true ? Color(hex: "#6c99bb").opacity(0.18) : Color(hex: "#0a0a0a"))
+                        .overlay(alignment: .leading) {
+                            if d.connected == true { Rectangle().fill(Color(hex: "#6c99bb")).frame(width: 3) }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var miscToggle: some View {
+        Button(action: { withAnimation { miscOpen.toggle() } }) {
+            HStack {
+                Text("Misc").font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Image(systemName: miscOpen ? "chevron.up" : "chevron.down")
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .foregroundStyle(.white.opacity(0.85))
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder
     private var miscSection: some View {
         VStack(spacing: 0) {
-            findMyRow
             HStack {
                 Image(systemName: "sun.max")
                 Text("Brightness").font(.system(size: 13))
                 Spacer()
                 Slider(value: Binding(
                     get: { brightness },
-                    set: { v in
-                        brightness = v
-                        Task { try? await services.api.setBrightness(v) }
-                    }
+                    set: { v in brightness = v; Task { try? await services.api.setBrightness(v) } }
                 ), in: 0...1)
                 .frame(width: 140)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 24).padding(.vertical, 10)
             .foregroundStyle(.white.opacity(0.85))
             .background(Color(hex: "#0a0a0a"))
             .task {
@@ -142,6 +276,9 @@ struct SecretMenu: View {
                 }
             }
 
+            row(icon: "rectangle.portrait.split.2x1", title: "Toggle resolution") {
+                Task { try? await services.api.toggleResolution(); await ui.toast("Resolution toggled") }
+            }
             row(icon: "key", title: "Refresh cookies") {
                 Task { try? await services.api.refreshCookies(); await ui.toast("Cookies refreshed") }
             }
@@ -151,15 +288,71 @@ struct SecretMenu: View {
             row(icon: "airplayvideo", title: "AirPlay") {
                 services.avHost.showAirPlayPicker()
             }
+            row(icon: "location.viewfinder", title: "Toggle FindMy app") {
+                Task { try? await services.api.toggleFindMy() }
+            }
         }
     }
+
+    // MARK: FindMy
+
+    private var findMyBlock: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "location.fill")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Maria").font(.system(size: 13))
+                    if let f = friend, let cross = f.cross, let parallel = f.parallel {
+                        Text("\(parallel) & \(cross)")
+                            .font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.55))
+                        if let t = f.timeFragment {
+                            Text(t).font(.system(size: 9, design: .monospaced))
+                                .foregroundStyle(.white.opacity(0.4))
+                        }
+                    } else {
+                        Text("tap refresh").font(.system(size: 10, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                }
+                Spacer()
+                // Stealth toggle
+                Button(action: {
+                    Task {
+                        let next = !stealth
+                        try? await services.api.setFindmyStealth(next)
+                        stealth = next
+                        await ui.toast(next ? "Find My stealth on" : "Find My visible")
+                    }
+                }) {
+                    Image(systemName: stealth ? "eye.slash" : "eye")
+                        .foregroundStyle(stealth ? .white.opacity(0.5) : Color(hex: "#8ec07c"))
+                }
+                .buttonStyle(.plain)
+                // Force refresh
+                Button(action: {
+                    Task {
+                        try? await services.api.refreshFindMy()
+                        await refreshFriend(force: true)
+                    }
+                }) {
+                    Image(systemName: "arrow.clockwise")
+                        .foregroundStyle(.white.opacity(0.7))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .foregroundStyle(.white.opacity(0.85))
+        }
+    }
+
+    // MARK: footer
 
     private var close: some View {
         Button(action: { ui.secretMenuOpen = false }) {
             Text("Close")
                 .font(.system(size: 13, weight: .semibold))
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
                 .background(.white.opacity(0.05))
                 .foregroundStyle(.white)
         }
@@ -174,56 +367,30 @@ struct SecretMenu: View {
                 Spacer()
             }
             .foregroundStyle(.white.opacity(0.85))
-            .padding(.horizontal, 24)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 24).padding(.vertical, 10)
             .background(Color(hex: "#0a0a0a"))
         }
         .buttonStyle(.plain)
     }
 
-    @MainActor
-    private func loadOutputs() async {
+    // MARK: loaders
+
+    @MainActor private func loadOutputs() async {
         outputs = (try? await services.api.audioOutputs()) ?? []
     }
-
-    @State private var friend: ApiClient.FindMyFriend? = nil
-    @State private var friendLoading: Bool = false
-
-    private var findMyRow: some View {
-        HStack {
-            Image(systemName: "location.fill")
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Maria")
-                    .font(.system(size: 13))
-                if friendLoading {
-                    Text("locating…").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
-                } else if let f = friend, let cross = f.cross, let parallel = f.parallel {
-                    Text("\(parallel) & \(cross)")
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.55))
-                    if let t = f.timeFragment {
-                        Text(t).font(.system(size: 9, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
-                    }
-                } else {
-                    Text("tap to refresh").font(.system(size: 10, design: .monospaced)).foregroundStyle(.white.opacity(0.4))
-                }
-            }
-            Spacer()
+    @MainActor private func loadVolume() async {
+        if let v = try? await services.api.volumeStatus() {
+            volume = v.volume ?? 0.5
+            muted = v.muted ?? false
         }
-        .foregroundStyle(.white.opacity(0.85))
-        .padding(.horizontal, 24)
-        .padding(.vertical, 10)
-        .background(Color(hex: "#0a0a0a"))
-        .onTapGesture {
-            Task { await refreshFriend(force: true) }
-        }
-        .task { await refreshFriend(force: false) }
     }
-
-    @MainActor
-    private func refreshFriend(force: Bool) async {
-        friendLoading = true
-        defer { friendLoading = false }
+    @MainActor private func loadSyncOffset() async {
+        if let v = try? await services.api.syncOffset() { syncOffsetMs = v }
+    }
+    @MainActor private func loadStealth() async {
+        if let v = try? await services.api.findmyStealth() { stealth = v }
+    }
+    @MainActor private func refreshFriend(force: Bool) async {
         friend = try? await services.api.findmyFriend(force: force)
     }
 }

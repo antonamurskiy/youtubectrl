@@ -36,6 +36,7 @@ struct NowPlayingBar: View {
                     }
                 Spacer(minLength: 0)
                 speedButton
+                audioButton
                 pipButton
                 Text(durationLabel)
                     .font(.system(size: 11, design: .monospaced))
@@ -159,6 +160,15 @@ struct NowPlayingBar: View {
                         Task { try? await services.api.mpvSpeed(1.0) }
                     }
             )
+    }
+
+    private var audioButton: some View {
+        Button(action: { ui.audioSheetOpen = true }) {
+            Image(systemName: "speaker.wave.2.fill")
+                .font(.system(size: 14))
+                .foregroundStyle(.white.opacity(0.65))
+        }
+        .buttonStyle(.plain)
     }
 
     private var pipButton: some View {

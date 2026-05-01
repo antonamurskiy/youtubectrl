@@ -187,6 +187,43 @@ actor ApiClient {
         try await post("/api/not-interested", body: ["token": token])
     }
 
+    struct VolumeStatus: Codable { let volume: Double?; let muted: Bool? }
+    func volumeStatus() async throws -> VolumeStatus { try await get("/api/volume-status") }
+    func setVolume(_ v: Double) async throws { try await post("/api/volume", body: ["volume": v]) }
+
+    struct BluetoothDevice: Codable, Hashable, Identifiable {
+        let address: String
+        let name: String?
+        let connected: Bool?
+        var id: String { address }
+    }
+    struct BluetoothDevices: Codable { let devices: [BluetoothDevice] }
+    func bluetoothDevices() async throws -> [BluetoothDevice] {
+        let r: BluetoothDevices = try await get("/api/bluetooth-devices")
+        return r.devices
+    }
+    func bluetoothConnect(_ address: String) async throws { try await post("/api/bluetooth-connect", body: ["address": address]) }
+    func bluetoothDisconnect(_ address: String) async throws { try await post("/api/bluetooth-disconnect", body: ["address": address]) }
+
+    func keepAwake(_ on: Bool) async throws { try await post("/api/keep-awake", body: ["enable": on]) }
+    func toggleResolution() async throws { try await post("/api/toggle-resolution") }
+    func toggleFindMy() async throws { try await post("/api/toggle-findmy") }
+    func refreshFindMy() async throws { try await post("/api/refresh-findmy") }
+
+    struct SyncOffset: Codable { let ms: Double? }
+    func syncOffset() async throws -> Double {
+        let r: SyncOffset = try await get("/api/sync-offset")
+        return r.ms ?? 0
+    }
+    func setSyncOffset(_ ms: Double) async throws { try await post("/api/sync-offset", body: ["ms": ms]) }
+
+    struct FindMyStealth: Codable { let on: Bool? }
+    func findmyStealth() async throws -> Bool {
+        let r: FindMyStealth = try await get("/api/findmy-stealth")
+        return r.on ?? false
+    }
+    func setFindmyStealth(_ on: Bool) async throws { try await post("/api/findmy-stealth", body: ["on": on]) }
+
     struct AudioOutput: Codable, Hashable, Identifiable {
         let name: String
         let active: Bool

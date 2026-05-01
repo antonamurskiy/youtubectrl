@@ -97,6 +97,15 @@ struct RootView: View {
                 .transition(.opacity)
                 .zIndex(42)
             }
+            if ui.audioSheetOpen {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                        .onTapGesture { ui.audioSheetOpen = false }
+                    AudioOutputSheet()
+                }
+                .transition(.opacity)
+                .zIndex(43)
+            }
         }
         .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
         .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
