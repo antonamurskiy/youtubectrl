@@ -9,6 +9,8 @@ final class TerminalStore {
     var colorPreview: [String: String] = [:]
     var feed: [String] = []
     var keyboardOpen: Bool = false
+    /// Actual on-screen keyboard height (incl. predictive bar). Set by KeyboardObserver.
+    var keyboardHeight: CGFloat = 0
 
     var activeWindow: TmuxWindow? { windows.first(where: { $0.active }) }
 

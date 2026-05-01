@@ -1,5 +1,12 @@
 import SwiftUI
 
+private struct NPBarHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
 struct RootView: View {
     @Environment(ServiceContainer.self) private var services
     @Environment(PlaybackStore.self) private var playback
@@ -10,6 +17,7 @@ struct RootView: View {
     @Environment(PhoneModeStore.self) private var phoneMode
 
     @State private var searchFocused = false
+    @State private var npBarHeight: CGFloat = 0
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -45,6 +53,9 @@ struct RootView: View {
             // Now-playing bar — hidden when terminal+keyboard.
             if playback.playing && !(terminal.open && terminal.keyboardOpen) {
                 NowPlayingBar()
+                    .background(GeometryReader { geo in
+                        Color.clear.preference(key: NPBarHeightKey.self, value: geo.size.height)
+                    })
                     .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(10)
             }
@@ -75,15 +86,25 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
         .animation(.easeInOut(duration: 0.4), value: theme.resolvedSurface)
+        .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
         .task { theme.setTabTint(for: feed.activeTab) }
     }
 
     private var fabBottomPadding: CGFloat {
-        // Order matters — keyboard wins, then NP bar, then default.
-        if terminal.keyboardOpen { return 380 }
-        if playback.playing { return 230 }
+        // Keyboard wins — use the system-reported keyboard height + 24
+        // clearance + safe-area inset (the .ignoresSafeArea(.keyboard)
+        // below means the parent's bottom inset is the home indicator's,
+        // not the keyboard's).
+        if terminal.keyboardOpen {
+            return terminal.keyboardHeight + 24
+        }
+        if terminal.open { return 24 }                // terminal closed-keyboard: clear of home indicator
+        if playback.playing && npBarHeight > 0 {
+            return npBarHeight + 16
+        }
+        if playback.playing { return 270 }
         return 70
     }
 
