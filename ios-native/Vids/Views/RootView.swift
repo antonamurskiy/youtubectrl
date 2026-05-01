@@ -110,10 +110,15 @@ struct RootView: View {
                     .frame(maxWidth: hSize == .regular ? 600 : .infinity)
                     .frame(maxWidth: .infinity)
                     .ignoresSafeArea(.container, edges: .bottom)
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
                     .background(GeometryReader { geo in
                         Color.clear.preference(key: NPBarHeightKey.self, value: geo.size.height)
                     })
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    // Plain opacity fade — the move(.bottom) transition
+                    // started from wherever the keyboard had pushed
+                    // the safe area, then snapped to the real bottom
+                    // once the keyboard finished dismissing.
+                    .transition(.opacity)
                     .zIndex(10)
             }
 
