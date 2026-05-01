@@ -13,14 +13,30 @@ struct TerminalView: View {
     init(bottomInset: CGFloat = 0) { self.bottomInset = bottomInset }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Tmux tab strip — only shows when server reports >1 window.
+        // ZStack overlay so the tab strip floats over terminal output
+        // instead of pushing it down 38pt. Strip uses translucent bg
+        // so existing rows show through (matches React's behavior).
+        ZStack(alignment: .top) {
+            ZStack(alignment: .trailing) {
+                TermHost(host: services.serverHost,
+                         autoFocus: terminal.wasKeyboardOpenAtClose,
+                         bgColor: UIColor(theme.resolvedSurface),
+                         font: fonts.font(),
+                         onSwipe: switchTmuxWindow(by:),
+                         onMounted: { tv in
+                             terminal.dismissKeyboard = { [weak tv] in
+                                 _ = tv?.resignFirstResponder()
+                             }
+                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
+                                 tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
+                             }
+                         })
+                    .background(theme.resolvedSurface)
+                ScrollZoneOverlay()
+                    .frame(width: 56)
+            }
+
             if terminal.windows.count > 1 {
-                // Right-align via a GeometryReader-backed min-width
-                // frame inside a horizontal ScrollView. When tabs fit
-                // within the screen, Spacer pushes them to the trailing
-                // edge; when they overflow, the ScrollView lets them
-                // scroll left.
                 GeometryReader { geo in
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
@@ -32,7 +48,7 @@ struct TerminalView: View {
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
                                         .background(tabBg(w))
-                                        .foregroundStyle(w.active ? .white : .white.opacity(0.55))
+                                        .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
                                         .overlay(alignment: .bottom) {
                                             Rectangle()
                                                 .fill(w.active ? Color(hex: "#ebdbb2") : Color.clear)
@@ -48,34 +64,11 @@ struct TerminalView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        // Force HStack to be at least the available
-                        // width so Spacer has room to push tabs right.
                         .frame(minWidth: geo.size.width, alignment: .trailing)
                     }
                 }
                 .frame(height: 38)
-                .background(theme.resolvedSurface)
-            }
-
-            ZStack(alignment: .trailing) {
-                TermHost(host: services.serverHost,
-                         autoFocus: terminal.wasKeyboardOpenAtClose,
-                         bgColor: UIColor(theme.resolvedSurface),
-                         font: fonts.font(),
-                         onSwipe: switchTmuxWindow(by:),
-                         onMounted: { tv in
-                             terminal.dismissKeyboard = { [weak tv] in
-                                 _ = tv?.resignFirstResponder()
-                             }
-                             // Scroll to live edge on (re)open so user
-                             // doesn't land mid-scrollback.
-                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
-                                 tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
-                             }
-                         })
-                    .background(theme.resolvedSurface)
-                ScrollZoneOverlay()
-                    .frame(width: 56)
+                .background(theme.resolvedSurface.opacity(0.7))
             }
         }
         .onDisappear {
