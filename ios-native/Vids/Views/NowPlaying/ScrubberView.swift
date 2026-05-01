@@ -204,17 +204,25 @@ final class ScrubberUIView: UIView {
         if let sb = storyboard, let urlTpl = sb.url,
            let cols = sb.cols, cols > 0,
            let rows = sb.rows, rows > 0,
-           let interval = sb.interval, interval > 0,
-           let tileW = sb.width, let tileH = sb.height, tileH > 0 {
-            aspect = Double(tileW) / Double(tileH)
+           let interval = sb.interval, interval > 0 {
             let frameIndex = Int(target / interval)
             let perPage = cols * rows
             let pageIndex = frameIndex / perPage
             let frameOnPage = frameIndex % perPage
             let col = frameOnPage % cols
             let row = frameOnPage / cols
-            if let img = pageImages[pageIndex] {
-                image = cropTile(img, col: col, row: row, tileW: tileW, tileH: tileH)
+            if let img = pageImages[pageIndex], let cg = img.cgImage {
+                // Derive actual tile dimensions from the fetched page
+                // image — sb.width/height from the server have been
+                // unreliable; the page is exactly cols × rows tiles, so
+                // pageW/cols × pageH/rows is the source of truth.
+                let pageW = cg.width
+                let pageH = cg.height
+                let realTileW = pageW / cols
+                let realTileH = pageH / rows
+                aspect = Double(realTileW) / Double(realTileH)
+                image = cropTile(img, col: col, row: row,
+                                 tileW: realTileW, tileH: realTileH)
             } else {
                 fetchPage(template: urlTpl, page: pageIndex)
             }
