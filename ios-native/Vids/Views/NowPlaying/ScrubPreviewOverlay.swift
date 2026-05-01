@@ -48,7 +48,7 @@ struct ScrubPreviewOverlay: View {
         let cx = scrubInset + trackWidth * scrub.pct
 
         let tileW: CGFloat = 200
-        let tileH: CGFloat = 113 // 16:9
+        let tileH: CGFloat = tileW * 9.0 / 16.0  // exact 16:9 — no letterbox
         let lo: CGFloat = 8
         let hi: CGFloat = screen.width - tileW - 8
         let tileX: CGFloat = max(lo, min(hi, cx - tileW / 2))
@@ -59,11 +59,10 @@ struct ScrubPreviewOverlay: View {
             ZStack {
                 Color.black
                 if let img = scrub.image {
-                    // .scaledToFit keeps the storyboard tile's full
-                    // aspect visible — .scaledToFill was cropping the
-                    // top/bottom because 132×76 is slightly narrower
-                    // than 16:9.
-                    Image(uiImage: img).resizable().scaledToFit()
+                    // tileH is now exactly tileW * 9/16, matching the
+                    // storyboard tile's 16:9 aspect — scaledToFill
+                    // edge-aligns without cropping.
+                    Image(uiImage: img).resizable().scaledToFill()
                 }
             }
             .frame(width: tileW, height: tileH)
