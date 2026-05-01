@@ -37,6 +37,9 @@ struct SecretMenu: View {
             }
         }
         .scrollContentBackground(.hidden)
+        // Drop the system blue accent — propagates to Toggle, Slider,
+        // Button, Picker checkmarks, etc.
+        .tint(Color(hex: "#8ec07c"))
         .task {
             await loadOutputs()
             await loadVolume()
@@ -149,13 +152,11 @@ struct SecretMenu: View {
                     }
                 }
             ))
-            Button {
+            actionRow("Refresh location", icon: "arrow.clockwise") {
                 Task {
                     try? await services.api.refreshFindMy()
                     await refreshFriend(force: true)
                 }
-            } label: {
-                Label("Refresh location", systemImage: "arrow.clockwise")
             }
         }
     }
@@ -188,32 +189,37 @@ struct SecretMenu: View {
                 get: { playback.macStatus.keepAwake ?? false },
                 set: { v in Task { try? await services.api.keepAwake(v) } }
             ))
-            Button {
+            actionRow("Lock Mac", icon: "lock") {
                 Task { try? await services.api.lockMac(); await ui.toast("Mac locked") }
-            } label: {
-                Label("Lock Mac", systemImage: "lock")
             }
-            Button {
+            actionRow("Refresh cookies", icon: "key") {
                 Task { try? await services.api.refreshCookies(); await ui.toast("Cookies refreshed") }
-            } label: {
-                Label("Refresh cookies", systemImage: "key")
             }
-            Button {
+            actionRow("Toggle resolution", icon: "rectangle.portrait.split.2x1") {
                 Task { try? await services.api.toggleResolution(); await ui.toast("Resolution toggled") }
-            } label: {
-                Label("Toggle resolution", systemImage: "rectangle.portrait.split.2x1")
             }
-            Button {
+            actionRow("AirPlay", icon: "airplayvideo") {
                 services.avHost.showAirPlayPicker()
-            } label: {
-                Label("AirPlay", systemImage: "airplayvideo")
             }
-            Button {
+            actionRow("Toggle FindMy app", icon: "location.viewfinder") {
                 Task { try? await services.api.toggleFindMy() }
-            } label: {
-                Label("Toggle FindMy app", systemImage: "location.viewfinder")
             }
         }
+    }
+
+    private func actionRow(_ title: String, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .frame(width: 20)
+                    .foregroundStyle(.secondary)
+                Text(title).foregroundStyle(.primary)
+                Spacer()
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: audio output
@@ -223,20 +229,33 @@ struct SecretMenu: View {
             if outputs.isEmpty {
                 Text("loading…").foregroundStyle(.secondary)
             } else {
-                Picker("Output", selection: Binding(
-                    get: { outputs.first(where: { $0.active })?.name ?? "" },
-                    set: { newName in
-                        Task { try? await services.api.setAudioOutput(newName); await loadOutputs() }
-                    }
-                )) {
-                    ForEach(outputs) { o in
-                        Text(o.name).tag(o.name)
+                ForEach(outputs) { o in
+                    selectRow(label: o.name, selected: o.active) {
+                        Task { try? await services.api.setAudioOutput(o.name); await loadOutputs() }
                     }
                 }
-                .pickerStyle(.inline)
-                .labelsHidden()
             }
         }
+    }
+
+    /// Tappable row with a checkmark when selected — used for output /
+    /// font / quality lists where Picker(.inline) doesn't look right
+    /// inside a glass card.
+    private func selectRow(label: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(label).foregroundStyle(.primary)
+                Spacer()
+                if selected {
+                    Image(systemName: "checkmark")
+                        .foregroundStyle(Color(hex: "#8ec07c"))
+                        .font(.body.weight(.semibold))
+                }
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: bluetooth
@@ -244,19 +263,11 @@ struct SecretMenu: View {
     private var bluetoothSection: some View {
         cardSection("Bluetooth") {
             ForEach(btDevices) { d in
-                Button {
+                selectRow(label: d.name ?? d.address, selected: d.connected == true) {
                     Task {
                         if d.connected == true { try? await services.api.bluetoothDisconnect(d.address) }
                         else { try? await services.api.bluetoothConnect(d.address) }
                         btDevices = (try? await services.api.bluetoothDevices()) ?? []
-                    }
-                } label: {
-                    HStack {
-                        Image(systemName: d.connected == true ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(d.connected == true ? Color(hex: "#6c99bb") : .secondary)
-                        Text(d.name ?? d.address)
-                            .foregroundStyle(.primary)
-                        Spacer()
                     }
                 }
             }
@@ -277,23 +288,26 @@ struct SecretMenu: View {
 
     private var fontSection: some View {
         cardSection("Font") {
-            Picker("Family", selection: Binding(
-                get: { services.fonts.label },
-                set: { services.fonts.setLabel($0) }
-            )) {
-                ForEach(FontStore.entries, id: \.label) { entry in
-                    Text(entry.label).tag(entry.label)
+            ForEach(FontStore.entries, id: \.label) { entry in
+                selectRow(label: entry.label, selected: services.fonts.label == entry.label) {
+                    services.fonts.setLabel(entry.label)
                 }
             }
-            Picker("Size", selection: Binding(
-                get: { services.fonts.size },
-                set: { services.fonts.setSize($0) }
-            )) {
-                ForEach(FontStore.sizes, id: \.self) { px in
-                    Text("\(Int(px))").tag(px)
+            HStack(spacing: 6) {
+                Text("Size").foregroundStyle(.secondary).font(.caption)
+                Spacer(minLength: 0)
+                Picker("Size", selection: Binding(
+                    get: { services.fonts.size },
+                    set: { services.fonts.setSize($0) }
+                )) {
+                    ForEach(FontStore.sizes, id: \.self) { px in
+                        Text("\(Int(px))").tag(px)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 220)
             }
-            .pickerStyle(.segmented)
+            .padding(.top, 4)
         }
     }
 
