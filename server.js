@@ -6350,11 +6350,13 @@ app.post("/api/tmux-select", async (req, res) => {
 });
 
 httpServer.on("upgrade", (req, socket, head) => {
-  if (req.url === "/ws/sync") {
+  // Accept query strings on /ws/sync (proto=2 uses one).
+  const path = (req.url || "").split("?")[0];
+  if (path === "/ws/sync") {
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit("connection", ws, req));
-  } else if (req.url === "/ws/terminal") {
+  } else if (path === "/ws/terminal") {
     wssTerm.handleUpgrade(req, socket, head, (ws) => wssTerm.emit("connection", ws, req));
-  } else if (req.url && req.url.startsWith("/ws/livechat")) {
+  } else if (path.startsWith("/ws/livechat")) {
     wssChat.handleUpgrade(req, socket, head, (ws) => wssChat.emit("connection", ws, req));
   } else {
     socket.destroy();
