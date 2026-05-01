@@ -75,6 +75,10 @@ struct FeedListView: UIViewRepresentable {
         private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
         private var swipeStart: CGPoint?
         var lastRefreshTick: Int = 0
+        /// True while a horizontal swipe is in progress / just ended.
+        /// Cell taps fire didSelectItemAt; we ignore them when this
+        /// is true so swipes don't trigger accidental video plays.
+        private var swipeActive: Bool = false
 
         enum Section: Hashable { case videos, shorts }
         enum Item: Hashable {
@@ -106,15 +110,38 @@ struct FeedListView: UIViewRepresentable {
         @objc func onTabSwipe(_ g: UIPanGestureRecognizer) {
             guard let v = g.view else { return }
             switch g.state {
-            case .began: swipeStart = g.location(in: v)
+            case .began:
+                swipeStart = g.location(in: v)
+                swipeActive = true
+            case .changed:
+                // Once translation exceeds 12pt horizontally, cancel any
+                // pending touch on a cell so didSelectItemAt doesn't
+                // fire when the swipe lifts.
+                let t = g.translation(in: v)
+                if abs(t.x) > 12, let cv = v as? UICollectionView {
+                    for visible in cv.visibleCells where visible.isHighlighted {
+                        visible.isHighlighted = false
+                    }
+                }
             case .ended:
-                guard let start = swipeStart else { return }
+                guard let start = swipeStart else {
+                    swipeActive = false
+                    return
+                }
                 let end = g.location(in: v)
                 let dx = end.x - start.x, dy = end.y - start.y
                 swipeStart = nil
+                // Delay clearing swipeActive a beat so a trailing tap
+                // selection (some iOS systems fire it after the pan)
+                // still gets ignored.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                    self?.swipeActive = false
+                }
                 guard abs(dx) > 60, abs(dx) > abs(dy) * 1.5 else { return }
                 onSwipe(dx > 0 ? -1 : 1)
-            case .cancelled, .failed: swipeStart = nil
+            case .cancelled, .failed:
+                swipeStart = nil
+                swipeActive = false
             default: break
             }
         }
@@ -170,6 +197,12 @@ struct FeedListView: UIViewRepresentable {
         }
 
         func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
+            // Ignore taps that land while a horizontal swipe was in
+            // progress / just ended.
+            if swipeActive {
+                cv.deselectItem(at: indexPath, animated: false)
+                return
+            }
             guard let item = dataSource.itemIdentifier(for: indexPath) else { return }
             switch item {
             case .video(let v):
