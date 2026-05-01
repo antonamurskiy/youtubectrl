@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebglAddon } from '@xterm/addon-webgl'
@@ -53,6 +53,13 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
   const touchStartXRef = useRef(null)
   const touchStartTRef = useRef(0)
   const touchStartButtonRef = useRef(null)
+  // Set true for the brief window where the parent delegate
+  // synthetically calls btn.click() — iOS will ALSO synthesize its
+  // own click ~300ms after touchend, landing on whatever button is
+  // under the lift point (commonly ^Z when the keyboard pop shifted
+  // layout). Each button's onClick checks this ref and rejects if
+  // false, so only the authorized path fires.
+  const programmaticClickRef = useRef(false)
   // Pane-swipe state. Captures start coords + time on touchstart;
   // touchend reads tmuxWindows from the latest render via a ref so
   // the handler doesn't go stale between window changes.
@@ -560,6 +567,14 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
     const ws = wsRef.current
     if (ws?.readyState === WebSocket.OPEN) ws.send(key)
   }
+  // Wrapped onClick: only fire if the click came from the parent's
+  // delegated touchend path (programmaticClickRef=true). iOS's
+  // synthesized click ~300ms after touchend slips through normal
+  // onClick handlers — this gate rejects those.
+  const gatedClick = (key) => () => {
+    if (!programmaticClickRef.current) return
+    sendKey(key)
+  }
 
   // Expose sendKey globally via store so quick-reply buttons work outside terminal
   useEffect(() => {
@@ -680,30 +695,37 @@ export default function TerminalModal({ onClose, hasNowPlaying, tmuxWindows, tmu
             const dur = Date.now() - (touchStartTRef.current || 0)
             if (dur < 400) return
           }
-          startBtn.click()
+          // Authorize the gated onClick handlers for the duration of
+          // this synthetic click; iOS's later auto-synthesized click
+          // (300ms after touchend) finds the flag false and bails.
+          programmaticClickRef.current = true
+          try { startBtn.click() } finally { programmaticClickRef.current = false }
         }}
       >
-        <button onClick={() => sendKey('\x01')}>^A</button>
-        <button onClick={() => sendKey('\x02')}>^B</button>
-        <button onClick={() => sendKey('\x03')}>^C</button>
-        <button onClick={() => sendKey('\x0c')}>^L</button>
-        <button data-require-hold="1" onClick={() => sendKey('\x04')}>^D</button>
-        <button onClick={() => sendKey('\x0f')}>^O</button>
-        <button data-require-hold="1" onClick={() => sendKey('\x1a')}>^Z</button>
-        <button onClick={() => sendKey('\x1b')}>esc</button>
-        <button onClick={() => sendKey('\t')}>tab</button>
-        <button onClick={() => sendKey('\x1b[A')}>↑</button>
-        <button onClick={() => sendKey('\x1b[B')}>↓</button>
-        <button onClick={() => sendKey('\x1b[C')}>→</button>
-        <button onClick={() => sendKey('\x1b[D')}>←</button>
-        <button onClick={() => sendKey('\x1b[H')}>home</button>
-        <button onClick={() => sendKey('\x1b[F')}>end</button>
-        <button onClick={() => sendKey('\x1b[5~')}>pgUp</button>
-        <button onClick={() => sendKey('\x1b[6~')}>pgDn</button>
-        <button onClick={() => sendKey('|')}>|</button>
-        <button onClick={() => sendKey('/')}>/ </button>
-        <button onClick={() => sendKey('~')}>~</button>
-        <button onClick={async () => { try { const text = await navigator.clipboard.readText(); if (text) sendKey(text); } catch {} }}>paste</button>
+        <button onClick={gatedClick('\x01')}>^A</button>
+        <button onClick={gatedClick('\x02')}>^B</button>
+        <button onClick={gatedClick('\x03')}>^C</button>
+        <button onClick={gatedClick('\x0c')}>^L</button>
+        <button data-require-hold="1" onClick={gatedClick('\x04')}>^D</button>
+        <button onClick={gatedClick('\x0f')}>^O</button>
+        <button data-require-hold="1" onClick={gatedClick('\x1a')}>^Z</button>
+        <button onClick={gatedClick('\x1b')}>esc</button>
+        <button onClick={gatedClick('\t')}>tab</button>
+        <button onClick={gatedClick('\x1b[A')}>↑</button>
+        <button onClick={gatedClick('\x1b[B')}>↓</button>
+        <button onClick={gatedClick('\x1b[C')}>→</button>
+        <button onClick={gatedClick('\x1b[D')}>←</button>
+        <button onClick={gatedClick('\x1b[H')}>home</button>
+        <button onClick={gatedClick('\x1b[F')}>end</button>
+        <button onClick={gatedClick('\x1b[5~')}>pgUp</button>
+        <button onClick={gatedClick('\x1b[6~')}>pgDn</button>
+        <button onClick={gatedClick('|')}>|</button>
+        <button onClick={gatedClick('/')}>/ </button>
+        <button onClick={gatedClick('~')}>~</button>
+        <button onClick={async () => {
+          if (!programmaticClickRef.current) return
+          try { const text = await navigator.clipboard.readText(); if (text) sendKey(text); } catch {}
+        }}>paste</button>
       </div>
     </div>
   )

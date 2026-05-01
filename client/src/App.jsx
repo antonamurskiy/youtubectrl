@@ -620,7 +620,11 @@ function App() {
         onTouchEnd={onFeedTouchEnd}
         onTouchCancel={() => { feedSwipeRef.current = null }}
         style={{
-          ...(terminalOpen ? { display: 'none' } : undefined),
+          // visibility:hidden + pointer-events:none preserves the
+          // scroll position when terminal toggles. display:none reset
+          // body scrollTop to 0 every time the user opened/closed the
+          // terminal panel.
+          ...(terminalOpen ? { visibility: 'hidden', pointerEvents: 'none' } : undefined),
         }}
       >
         <header className="header">
@@ -741,7 +745,11 @@ function App() {
           }}
           onTouchEnd={() => clearTimeout(longPressRef.current)}
           onTouchCancel={() => clearTimeout(longPressRef.current)}
-          onContextMenu={(e) => e.preventDefault()}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            hapticThump()
+            toggleSecretMenu()
+          }}
         >
           {activeTab === 'channel' || activeTab === 'search' || activeTab === 'filtered' ? (
             <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="square" strokeLinejoin="miter">

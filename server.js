@@ -803,10 +803,15 @@ app.get("/api/preview-url", async (req, res) => {
   if (!id) return res.json({ url: null });
   const cacheKey = isLive ? `live:${id}` : id;
   const cached = previewCache.get(cacheKey);
-  if (cached && Date.now() - cached.at < PREVIEW_TTL_MS) {
+  // nocache=1 from the client tells us the URL it had previously
+  // expired or 403'd — drop the entry so we re-resolve fresh.
+  if (req.query.nocache === "1") {
+    previewCache.delete(cacheKey);
+  } else if (cached && Date.now() - cached.at < PREVIEW_TTL_MS) {
     return res.json({ url: cached.url, isLive });
+  } else if (cached) {
+    previewCache.delete(cacheKey);
   }
-  if (cached) previewCache.delete(cacheKey);
   try {
     // VOD: progressive 360p or small DASH video-only. Live: low-bitrate
     // HLS variants (301/300=1080p60, down to 93=360p). iOS Safari plays
@@ -2075,7 +2080,7 @@ app.post("/api/play", async (req, res) => {
     // mpv's built-in VO fallback chain doesn't help: gpu-next
     // "initializes" without DisplayLink, so it never fails to cascade.
     // displayUnavailable was computed at the top of this handler.
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`, `--video-sync=display-resample`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
       // Stop mpv from resizing the window on every loadfile to match
       // the new video's intrinsic aspect — that was the visible "jump"
       // when switching videos. With --no-keepaspect-window the window
@@ -2387,8 +2392,7 @@ async function _doRespawnLivePipeline(offsetSec) {
   const args = [
     `--input-ipc-server=/tmp/mpv-socket`,
     `--hwdec=auto-safe`, `--keep-open`,
-    `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--autosync=30`,
-    `--video-sync=display-resample`,
+    `--demuxer-max-back-bytes=512M`, `--cache=yes`,
     `--demuxer-lavf-o-append=http_persistent=1`,
     `--demuxer-lavf-o-append=http_multiple=1`,
   ];

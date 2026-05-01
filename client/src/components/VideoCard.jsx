@@ -45,12 +45,25 @@ const previewUrlCache = new Map()
 function getPreviewUrl(videoId, isLive) {
   const key = isLive ? `live:${videoId}` : videoId
   if (previewUrlCache.has(key)) return previewUrlCache.get(key)
+  // Cache-bust the server with t=now so a stale entry that returned
+  // null (or an expired URL the previous tick) gets retried instead
+  // of being permanently bad in the client cache.
   const p = fetch(`/api/preview-url?id=${videoId}${isLive ? '&live=1' : ''}`)
     .then(r => r.json())
     .then(d => d?.url || null)
-    .catch(() => { previewUrlCache.delete(key); return null })
+    .catch(() => null)
   previewUrlCache.set(key, p)
+  // Drop the cache entry if the resolved url is null so the next
+  // mount retries instead of being stuck with a permanent failure.
+  p.then(url => { if (!url) previewUrlCache.delete(key) }).catch(() => {})
   return p
+}
+// Called from the <video onError> handler — drop both client and
+// server caches for this id so the next render re-resolves a fresh
+// URL (handles googlevideo expire / 403).
+export function invalidatePreviewUrl(videoId, isLive) {
+  const key = isLive ? `live:${videoId}` : videoId
+  previewUrlCache.delete(key)
 }
 
 function formatDuration(val) {
@@ -180,6 +193,18 @@ function VideoCardImpl({ video, isPlaying, isActive, onHide }) {
     })
     return () => { cancelled = true }
   }, [inView, previewing, terminalOpen, videoId, previewUrl, isLiveVideo])
+
+  // Belt-and-braces: when the terminal opens, the video element
+  // unmounts (gated by `!terminalOpen` in the JSX), but iOS Safari
+  // sometimes keeps a muted decoder running for a tick after the
+  // node is detached. Explicitly pause the ref BEFORE the unmount
+  // tick lands so the user can't be left with audio/network usage
+  // they can't see.
+  useEffect(() => {
+    if (!terminalOpen) return
+    const el = previewRef.current
+    if (el) try { el.pause() } catch {}
+  }, [terminalOpen])
 
   // Mobile: preview on tap-hold; Desktop: hover
   const handleMouseEnter = useCallback(() => {
@@ -368,7 +393,7 @@ function VideoCardImpl({ video, isPlaying, isActive, onHide }) {
               card becomes active, .play() is instant — no "loading"
               jank mid-scroll. Opacity 0 hides it; previewing flips on
               the playback + visibility together. */}
-          {previewUrl && !terminalOpen && inView && (
+          {previewUrl && !terminalOpen && (inView || previewing) && (
             <video
               ref={(el) => {
                 previewRef.current = el
@@ -381,10 +406,24 @@ function VideoCardImpl({ video, isPlaying, isActive, onHide }) {
                 if (previewActive) el.play().catch(() => {})
                 else { try { el.pause() } catch {} }
               }}
+              src={previewUrl}
               muted
               loop
               playsInline
               preload="auto"
+              onError={(e) => {
+                // googlevideo URL probably expired or got 403'd — drop
+                // the cache entry so the next inView pass re-resolves
+                // a fresh URL via /api/preview-url. Clearing
+                // previewUrl here triggers the fetch effect again.
+                // Also nuke the server-side cache by passing nocache=1
+                // on the next request (server reads URL fresh).
+                invalidatePreviewUrl(videoId, isLiveVideo)
+                setPreviewUrl(null)
+                // Best-effort server-side bust so the next fetch
+                // doesn't return the same expired URL.
+                fetch(`/api/preview-url?id=${videoId}${isLiveVideo ? '&live=1' : ''}&nocache=1`).catch(() => {})
+              }}
               style={{
                 position: 'absolute', inset: 0, width: '100%', height: '100%',
                 objectFit: 'cover',

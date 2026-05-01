@@ -38,6 +38,7 @@ export const useUIStore = create((set) => ({
   setChannel: (ch) => set({ channelQuery: ch, activeTab: 'channel' }),
   toggleSecretMenu: () => set((s) => ({ secretMenuOpen: !s.secretMenuOpen })),
   addToast: (msg) => set((s) => {
+    if (typeof window !== 'undefined' && window.innerWidth >= 768) return s
     const id = Date.now()
     setTimeout(() => set((s2) => ({ toasts: s2.toasts.filter(t => t.id !== id) })), 3000)
     return { toasts: [...s.toasts, { id, msg }] }
