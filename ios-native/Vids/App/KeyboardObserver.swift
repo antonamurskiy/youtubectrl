@@ -10,11 +10,14 @@ final class KeyboardObserver {
     func start(terminal: TerminalStore) {
         self.terminal = terminal
         let nc = NotificationCenter.default
+        // NotificationCenter delivers on .main GCD queue, but @Observable
+        // tracking expects updates from the MainActor — dispatch
+        // explicitly so SwiftUI picks them up.
         observers.append(nc.addObserver(forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.terminal?.keyboardOpen = true
+            Task { @MainActor in self?.terminal?.keyboardOpen = true }
         })
         observers.append(nc.addObserver(forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main) { [weak self] _ in
-            self?.terminal?.keyboardOpen = false
+            Task { @MainActor in self?.terminal?.keyboardOpen = false }
         })
     }
 

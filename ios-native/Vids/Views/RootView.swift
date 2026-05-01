@@ -49,11 +49,17 @@ struct RootView: View {
                     .zIndex(10)
             }
 
-            // FAB stack (cmux + refresh).
+            // FAB stack (terminal toggle + refresh). Bottom padding tracks
+            // whether NP bar is mounted + whether keyboard is up.
+            // - keyboard up: lift to 408 (bar of soft keyboard ≈ 336 +
+            //   ~72 clearance) — matches React's body.keyboard-open rule
+            // - NP bar visible: ~250 (bar with three rows + safe area)
+            // - otherwise: 24 from bottom
             FABStack()
                 .padding(.trailing, 16)
-                .padding(.bottom, playback.playing ? 240 : 24)
+                .padding(.bottom, fabBottomPadding)
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .allowsHitTesting(true)
                 .zIndex(20)
 
@@ -72,6 +78,13 @@ struct RootView: View {
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in theme.terminalOpen = new }
         .task { theme.setTabTint(for: feed.activeTab) }
+    }
+
+    private var fabBottomPadding: CGFloat {
+        // Order matters — keyboard wins, then NP bar, then default.
+        if terminal.keyboardOpen { return 380 }
+        if playback.playing { return 230 }
+        return 70
     }
 
     private var feedView: some View {

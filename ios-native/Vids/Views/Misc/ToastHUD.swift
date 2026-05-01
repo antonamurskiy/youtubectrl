@@ -54,11 +54,12 @@ struct VolumeHUD: View {
 
 struct ClaudeFeedView: View {
     @Environment(PushStore.self) private var push
+    @Environment(TerminalStore.self) private var terminal
 
     var body: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            ForEach(push.feed.suffix(6).reversed(), id: \.self) { line in
-                Text(line)
+            ForEach(terminal.open ? [] : Array(push.feed.suffix(6).reversed())) { line in
+                Text(line.text)
                     .font(.system(size: 11, design: .monospaced))
                     .foregroundStyle(.white.opacity(0.6))
                     .lineLimit(1)
@@ -67,11 +68,13 @@ struct ClaudeFeedView: View {
                     .padding(.vertical, 3)
                     .background(.black.opacity(0.55))
                     .clipShape(RoundedRectangle(cornerRadius: 4))
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
         .padding(.top, 100)
         .padding(.trailing, 12)
         .allowsHitTesting(false)
+        .animation(.easeOut(duration: 0.2), value: push.feed.count)
     }
 }
