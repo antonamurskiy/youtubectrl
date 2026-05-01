@@ -84,6 +84,10 @@ struct TermHost: UIViewRepresentable {
 
     func makeUIView(context: Context) -> SwiftTerm.TerminalView {
         let tv = SwiftTerm.TerminalView(frame: .zero)
+        // pasteConfiguration with no acceptable types blocks the iOS
+        // "paste from <other device>" suggestion banner that was
+        // dumping screenshot data into the PTY when user tapped to type.
+        tv.pasteConfiguration = UIPasteConfiguration(acceptableTypeIdentifiers: [])
         tv.terminalDelegate = context.coordinator
         tv.backgroundColor = UIColor(red: 0x28/255.0, green: 0x28/255.0, blue: 0x28/255.0, alpha: 1)
         tv.nativeForegroundColor = UIColor(red: 0xeb/255.0, green: 0xdb/255.0, blue: 0xb2/255.0, alpha: 1)
