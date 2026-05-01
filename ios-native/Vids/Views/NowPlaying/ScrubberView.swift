@@ -16,6 +16,17 @@ struct ScrubberView: UIViewRepresentable {
             let target = pct * (Double(playback.duration > 0 ? playback.duration : 0))
             Task { try? await services.api.seek(target) }
         }
+        // Hoist scrub preview into the SwiftUI overlay above NPBar —
+        // ScrubberUIView publishes drag state, RootView renders the
+        // floating tile (Apple TV / AVKit pattern; no glass-clip
+        // issues since the preview lives outside the bar's view tree).
+        v.onScrub = { [weak services] active, pct, image, label in
+            guard let scrub = services?.scrub else { return }
+            scrub.active = active
+            scrub.pct = pct
+            scrub.image = image
+            scrub.label = label
+        }
         return v
     }
 
@@ -33,18 +44,6 @@ final class ScrubberUIView: UIView {
     private let fill = CAShapeLayer()
     private let thumb = CAShapeLayer()
     private let chapters = CAShapeLayer()
-    private let previewLayer = CALayer()
-    private let previewLabel: UILabel = {
-        let l = UILabel()
-        l.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
-        l.textColor = .white
-        l.textAlignment = .center
-        l.layer.cornerRadius = 3
-        l.layer.masksToBounds = true
-        l.backgroundColor = UIColor(white: 0, alpha: 0.85)
-        l.isHidden = true
-        return l
-    }()
     private var displayLink: CADisplayLink?
     private var playback: PlaybackStore?
     private var clockOffset: Double = 0
@@ -53,8 +52,10 @@ final class ScrubberUIView: UIView {
     private var storyboard: ApiClient.Storyboard?
     private var pageImages: [Int: UIImage] = [:]
     private var pageInFlight: Set<Int> = []
-    private let previewView = UIImageView()
     var onSeek: ((Double) -> Void)?
+    /// Publishes scrub state to the SwiftUI overlay (Apple TV pattern).
+    /// (active, pct, tileImage, label)
+    var onScrub: ((Bool, Double, UIImage?, String) -> Void)?
 
     func setStoryboard(_ sb: ApiClient.Storyboard?) {
         // Reset cache when switching storyboards.
@@ -80,14 +81,6 @@ final class ScrubberUIView: UIView {
         thumb.shadowOffset = CGSize(width: 0, height: 1)
         thumb.strokeColor = UIColor.white.withAlphaComponent(0.35).cgColor
         thumb.lineWidth = 1
-        previewView.isHidden = true
-        previewView.contentMode = .scaleAspectFill
-        previewView.clipsToBounds = true
-        previewView.layer.cornerRadius = 4
-        previewView.layer.borderColor = UIColor.white.withAlphaComponent(0.5).cgColor
-        previewView.layer.borderWidth = 1
-        addSubview(previewView)
-        addSubview(previewLabel)
         backgroundColor = .clear
         let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
         addGestureRecognizer(pan)
@@ -165,9 +158,7 @@ final class ScrubberUIView: UIView {
         switch g.state {
         case .began:
             dragging = true; dragPct = pct
-            previewLabel.isHidden = false
-            previewView.isHidden = false
-            // Animate the track/thumb growth.
+            publishScrub(active: true)
             UIView.animate(withDuration: 0.18,
                            delay: 0,
                            usingSpringWithDamping: 0.85,
@@ -177,12 +168,10 @@ final class ScrubberUIView: UIView {
             }
         case .changed:
             dragPct = pct
-            updatePreviewLabel()
-            updateStoryboardTile()
+            publishScrub(active: true)
         case .ended, .cancelled:
             dragging = false
-            previewLabel.isHidden = true
-            previewView.isHidden = true
+            publishScrub(active: false)
             onSeek?(pct)
             UIView.animate(withDuration: 0.22,
                            delay: 0,
@@ -196,37 +185,38 @@ final class ScrubberUIView: UIView {
         setNeedsLayout()
     }
 
-    private func updateStoryboardTile() {
-        guard let sb = storyboard, let urlTpl = sb.url,
-              let cols = sb.cols, cols > 0,
-              let rows = sb.rows, rows > 0,
-              let interval = sb.interval, interval > 0,
-              let tileW = sb.width, let tileH = sb.height,
-              let pb = playback, pb.duration > 0 else {
-            previewView.image = nil
+    /// Compute the storyboard tile + label for the current dragPct and
+    /// hand off to the SwiftUI overlay via `onScrub`.
+    private func publishScrub(active: Bool) {
+        guard active else {
+            onScrub?(false, dragPct, nil, "")
+            return
+        }
+        guard let pb = playback, pb.duration > 0 else {
+            onScrub?(true, dragPct, nil, "")
             return
         }
         let target = pb.duration * dragPct
-        let frameIndex = Int(target / interval)
-        let perPage = cols * rows
-        let pageIndex = frameIndex / perPage
-        let frameOnPage = frameIndex % perPage
-        let col = frameOnPage % cols
-        let row = frameOnPage / cols
-
-        let r = bounds.insetBy(dx: 14, dy: 0)
-        let cx = r.minX + r.width * dragPct
-        let prevW: CGFloat = 132, prevH = prevW * CGFloat(tileH) / CGFloat(tileW)
-        previewView.frame = CGRect(x: max(8, min(bounds.width - prevW - 8, cx - prevW / 2)),
-                                   y: -prevH - 24,
-                                   width: prevW, height: prevH)
-
-        if let img = pageImages[pageIndex] {
-            previewView.image = cropTile(img, col: col, row: row, tileW: tileW, tileH: tileH)
-        } else {
-            previewView.image = nil
-            fetchPage(template: urlTpl, page: pageIndex)
+        let label = pb.isLive ? "-\(formatTime(pb.duration - target))" : formatTime(target)
+        var image: UIImage? = nil
+        if let sb = storyboard, let urlTpl = sb.url,
+           let cols = sb.cols, cols > 0,
+           let rows = sb.rows, rows > 0,
+           let interval = sb.interval, interval > 0,
+           let tileW = sb.width, let tileH = sb.height {
+            let frameIndex = Int(target / interval)
+            let perPage = cols * rows
+            let pageIndex = frameIndex / perPage
+            let frameOnPage = frameIndex % perPage
+            let col = frameOnPage % cols
+            let row = frameOnPage / cols
+            if let img = pageImages[pageIndex] {
+                image = cropTile(img, col: col, row: row, tileW: tileW, tileH: tileH)
+            } else {
+                fetchPage(template: urlTpl, page: pageIndex)
+            }
         }
+        onScrub?(true, dragPct, image, label)
     }
 
     private func cropTile(_ image: UIImage, col: Int, row: Int, tileW: Int, tileH: Int) -> UIImage? {
@@ -251,21 +241,9 @@ final class ScrubberUIView: UIView {
                 guard let self else { return }
                 self.pageImages[page] = img
                 self.pageInFlight.remove(page)
-                if self.dragging { self.updateStoryboardTile() }
+                if self.dragging { self.publishScrub(active: true) }
             }
         }
-    }
-
-    private func updatePreviewLabel() {
-        guard let pb = playback, pb.duration > 0 else { return }
-        let target = pb.duration * dragPct
-        previewLabel.text = pb.isLive
-            ? "-\(formatTime(pb.duration - target))"
-            : formatTime(target)
-        let r = bounds.insetBy(dx: 14, dy: 0)
-        let cx = r.minX + r.width * dragPct
-        let labelW: CGFloat = 60, labelH: CGFloat = 18
-        previewLabel.frame = CGRect(x: cx - labelW / 2, y: -labelH - 4, width: labelW, height: labelH)
     }
 
     private func formatTime(_ s: Double) -> String {

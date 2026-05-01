@@ -90,17 +90,27 @@ struct TerminalView: View {
         .ignoresSafeArea(.container, edges: .bottom)
         .overlay(alignment: .bottomTrailing) {
             if terminal.keyboardOpen {
-                Button(action: dismissKeyboard) {
+                Button(action: {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    dismissKeyboard()
+                }) {
                     Image(systemName: "keyboard.chevron.compact.down")
-                        .font(Font.app(16, weight: .bold))
-                        .frame(width: 44, height: 44)
-                        .foregroundStyle(Color.appText)
-                        .background(.black.opacity(0.7))
-                        .clipShape(Circle())
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(Color.appText.opacity(0.85))
                 }
                 .buttonStyle(.plain)
-                .padding(.trailing, 12)
-                .padding(.bottom, terminal.keyboardHeight + 12)
+                .glassEffect(
+                    .regular
+                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                        .interactive(),
+                    in: Circle()
+                )
+                .padding(.trailing, 16)
+                // Lift above the FAB stack: keyboardHeight + 16
+                // (FAB stack bottom inset) + 108 (two 48pt FABs +
+                // 12pt spacing) + 12pt gap above the terminal FAB.
+                .padding(.bottom, terminal.keyboardHeight + 16 + 108 + 12)
             }
         }
         .sheet(item: Binding(

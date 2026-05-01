@@ -28,6 +28,7 @@ struct ClaudeQuickReply: View {
             ) {
                 ForEach(playback.claudeOptions, id: \.n) { opt in
                     Button(opt.text) {
+                        Haptics.success()
                         Task { try? await services.api.tmuxSend(String(opt.n)) }
                     }
                 }

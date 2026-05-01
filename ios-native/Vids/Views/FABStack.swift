@@ -37,7 +37,7 @@ struct FABStack: View {
         // Photos floating controls on iOS 26.
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
-                Button(action: { terminal.toggle() }) {
+                Button(action: { Haptics.tap(); terminal.toggle() }) {
                     Image(systemName: "terminal")
                         .font(.system(size: 16, weight: .bold))
                         .frame(width: 48, height: 48)
@@ -85,6 +85,7 @@ struct FABStack: View {
     }
 
     private func refresh() {
+        Haptics.tap()
         feed.refreshTick &+= 1
         Task { await feed.load(tab: feed.activeTab, api: services.api) }
     }

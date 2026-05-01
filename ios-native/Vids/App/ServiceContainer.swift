@@ -18,6 +18,7 @@ final class ServiceContainer {
     let phoneMode: PhoneModeStore
     let keyboard: KeyboardObserver
     let fonts: FontStore
+    let scrub: ScrubState
 
     init() {
         self.api = ApiClient(host: "yuzu.local:3000")
@@ -32,6 +33,7 @@ final class ServiceContainer {
         self.phoneMode = PhoneModeStore()
         self.keyboard = KeyboardObserver()
         self.fonts = MainActor.assumeIsolated { FontStore() }
+        self.scrub = ScrubState()
         self.ws = WSClient(host: "yuzu.local:3000")
         self.ws.onMessage = { [weak self] msg in
             guard let self else { return }

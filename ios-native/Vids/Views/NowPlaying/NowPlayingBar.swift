@@ -103,15 +103,15 @@ struct NowPlayingBar: View {
                 }
                 .buttonStyle(.plain)
                 HStack(spacing: 18) {
-                    Button(action: { Task { try? await services.api.skip(-15) } }) {
+                    Button(action: { Haptics.tap(); Task { try? await services.api.skip(-15) } }) {
                         Image(systemName: "gobackward.15")
                     }
-                    Button(action: { Task { try? await services.api.playPause() } }) {
+                    Button(action: { Haptics.toggle(); Task { try? await services.api.playPause() } }) {
                         Image(systemName: playback.paused ? "play.fill" : "pause.fill")
                             .contentTransition(.symbolEffect(.replace))
                             .font(Font.app(22))
                     }
-                    Button(action: { Task { try? await services.api.skip(15) } }) {
+                    Button(action: { Haptics.tap(); Task { try? await services.api.skip(15) } }) {
                         Image(systemName: "goforward.15")
                     }
                 }
@@ -142,6 +142,13 @@ struct NowPlayingBar: View {
             .regular.tint(barTint).interactive(),
             in: RoundedRectangle(cornerRadius: 28, style: .continuous)
         )
+        // Publish the bar's frame in screen-global coords so the
+        // ScrubPreviewOverlay (rendered as a SIBLING of this bar, not
+        // a descendant) can place its floating tile above us.
+        .background(GeometryReader { geo in
+            Color.clear.preference(key: NPBarFrameKey.self,
+                                   value: geo.frame(in: .global))
+        })
         .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
@@ -167,7 +174,7 @@ struct NowPlayingBar: View {
     // MARK: helpers
 
     private func skipBtn(_ label: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button(action: { Haptics.tap(); action() }) {
             Text(label)
                 .font(Font.app(11, weight: .heavy, design: .monospaced))
                 .foregroundStyle(Color.appText.opacity(0.65))

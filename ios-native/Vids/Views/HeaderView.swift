@@ -45,6 +45,7 @@ struct HeaderView: View {
 
             // Inline tabs — pill smoothly slides via matchedGeometryEffect.
             TabsRow(activeTab: feed.activeTab) { tab in
+                Haptics.select()
                 feed.activeTab = tab
                 Task { await feed.load(tab: tab, api: services.api) }
             }

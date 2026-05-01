@@ -19,6 +19,7 @@ struct RootView: View {
 
     @State private var searchFocused = false
     @State private var npBarHeight: CGFloat = 0
+    @State private var npBarFrame: CGRect = .zero
     @Environment(\.horizontalSizeClass) private var hSize
 
     var body: some View {
@@ -148,6 +149,12 @@ struct RootView: View {
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
             ClaudeQuickReply().zIndex(28)
+            // Sibling overlay so the floating tile lives ABOVE the
+            // NPBar's glass clip — same layer pattern AVKit uses for
+            // its scrub preview thumbnail.
+            ScrubPreviewOverlay(barFrame: npBarFrame)
+                .zIndex(15)
+                .ignoresSafeArea()
 
         }
         .sheet(isPresented: Binding(
@@ -199,6 +206,7 @@ struct RootView: View {
         .animation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.4), value: theme.resolvedSurface)
         .animation(.easeOut(duration: 0.25), value: terminal.open)
         .onPreferenceChange(NPBarHeightKey.self) { npBarHeight = $0 }
+        .onPreferenceChange(NPBarFrameKey.self) { npBarFrame = $0 }
         .onChange(of: feed.activeTab) { _, new in theme.setTabTint(for: new) }
         .onChange(of: terminal.open) { _, new in
             theme.terminalOpen = new
