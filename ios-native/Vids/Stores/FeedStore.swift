@@ -3,7 +3,16 @@ import Observation
 
 @Observable
 final class FeedStore {
-    var activeTab: FeedTab = .rec
+    /// Persisted across launches so the app reopens on the last viewed
+    /// tab. `@AppStorage` doesn't work inside @Observable, so we shim
+    /// via didSet → UserDefaults.
+    var activeTab: FeedTab = {
+        if let raw = UserDefaults.standard.string(forKey: "feed.activeTab"),
+           let tab = FeedTab(rawValue: raw) { return tab }
+        return .rec
+    }() {
+        didSet { UserDefaults.standard.set(activeTab.rawValue, forKey: "feed.activeTab") }
+    }
     var searchQuery: String = ""
     var channelQuery: String? = nil
     var lastError: String? = nil

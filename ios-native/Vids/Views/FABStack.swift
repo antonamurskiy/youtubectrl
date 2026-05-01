@@ -7,8 +7,6 @@ struct FABStack: View {
     @Environment(ServiceContainer.self) private var services
     @Environment(UIStore.self) private var ui
     @Environment(PlaybackStore.self) private var playback
-    @State private var claudePulse: Bool = false
-
     private var claudeColor: Color? {
         switch playback.claudeState {
         case "waiting": return Color(hex: "#b16286")  // magenta
@@ -44,32 +42,32 @@ struct FABStack: View {
                         .font(.system(size: 16, weight: .bold))
                         .frame(width: 48, height: 48)
                         .foregroundStyle(claudeColor ?? fabFg)
-                        .scaleEffect(claudePulse ? 1.08 : 1)
-                        .animation(claudeColor != nil
-                                    ? .easeInOut(duration: 0.7).repeatForever(autoreverses: true)
-                                    : .default,
-                                   value: claudePulse)
+                        // Liquid Glass scale phase animator for the
+                        // claude waiting/thinking pulse — replaces the
+                        // fragile repeatForever scaleEffect.
+                        .symbolEffect(
+                            .pulse.byLayer,
+                            options: .repeating,
+                            isActive: claudeColor != nil
+                        )
                 }
                 .glassEffect(
                     .regular.tint(claudeColor.map { $0.opacity(0.45) } ?? fabBg).interactive(),
                     in: Circle()
                 )
-                .onChange(of: playback.claudeState) { _, _ in
-                    claudePulse = (claudeColor != nil)
-                }
-                .task { claudePulse = (claudeColor != nil) }
 
                 Button(action: refresh) {
                     Image(systemName: "arrow.clockwise")
                         .font(.system(size: 16, weight: .bold))
                         .frame(width: 48, height: 48)
                         .foregroundStyle(feed.isCurrentTabLoading ? Color(hex: "#8ec07c") : fabFg)
-                        .rotationEffect(.degrees(feed.isCurrentTabLoading ? 360 : 0))
-                        .animation(
-                            feed.isCurrentTabLoading
-                                ? .linear(duration: 0.9).repeatForever(autoreverses: false)
-                                : .default,
-                            value: feed.isCurrentTabLoading
+                        // Native iOS 18+ rotation symbol-effect — much
+                        // smoother than the manual rotationEffect +
+                        // repeatForever animation it replaces.
+                        .symbolEffect(
+                            .rotate.byLayer,
+                            options: .repeating.speed(0.9),
+                            isActive: feed.isCurrentTabLoading
                         )
                 }
                 .glassEffect(

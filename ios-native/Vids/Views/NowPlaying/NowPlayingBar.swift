@@ -22,6 +22,7 @@ struct NowPlayingBar: View {
                     .frame(minWidth: 36, alignment: .leading)
                 Button(action: { Task { try? await services.api.toggleVisibility() } }) {
                     Image(systemName: playback.visible ? "eye" : "eye.slash")
+                        .contentTransition(.symbolEffect(.replace))
                         .foregroundStyle(playback.visible ? Color(hex: "#8ec07c") : Color(hex: "#d05050"))
                         .font(Font.app(14))
                 }
@@ -98,6 +99,7 @@ struct NowPlayingBar: View {
                     }
                     Button(action: { Task { try? await services.api.playPause() } }) {
                         Image(systemName: playback.paused ? "play.fill" : "pause.fill")
+                            .contentTransition(.symbolEffect(.replace))
                             .font(Font.app(22))
                     }
                     Button(action: { Task { try? await services.api.skip(15) } }) {
@@ -112,7 +114,17 @@ struct NowPlayingBar: View {
             .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity)
-        .background(theme.resolvedSurface)
+        // iOS 26 Liquid Glass mini-player: floating glass surface with
+        // a top hairline. Sheet-style instead of the flat dark bar.
+        .glassEffect(.regular.tint(.white.opacity(0.06)),
+                     in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.5)
+        }
+        .padding(.horizontal, 8)
+        .padding(.bottom, 6)
     }
 
     // MARK: helpers
@@ -177,6 +189,7 @@ struct NowPlayingBar: View {
             if active { services.avHost.stopPip() } else { services.avHost.startPip() }
         }) {
             Image(systemName: active ? "pip.exit" : "pip.enter")
+                .contentTransition(.symbolEffect(.replace))
                 .font(Font.app(14))
                 .foregroundStyle(active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.6))
         }

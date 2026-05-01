@@ -3,7 +3,12 @@ import Observation
 
 @Observable
 final class TerminalStore {
-    var open: Bool = false
+    /// Persisted so the terminal panel reopens automatically on
+     /// relaunch if it was open last time. UserDefaults shim because
+     /// @AppStorage doesn't work inside @Observable classes.
+    var open: Bool = UserDefaults.standard.bool(forKey: "terminal.open") {
+        didSet { UserDefaults.standard.set(open, forKey: "terminal.open") }
+    }
     var windows: [TmuxWindow] = []
     var colors: [String: String] = [:]
     var colorPreview: [String: String] = [:]

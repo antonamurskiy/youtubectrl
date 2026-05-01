@@ -9,11 +9,11 @@ struct ToastHUD: View {
             ForEach(terminal.open ? [] : ui.toasts) { t in
                 Text(t.text)
                     .font(Font.app(13, weight: .semibold))
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 16)
                     .padding(.vertical, 10)
-                    .background(.black.opacity(0.85))
                     .foregroundStyle(Color.appText)
-                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    // iOS 26 glass capsule like AirDrop banners.
+                    .glassEffect(.regular.tint(.white.opacity(0.10)), in: Capsule())
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
@@ -38,13 +38,15 @@ struct VolumeHUD: View {
                     .frame(width: 160, height: 4)
                     .overlay(alignment: .leading) {
                         Rectangle()
-                            .fill(.white)
+                            .fill(Color.appText)
                             .frame(width: 160 * CGFloat(max(0, min(100, pulse.percent))) / 100, height: 4)
                     }
+                    .clipShape(Capsule())
             }
-            .padding(20)
-            .background(.black.opacity(0.7))
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .padding(24)
+            // iOS 26 system-volume-HUD-style glass card.
+            .glassEffect(.regular.tint(.white.opacity(0.10)),
+                         in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
             .allowsHitTesting(false)
             .transition(.opacity.combined(with: .scale(scale: 0.9)))

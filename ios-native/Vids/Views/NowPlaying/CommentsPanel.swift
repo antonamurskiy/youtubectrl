@@ -6,6 +6,7 @@ struct CommentsPanel: View {
     @Environment(UIStore.self) private var ui
     @State private var comments: [ApiClient.Comment] = []
     @State private var loading: Bool = false
+    @State private var topId: String? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,6 +23,10 @@ struct CommentsPanel: View {
 
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 12) {
+                    // Anchor for .scrollPosition so refreshing snaps back
+                    // to the top instead of staying mid-scroll on the
+                    // previous video's comments.
+                    Color.clear.frame(height: 0).id("top")
                     if loading && comments.isEmpty {
                         Text("loading…").font(Font.app(12, design: .monospaced)).foregroundStyle(Color.appText.opacity(0.5)).padding()
                     } else if comments.isEmpty {
@@ -47,8 +52,13 @@ struct CommentsPanel: View {
                 }
                 .padding(.vertical, 10)
             }
+            .scrollPosition(id: $topId, anchor: .top)
         }
-        .task(id: playback.url) { await load() }
+        .task(id: playback.url) {
+            // New video → snap to top before refetching.
+            topId = "top"
+            await load()
+        }
     }
 
     @MainActor
