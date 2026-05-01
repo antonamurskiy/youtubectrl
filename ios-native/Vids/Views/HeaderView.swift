@@ -10,14 +10,13 @@ struct HeaderView: View {
     @State private var searchTask: Task<Void, Never>? = nil
 
     var body: some View {
-        VStack(spacing: 4) {
-        // Top row: home / search / status dots.
+        // Single row: home / search / tabs / status dots — matches React.
         HStack(spacing: 6) {
             Button(action: home) {
                 Image(systemName: "play.fill")
                     .font(Font.app(13, weight: .bold))
                     .foregroundStyle(.white.opacity(0.85))
-                    .frame(width: 26, height: 26)
+                    .frame(width: 24, height: 24)
             }
 
             TextField("Search", text: $searchText)
@@ -37,7 +36,30 @@ struct HeaderView: View {
                     searchTask?.cancel()
                     Task { await feed.search(searchText, api: services.api) }
                 }
-                .frame(maxWidth: .infinity, minHeight: 28)
+                .frame(maxWidth: .infinity, minHeight: 26)
+
+            // Inline tabs — same font as everything else, just compact.
+            HStack(spacing: 2) {
+                ForEach(FeedTab.allCases) { tab in
+                    let active = feed.activeTab == tab
+                    Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
+                        Text(tab.label)
+                            .font(Font.app(10))
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 3)
+                            .background(active ? Color.white.opacity(0.22) : Color.clear)
+                            .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
+                            .overlay(alignment: .bottom) {
+                                Rectangle()
+                                    .fill(active ? Color(hex: "#ebdbb2") : Color.clear)
+                                    .frame(height: 1.5)
+                            }
+                            .clipShape(RoundedRectangle(cornerRadius: 2))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .fixedSize()
 
             HStack(spacing: 3) {
                 StatusDot(on: true)
@@ -46,33 +68,7 @@ struct HeaderView: View {
                 StatusDot(on: !(playback.macStatus.screenOff ?? false))
             }
         }
-        .padding(.horizontal, 10)
-
-        // Tabs row — horizontally scrollable so wider fonts don't wrap.
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 4) {
-                ForEach(FeedTab.allCases) { tab in
-                    let active = feed.activeTab == tab
-                    Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
-                        Text(tab.label)
-                            .font(Font.app(11, weight: active ? .heavy : .semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(active ? Color.white.opacity(0.22) : Color.clear)
-                            .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
-                            .overlay(alignment: .bottom) {
-                                Rectangle()
-                                    .fill(active ? Color(hex: "#ebdbb2") : Color.clear)
-                                    .frame(height: 2)
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.horizontal, 10)
-        }
-        }
+        .padding(.horizontal, 8)
         .padding(.vertical, 6)
     }
 
