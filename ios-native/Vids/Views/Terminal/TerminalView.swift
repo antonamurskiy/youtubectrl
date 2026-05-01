@@ -25,7 +25,20 @@ struct TerminalView: View {
                          onSwipe: switchTmuxWindow(by:),
                          onMounted: { tv in
                              terminal.dismissKeyboard = { [weak tv] in
-                                 _ = tv?.resignFirstResponder()
+                                 // SwiftTerm's first responder is a
+                                 // hidden helper textarea, not tv
+                                 // itself, so calling tv.resignFR()
+                                 // misses 2/3 of the time. Walk down
+                                 // to whoever's actually first
+                                 // responder, plus the global
+                                 // sendAction broadcast.
+                                 if let tv {
+                                     resignChildIfFirstResponder(tv)
+                                 }
+                                 UIApplication.shared.sendAction(
+                                     #selector(UIResponder.resignFirstResponder),
+                                     to: nil, from: nil, for: nil
+                                 )
                              }
                              terminal.themeAccessory = { [weak tv, weak theme] in
                                  let tint = theme?.activeTmuxTint.flatMap { UIColor($0) }
@@ -88,40 +101,8 @@ struct TerminalView: View {
         .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
-        .overlay(alignment: .bottomTrailing) {
-            if terminal.keyboardOpen {
-                Button(action: {
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
-                    dismissKeyboard()
-                }) {
-                    Image(systemName: "keyboard.chevron.compact.down")
-                        .font(.system(size: 16, weight: .bold))
-                        .frame(width: 48, height: 48)
-                        .foregroundStyle(Color.appText.opacity(0.85))
-                }
-                .buttonStyle(.plain)
-                .glassEffect(
-                    .regular
-                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                        .interactive(),
-                    in: Circle()
-                )
-                .padding(.trailing, 16)
-                // FAB stack is in RootView with `.ignoresSafeArea(.keyboard)`
-                // so it sits at fabBottomPadding(=keyboardHeight + 16)
-                // from screen bottom. The dismiss btn lives in the
-                // TerminalView overlay which IS lifted by SwiftUI
-                // keyboard avoidance. So to land 12pt above the
-                // FAB stack top, we need:
-                //   16 (FAB inset) + 108 (FAB stack height) + 12 (gap)
-                //                  + keyboardHeight (FAB ignores kb)
-                //                  − keyboardHeight (we're already lifted)
-                // => 16 + 108 + 12 = 136. But empirically the avoid
-                // lift differs from explicit padding when terminal bg
-                // ignores .container — so add a safety bump of 24pt.
-                .padding(.bottom, 16 + 108 + 12)
-            }
-        }
+        // KB dismiss button moved into FABStack as a third FAB so it
+        // shares the same coordinate system + spacing as the others.
         .sheet(item: Binding(
             get: { renaming },
             set: { renaming = $0 }
@@ -168,6 +149,12 @@ struct TerminalView: View {
 /// firing this without any user tap. paste(_:) is `open` in SwiftTerm
 /// so this override is allowed (method_setImplementation swizzling the
 /// same selector wasn't taking; subclass is more reliable).
+/// Recursive walk to find any first-responder descendant and resign it.
+private func resignChildIfFirstResponder(_ v: UIView) {
+    if v.isFirstResponder { v.resignFirstResponder(); return }
+    for s in v.subviews { resignChildIfFirstResponder(s) }
+}
+
 extension UIColor {
     func darkened(_ factor: CGFloat) -> UIColor {
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0

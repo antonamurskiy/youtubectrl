@@ -37,6 +37,23 @@ struct FABStack: View {
         // Photos floating controls on iOS 26.
         GlassEffectContainer(spacing: 12) {
             VStack(spacing: 12) {
+                // Keyboard dismiss FAB — only when soft keyboard is up
+                // and terminal is open. Lives in the same stack as
+                // the others so it inherits the 12pt VStack spacing
+                // automatically.
+                if terminal.open && terminal.keyboardOpen {
+                    Button(action: {
+                        Haptics.tap()
+                        terminal.dismissKeyboard?()
+                    }) {
+                        Image(systemName: "keyboard.chevron.compact.down")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 48, height: 48)
+                            .foregroundStyle(fabFg)
+                    }
+                    .glassEffect(.regular.tint(fabBg).interactive(), in: Circle())
+                    .transition(.scale.combined(with: .opacity))
+                }
                 Button(action: { Haptics.tap(); terminal.toggle() }) {
                     Image(systemName: "terminal")
                         .font(.system(size: 16, weight: .bold))

@@ -154,7 +154,7 @@ struct RootView: View {
             // Sibling overlay so the floating tile lives ABOVE the
             // NPBar's glass clip — same layer pattern AVKit uses for
             // its scrub preview thumbnail.
-            ScrubPreviewOverlay(barFrame: npBarFrame)
+            ScrubPreviewOverlay(barHeight: npBarHeight)
                 .zIndex(15)
                 .ignoresSafeArea()
 

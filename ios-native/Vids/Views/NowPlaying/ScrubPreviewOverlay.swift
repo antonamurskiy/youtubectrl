@@ -10,42 +10,35 @@ import SwiftUI
 /// just above the bar's top edge.
 struct ScrubPreviewOverlay: View {
     @Environment(ScrubState.self) private var scrub
-    let barFrame: CGRect
+    /// NP bar height (works via NPBarHeightKey). We don't need the full
+    /// frame — the bar always spans the screen bottom, so screen size +
+    /// npBarHeight is enough to compute where the scrubber track lives.
+    let barHeight: CGFloat
 
     var body: some View {
-        // Debug indicator — always visible when scrubbing, even if the
-        // tile path fails. Confirms whether ScrubState updates are
-        // reaching the overlay at all.
-        ZStack(alignment: .topLeading) {
-            if scrub.active {
-                Text("scrub active pct=\(String(format: "%.2f", scrub.pct)) bar=\(Int(barFrame.minX)),\(Int(barFrame.minY)) \(Int(barFrame.width))x\(Int(barFrame.height))")
-                    .font(.caption2.monospaced())
-                    .padding(6)
-                    .background(.red)
-                    .foregroundStyle(.white)
-                    .position(x: 200, y: 100)
-            }
-            if scrub.active && barFrame.width > 0 {
-                content(scrub: scrub)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
-            }
+        if scrub.active && barHeight > 0 {
+            content(scrub: scrub)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
         }
     }
 
     @ViewBuilder
     private func content(scrub: ScrubState) -> some View {
-        // Bar's scrubber inset: matches ScrubberUIView.insetBy(dx: 14)
-        // plus the bar's own outer padding (8pt horizontal in RootView).
-        let scrubInset: CGFloat = 14
-        let trackWidth = barFrame.width - scrubInset * 2
-        let cx = barFrame.minX + scrubInset + trackWidth * scrub.pct
+        // The bar spans the full screen bottom. Scrubber track inset
+        // matches ScrubberUIView.insetBy(dx: 14) + bar's own 8pt
+        // horizontal outer padding.
+        let screen = UIScreen.main.bounds
+        let scrubInset: CGFloat = 14 + 8
+        let trackWidth = screen.width - scrubInset * 2
+        let cx = scrubInset + trackWidth * scrub.pct
 
         let tileW: CGFloat = 132
-        let tileH: CGFloat = 76 // ~16:9
-        let lo: CGFloat = barFrame.minX + 8
-        let hi: CGFloat = barFrame.maxX - tileW - 8
+        let tileH: CGFloat = 76
+        let lo: CGFloat = 8
+        let hi: CGFloat = screen.width - tileW - 8
         let tileX: CGFloat = max(lo, min(hi, cx - tileW / 2))
-        let tileY: CGFloat = barFrame.minY - tileH - 28
+        // Bar sits at screen.height - barHeight; preview floats above.
+        let tileY: CGFloat = screen.height - barHeight - tileH - 28
 
         VStack(spacing: 6) {
             Group {
