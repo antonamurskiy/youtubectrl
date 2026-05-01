@@ -114,14 +114,14 @@ struct RootView: View {
                 NowPlayingBar()
                     .frame(maxWidth: hSize == .regular ? 600 : .infinity)
                     .frame(maxWidth: .infinity)
-                    // Measure BEFORE the .ignoresSafeArea modifiers —
-                    // on iOS 26 a GeometryReader behind a view that
-                    // ignores .container reports size 0×0.
-                    .background(GeometryReader { geo in
-                        Color.clear
-                            .preference(key: NPBarHeightKey.self, value: geo.size.height)
-                            .preference(key: NPBarFrameKey.self, value: geo.frame(in: .global))
-                    })
+                    // iOS 17.5+ .onGeometryChange — works where the
+                    // .background(GeometryReader) trick reported 0
+                    // on iOS 26 under .ignoresSafeArea.
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { newValue in
+                        npBarHeight = newValue
+                    }
                     .ignoresSafeArea(.container, edges: .bottom)
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                     // Plain opacity fade — the move(.bottom) transition
