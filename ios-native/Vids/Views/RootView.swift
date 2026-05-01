@@ -30,10 +30,10 @@ struct RootView: View {
                 .opacity(terminal.open ? 0 : 1)
                 .allowsHitTesting(!terminal.open)
 
-            // Terminal slides up from bottom over the feed.
+            // Terminal cross-fades over the feed.
             if terminal.open {
                 TerminalView()
-                    .transition(.move(edge: .bottom))
+                    .transition(.opacity)
             }
 
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
