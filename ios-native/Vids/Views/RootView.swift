@@ -237,16 +237,18 @@ struct RootView: View {
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
                 if feed.currentVideos.isEmpty {
-                    VStack(spacing: 6) {
-                        Text(feed.lastError ?? "Loading…")
-                            .font(Font.app(12, design: .monospaced))
+                    if let err = feed.lastError {
+                        Text(err)
+                            .font(Font.app(12))
                             .foregroundStyle(.white.opacity(0.6))
                             .multilineTextAlignment(.center)
                             .lineLimit(6)
                             .padding(20)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.top, 40)
+                    } else {
+                        FeedSkeleton()
                     }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 40)
                 }
             }
         }

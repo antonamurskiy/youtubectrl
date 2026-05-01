@@ -43,34 +43,22 @@ struct HeaderView: View {
                 .frame(maxWidth: .infinity, minHeight: 26)
                 .padding(.vertical, 4)
 
-            // Inline tabs — same font as everything else, just compact.
-            HStack(spacing: 2) {
-                ForEach(FeedTab.allCases) { tab in
-                    let active = feed.activeTab == tab
-                    Button(action: { feed.activeTab = tab; Task { await feed.load(tab: tab, api: services.api) } }) {
-                        Text(tab.label)
-                            .font(Font.app(10))
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 3)
-                            .background(active ? Color.white.opacity(0.22) : Color.clear)
-                            .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
-                            .overlay(alignment: .bottom) {
-                                Rectangle()
-                                    .fill(active ? Color(hex: "#ebdbb2") : Color.clear)
-                                    .frame(height: 1.5)
-                            }
-                            .clipShape(RoundedRectangle(cornerRadius: 2))
-                    }
-                    .buttonStyle(.plain)
-                }
+            // Inline tabs — pill smoothly slides via matchedGeometryEffect.
+            TabsRow(activeTab: feed.activeTab) { tab in
+                feed.activeTab = tab
+                Task { await feed.load(tab: tab, api: services.api) }
             }
-            .fixedSize()
 
             HStack(spacing: 3) {
                 StatusDot(on: true)
                 StatusDot(on: playback.macStatus.ethernet ?? false)
                 StatusDot(on: !(playback.macStatus.locked ?? false))
                 StatusDot(on: !(playback.macStatus.screenOff ?? false))
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 4)
+            .onLongPressGesture(minimumDuration: 0.5) {
+                services.ui.secretMenuOpen = true
             }
         }
         .padding(.horizontal, 8)
@@ -82,6 +70,49 @@ struct HeaderView: View {
         searchText = ""
         fieldFocus = false
         Task { await feed.load(tab: .rec, api: services.api) }
+    }
+}
+
+private struct TabsRow: View {
+    let activeTab: FeedTab
+    let onTap: (FeedTab) -> Void
+    @Namespace private var ns
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(FeedTab.allCases) { tab in
+                let active = activeTab == tab
+                Button(action: { onTap(tab) }) {
+                    Text(tab.label)
+                        .font(Font.app(10))
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .foregroundStyle(active ? Color.white : Color.white.opacity(0.45))
+                        .background(
+                            ZStack {
+                                if active {
+                                    Color.white.opacity(0.22)
+                                        .matchedGeometryEffect(id: "tab.bg", in: ns)
+                                }
+                            }
+                        )
+                        .overlay(alignment: .bottom) {
+                            ZStack {
+                                if active {
+                                    Color(hex: "#ebdbb2")
+                                        .frame(height: 1.5)
+                                        .matchedGeometryEffect(id: "tab.underline", in: ns)
+                                }
+                            }
+                            .frame(height: 1.5)
+                        }
+                        .clipShape(RoundedRectangle(cornerRadius: 2))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .fixedSize()
+        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: activeTab)
     }
 }
 

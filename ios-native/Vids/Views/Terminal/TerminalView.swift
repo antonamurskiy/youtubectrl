@@ -65,6 +65,11 @@ struct TerminalView: View {
                              terminal.dismissKeyboard = { [weak tv] in
                                  _ = tv?.resignFirstResponder()
                              }
+                             // Scroll to live edge on (re)open so user
+                             // doesn't land mid-scrollback.
+                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
+                                 tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
+                             }
                          })
                     .background(theme.resolvedSurface)
                 ScrollZoneOverlay()
