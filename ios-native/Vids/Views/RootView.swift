@@ -55,6 +55,11 @@ struct RootView: View {
 
             // iPad / landscape regular: feed and terminal side-by-side
             // (50/50 split). iPhone compact: cross-fade as before.
+            // Push terminal content up when the now-playing bar is
+            // visible underneath so the last rows aren't covered.
+            let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen && npBarHeight > 0)
+                ? npBarHeight
+                : 0
             if hSize == .regular {
                 HStack(spacing: 0) {
                     feedView
@@ -62,6 +67,7 @@ struct RootView: View {
                     if terminal.open {
                         TerminalView()
                             .frame(maxWidth: .infinity)
+                            .padding(.bottom, bottomInset)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
@@ -71,6 +77,7 @@ struct RootView: View {
                     .allowsHitTesting(!terminal.open)
                 if terminal.open {
                     TerminalView()
+                        .padding(.bottom, bottomInset)
                         .transition(.opacity)
                 }
             }
