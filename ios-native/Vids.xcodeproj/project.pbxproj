@@ -20,6 +20,7 @@
 		464D5B4427C251EDAD0D2E3B /* FABStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA7931C65256F257CD6A648 /* FABStack.swift */; };
 		4CE0E213E8A41ED4612F1E47 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E521EA57B7C296650D408D49 /* ServiceContainer.swift */; };
 		4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667FED20226B2EBA1AAF4E7D /* VideoCellView.swift */; };
+		4F878C4C0E6835D2C3E4C48C /* PasteSuppressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D4EF291A224A59ACF98FA3 /* PasteSuppressor.swift */; };
 		568654DF62B029B6DBEC956A /* SecretMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */; };
 		5BBB5AF2256E6123B332D6AA /* QualityMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D4C7D4575FAF706DB5953D /* QualityMenu.swift */; };
 		7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 47049B680884787ECFCBCA84 /* HeaderView.swift */; };
@@ -77,6 +78,7 @@
 		E3CFD3767B5F169D370E6215 /* ScrollZoneOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollZoneOverlay.swift; sourceTree = "<group>"; };
 		E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedStore.swift; sourceTree = "<group>"; };
 		E521EA57B7C296650D408D49 /* ServiceContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceContainer.swift; sourceTree = "<group>"; };
+		E7D4EF291A224A59ACF98FA3 /* PasteSuppressor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PasteSuppressor.swift; sourceTree = "<group>"; };
 		EACE012FEFD2349F3E85379D /* ApiTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApiTypes.swift; sourceTree = "<group>"; };
 		EFA06C97010812FA4311BB5E /* PhoneModeStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneModeStore.swift; sourceTree = "<group>"; };
 		F728C5D3839372BE65C948DD /* Vids.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Vids.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -107,6 +109,7 @@
 		1878D6997F9B5A3F03FD3DF7 /* Terminal */ = {
 			isa = PBXGroup;
 			children = (
+				E7D4EF291A224A59ACF98FA3 /* PasteSuppressor.swift */,
 				E3CFD3767B5F169D370E6215 /* ScrollZoneOverlay.swift */,
 				AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */,
 				2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */,
@@ -315,6 +318,7 @@
 				97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */,
 				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
 				452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */,
+				4F878C4C0E6835D2C3E4C48C /* PasteSuppressor.swift in Sources */,
 				E623387647B43F0B8FC3BCC6 /* PhoneModeStore.swift in Sources */,
 				10F3E3D1F18ABC690EBF3566 /* PhonePlayerView.swift in Sources */,
 				9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */,
