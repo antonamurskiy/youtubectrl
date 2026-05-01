@@ -84,6 +84,41 @@ Vids/
   app will use a single shared muted `AVPlayer` swapped via `replaceCurrentItem`,
   but that needs the AVPlayerHost from phase 5 first.
 
+## Gotchas
+
+### Server sends `claudeOptions[].n` as a String, not Int
+
+The pane parser in `server.js` does `opts.unshift({ n: m[1], text })` where
+`m[1]` is a regex match group (always a String). Decoding it as `Int` in
+Swift makes `JSONDecoder` fail silently — `try?` in `WSClient` swallows
+the error and the panel never populates. `ClaudeOption.init(from:)` accepts
+both forms; don't change it back to `let n: Int`.
+
+### SwiftTerm keyboard accessory icons render with `.alwaysOriginal`
+
+The cursor-arrow / keyboard-dismiss buttons on the input accessory ship
+images that ignore `tintColor` until you re-set them with
+`.withRenderingMode(.alwaysTemplate)`. Without that they stay white
+regardless of `btn.tintColor`. `themeAccessoryView()` walks every
+UIButton + UIImageView and forces template rendering — keep that loop
+in sync with any new accessory items.
+
+### Re-theme accessory on tmux pane tint change, not just keyboardWillShow
+
+SwiftTerm rebuilds the accessory subviews on each `keyboardWillShow`,
+but tab-switch doesn't fire that notification. `TerminalView` has an
+`.onChange(of: theme.activeTmuxTint)` that calls
+`terminal.themeAccessory?()` — required for the keyboard shortcut row
+to follow the active tmux color.
+
+### Match React's quick-reply visual exactly
+
+`ClaudeQuickReply` mirrors `.claude-quick-reply` (App.css:1698): each
+option is its OWN button, not a row in a shared panel. Magenta border,
+translucent navy bg, pink-cream text, right-aligned, label `"N text"`.
+Don't refactor into a grouped panel — Anton specifically wanted the
+React look.
+
 ## Server contract
 
 Identical to the React app. See `server.js` in repo root. WS message types:
