@@ -16,23 +16,27 @@ struct SecretMenu: View {
     @State private var friend: ApiClient.FindMyFriend? = nil
 
     var body: some View {
-        List {
-            volumeSection
-            findMySection
-            syncOffsetSection
-            macSection
-            audioOutputSection
-            bluetoothSection
-            fontSection
-            brightnessSection
+        // iOS 26 Liquid Glass: each section is a separate glass card,
+        // and `GlassEffectContainer` groups them so they morph and
+        // share lensing/refraction (the iOS 26 long-press preview look).
+        ScrollView {
+            GlassEffectContainer(spacing: 14) {
+                VStack(spacing: 14) {
+                    glassCard(volumeSection)
+                    glassCard(findMySection)
+                    glassCard(syncOffsetSection)
+                    glassCard(macSection)
+                    glassCard(audioOutputSection)
+                    glassCard(bluetoothSection)
+                    glassCard(fontSection)
+                    glassCard(brightnessSection)
+                }
+                .padding(.horizontal, 14)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
+            }
         }
-        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
-        .background(.clear)
-        // Rows: clear so the SHEET's thinMaterial bg shows through.
-        // No per-row backdrop (that's what the long-press card does —
-        // single blur, no nested tiles).
-        .listRowBackground(Color.clear)
         .task {
             await loadOutputs()
             await loadVolume()
@@ -42,23 +46,31 @@ struct SecretMenu: View {
         }
     }
 
-    // MARK: glass card wrapper
+    // MARK: glass card wrapper (iOS 26 Liquid Glass)
 
     @ViewBuilder
-    private func glassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            content()
+    private func glassCard<Content: View>(_ content: Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            content
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 12)
+        .padding(.vertical, 14)
+        .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5)
-        )
-        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    }
+
+    /// Section with an optional header label, content stacked below.
+    /// Used inside a glass card so each card has its own title.
+    @ViewBuilder
+    private func cardSection<Content: View>(_ header: String? = nil,
+                                            @ViewBuilder _ content: () -> Content) -> some View {
+        if let header {
+            Text(header)
+                .font(.caption.weight(.semibold))
+                .textCase(.uppercase)
+                .foregroundStyle(.secondary)
+        }
+        content()
     }
 
     // MARK: status
@@ -88,7 +100,7 @@ struct SecretMenu: View {
     // MARK: volume
 
     private var volumeSection: some View {
-        Section("Volume") {
+        cardSection("Volume") {
             HStack {
                 Button {
                     muted.toggle()
@@ -112,7 +124,7 @@ struct SecretMenu: View {
     // MARK: find my
 
     private var findMySection: some View {
-        Section("Find My — Maria") {
+        cardSection("Find My — Maria") {
             HStack(alignment: .top) {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.secondary)
@@ -151,30 +163,27 @@ struct SecretMenu: View {
     // MARK: sync offset
 
     private var syncOffsetSection: some View {
-        Section {
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Live sync offset")
-                    Spacer()
-                    Text("\(Int(syncOffsetMs)) ms")
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                }
-                Slider(value: Binding(
-                    get: { syncOffsetMs },
-                    set: { v in
-                        syncOffsetMs = v
-                        Task { try? await services.api.setSyncOffset(v) }
-                    }
-                ), in: -8000...8000, step: 100)
+        cardSection("Live sync offset") {
+            HStack {
+                Spacer()
+                Text("\(Int(syncOffsetMs)) ms")
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
             }
+            Slider(value: Binding(
+                get: { syncOffsetMs },
+                set: { v in
+                    syncOffsetMs = v
+                    Task { try? await services.api.setSyncOffset(v) }
+                }
+            ), in: -8000...8000, step: 100)
         }
     }
 
     // MARK: mac
 
     private var macSection: some View {
-        Section("Mac") {
+        cardSection("Mac") {
             Toggle("Keep awake", isOn: Binding(
                 get: { playback.macStatus.keepAwake ?? false },
                 set: { v in Task { try? await services.api.keepAwake(v) } }
@@ -210,7 +219,7 @@ struct SecretMenu: View {
     // MARK: audio output
 
     private var audioOutputSection: some View {
-        Section("Audio output") {
+        cardSection("Audio output") {
             if outputs.isEmpty {
                 Text("loading…").foregroundStyle(.secondary)
             } else {
@@ -233,7 +242,7 @@ struct SecretMenu: View {
     // MARK: bluetooth
 
     private var bluetoothSection: some View {
-        Section("Bluetooth") {
+        cardSection("Bluetooth") {
             ForEach(btDevices) { d in
                 Button {
                     Task {
@@ -267,7 +276,7 @@ struct SecretMenu: View {
     // MARK: font
 
     private var fontSection: some View {
-        Section("Font") {
+        cardSection("Font") {
             Picker("Family", selection: Binding(
                 get: { services.fonts.label },
                 set: { services.fonts.setLabel($0) }
@@ -291,7 +300,7 @@ struct SecretMenu: View {
     // MARK: brightness
 
     private var brightnessSection: some View {
-        Section {
+        cardSection("Brightness") {
             HStack {
                 Image(systemName: "sun.min").foregroundStyle(.secondary)
                 Slider(value: Binding(
@@ -300,8 +309,6 @@ struct SecretMenu: View {
                 ), in: 0...1)
                 Image(systemName: "sun.max").foregroundStyle(.secondary)
             }
-        } header: {
-            Text("Brightness")
         }
         .task {
             // Poll while menu open so slider reflects Mac-side changes.
