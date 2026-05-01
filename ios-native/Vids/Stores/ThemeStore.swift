@@ -55,4 +55,16 @@ extension Color {
         ui.getRed(&r, green: &g, blue: &b, alpha: &a)
         return Color(red: Double(r) * factor, green: Double(g) * factor, blue: Double(b) * factor, opacity: Double(a))
     }
+
+    /// Lerp toward white by `t` (0 = unchanged, 1 = white).
+    func lighten(_ t: Double) -> Color {
+        let ui = UIColor(self)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        let f = max(0, min(1, t))
+        return Color(red: Double(r) + (1 - Double(r)) * f,
+                     green: Double(g) + (1 - Double(g)) * f,
+                     blue: Double(b) + (1 - Double(b)) * f,
+                     opacity: Double(a))
+    }
 }

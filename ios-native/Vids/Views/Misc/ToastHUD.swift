@@ -59,7 +59,7 @@ struct ClaudeFeedView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(terminal.open ? [] : Array(push.feed.suffix(8).reversed())) { line in
-                FeedLineView(line: line, lifetime: push.lifetime)
+                FeedLineView(line: line, lifetime: push.lifetime, tintHex: tintHex(for: line.text))
             }
         }
         .padding(.horizontal, 12)
@@ -68,24 +68,46 @@ struct ClaudeFeedView: View {
         .allowsHitTesting(false)
         .animation(.easeOut(duration: 0.25), value: push.feed.count)
     }
+
+    /// Server prefixes feed lines with "[winname] " when the window has a name.
+    /// Look up the matching tmux color so the feed line border + text follow
+    /// the originating window's tint.
+    private func tintHex(for text: String) -> String? {
+        guard text.hasPrefix("["),
+              let close = text.firstIndex(of: "]") else { return nil }
+        let name = String(text[text.index(after: text.startIndex)..<close])
+        return terminal.resolveColor(name)
+    }
 }
 
 private struct FeedLineView: View {
     let line: FeedLine
     let lifetime: TimeInterval
+    let tintHex: String?
     @State private var visible: Bool = false
     @State private var fading: Bool = false
+
+    private var borderColor: Color {
+        if let h = tintHex { return Color(hex: h) }
+        return Color(hex: "#a89984")
+    }
+    private var textColor: Color {
+        // Tinted lines: brighten the tint so the text reads off the dark bg.
+        // Default: cream.
+        if let h = tintHex { return Color(hex: h).lighten(0.35) }
+        return Color(hex: "#ebdbb2")
+    }
 
     var body: some View {
         Text(line.text)
             .font(Font.app(12))
             .tracking(1)
-            .foregroundStyle(Color(hex: "#ebdbb2"))
+            .foregroundStyle(textColor)
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Color(hex: "#151515").opacity(0.95))
-            .overlay(Rectangle().stroke(Color(hex: "#a89984"), lineWidth: 1))
+            .overlay(Rectangle().stroke(borderColor, lineWidth: 1))
             .opacity(visible && !fading ? 1 : 0)
             .scaleEffect(y: fading ? 0.7 : 1, anchor: .top)
             .onAppear {
