@@ -21,7 +21,11 @@ struct ScrubberView: UIViewRepresentable {
         // floating tile (Apple TV / AVKit pattern; no glass-clip
         // issues since the preview lives outside the bar's view tree).
         v.onScrub = { [weak services] active, pct, image, label in
-            guard let scrub = services?.scrub else { return }
+            guard let scrub = services?.scrub else {
+                NSLog("[ScrubberView] onScrub but services is nil")
+                return
+            }
+            NSLog("[ScrubberView] onScrub active=\(active) pct=\(pct) hasImage=\(image != nil) label=\(label)")
             scrub.active = active
             scrub.pct = pct
             scrub.image = image

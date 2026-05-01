@@ -13,9 +13,22 @@ struct ScrubPreviewOverlay: View {
     let barFrame: CGRect
 
     var body: some View {
-        if scrub.active && barFrame.width > 0 {
-            content(scrub: scrub)
-                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+        // Debug indicator — always visible when scrubbing, even if the
+        // tile path fails. Confirms whether ScrubState updates are
+        // reaching the overlay at all.
+        ZStack(alignment: .topLeading) {
+            if scrub.active {
+                Text("scrub active pct=\(String(format: "%.2f", scrub.pct)) bar=\(Int(barFrame.minX)),\(Int(barFrame.minY)) \(Int(barFrame.width))x\(Int(barFrame.height))")
+                    .font(.caption2.monospaced())
+                    .padding(6)
+                    .background(.red)
+                    .foregroundStyle(.white)
+                    .position(x: 200, y: 100)
+            }
+            if scrub.active && barFrame.width > 0 {
+                content(scrub: scrub)
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
+            }
         }
     }
 

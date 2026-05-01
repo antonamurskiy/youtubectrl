@@ -107,11 +107,19 @@ struct TerminalView: View {
                     in: Circle()
                 )
                 .padding(.trailing, 16)
-                // TerminalView is already lifted by SwiftUI's keyboard
-                // avoidance; just sit above the FAB stack: 16 (FAB
-                // stack bottom inset) + 108 (two 48pt + 12pt gap) +
-                // 12 (gap above terminal toggle FAB).
-                .padding(.bottom, 16 + 108 + 12)
+                // FAB stack is in RootView with `.ignoresSafeArea(.keyboard)`
+                // so it sits at fabBottomPadding(=keyboardHeight + 16)
+                // from screen bottom. The dismiss btn lives in the
+                // TerminalView overlay which IS lifted by SwiftUI
+                // keyboard avoidance. So to land 12pt above the
+                // FAB stack top, we need:
+                //   16 (FAB inset) + 108 (FAB stack height) + 12 (gap)
+                //                  + keyboardHeight (FAB ignores kb)
+                //                  − keyboardHeight (we're already lifted)
+                // => 16 + 108 + 12 = 136. But empirically the avoid
+                // lift differs from explicit padding when terminal bg
+                // ignores .container — so add a safety bump of 24pt.
+                .padding(.bottom, 16 + 108 + 12 + 24)
             }
         }
         .sheet(item: Binding(
