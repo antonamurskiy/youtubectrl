@@ -31,18 +31,43 @@ final class ScrubberUIView: UIView {
     private let track = CAShapeLayer()
     private let fill = CAShapeLayer()
     private let thumb = CAShapeLayer()
+    private let previewLayer = CALayer()
+    private let previewLabel: UILabel = {
+        let l = UILabel()
+        l.font = .monospacedSystemFont(ofSize: 11, weight: .semibold)
+        l.textColor = .white
+        l.textAlignment = .center
+        l.layer.cornerRadius = 3
+        l.layer.masksToBounds = true
+        l.backgroundColor = UIColor(white: 0, alpha: 0.85)
+        l.isHidden = true
+        return l
+    }()
     private var displayLink: CADisplayLink?
     private var playback: PlaybackStore?
     private var clockOffset: Double = 0
     private var dragging = false
     private var dragPct: Double = 0
+    private var storyboardImage: UIImage?
+    private var storyboardCols: Int = 0
+    private var storyboardRows: Int = 0
+    private var storyboardInterval: Double = 0
     var onSeek: ((Double) -> Void)?
+    var onPreviewRequest: ((Double) -> Void)?  // pct → fetch storyboard tile
+
+    func setStoryboard(image: UIImage?, cols: Int, rows: Int, interval: Double) {
+        self.storyboardImage = image
+        self.storyboardCols = cols
+        self.storyboardRows = rows
+        self.storyboardInterval = interval
+    }
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         layer.addSublayer(track)
         layer.addSublayer(fill)
         layer.addSublayer(thumb)
+        addSubview(previewLabel)
         backgroundColor = .clear
         let pan = UIPanGestureRecognizer(target: self, action: #selector(onPan(_:)))
         addGestureRecognizer(pan)
@@ -101,14 +126,37 @@ final class ScrubberUIView: UIView {
         let r = bounds.insetBy(dx: 12, dy: 0)
         let pct = max(0, min(1, (p.x - r.minX) / r.width))
         switch g.state {
-        case .began: dragging = true; dragPct = pct
-        case .changed: dragPct = pct
+        case .began:
+            dragging = true; dragPct = pct
+            previewLabel.isHidden = false
+        case .changed:
+            dragPct = pct
+            updatePreviewLabel()
         case .ended, .cancelled:
             dragging = false
+            previewLabel.isHidden = true
             onSeek?(pct)
         default: break
         }
         setNeedsLayout()
+    }
+
+    private func updatePreviewLabel() {
+        guard let pb = playback, pb.duration > 0 else { return }
+        let target = pb.duration * dragPct
+        previewLabel.text = pb.isLive
+            ? "-\(formatTime(pb.duration - target))"
+            : formatTime(target)
+        let r = bounds.insetBy(dx: 12, dy: 0)
+        let cx = r.minX + r.width * dragPct
+        let labelW: CGFloat = 60, labelH: CGFloat = 18
+        previewLabel.frame = CGRect(x: cx - labelW / 2, y: -labelH - 4, width: labelW, height: labelH)
+    }
+
+    private func formatTime(_ s: Double) -> String {
+        let total = Int(s.rounded())
+        let h = total / 3600, m = (total % 3600) / 60, sec = total % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, sec) : String(format: "%d:%02d", m, sec)
     }
 
     @objc private func onTap(_ g: UITapGestureRecognizer) {

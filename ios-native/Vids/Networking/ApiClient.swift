@@ -102,6 +102,92 @@ actor ApiClient {
         try await post("/api/stop-phone-stream")
     }
 
+    func channel(id: String? = nil, name: String? = nil) async throws -> HomeResponse {
+        var q: [URLQueryItem] = []
+        if let id { q.append(URLQueryItem(name: "channelId", value: id)) }
+        if let name { q.append(URLQueryItem(name: "channelName", value: name)) }
+        return try await get("/api/channel", query: q)
+    }
+
+    struct PhoneOnlyResponse: Codable {
+        let videoUrl: String?
+        let audioUrl: String?
+        let streamUrl: String?
+        let durationSec: Double?
+        let isLive: Bool?
+    }
+
+    func phoneOnly(url: String) async throws -> PhoneOnlyResponse {
+        var req = URLRequest(url: self.url("/api/phone-only"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["url": url])
+        let (data, _) = try await session.data(for: req)
+        return try decoder.decode(PhoneOnlyResponse.self, from: data)
+    }
+
+    struct Storyboard: Codable {
+        let template: String?
+        let cols: Int?
+        let rows: Int?
+        let interval: Double?
+        let width: Int?
+        let height: Int?
+    }
+
+    func storyboard(videoId: String) async throws -> Storyboard {
+        try await get("/api/storyboard", query: [URLQueryItem(name: "id", value: videoId)])
+    }
+
+    struct AudioOutput: Codable, Hashable, Identifiable {
+        let name: String
+        let active: Bool
+        var id: String { name }
+    }
+
+    struct AudioOutputs: Codable {
+        let outputs: [AudioOutput]
+    }
+
+    func audioOutputs() async throws -> [AudioOutput] {
+        let r: AudioOutputs = try await get("/api/audio-outputs")
+        return r.outputs
+    }
+
+    func setAudioOutput(_ name: String) async throws {
+        try await post("/api/audio-output", body: ["name": name])
+    }
+
+    struct Brightness: Codable { let value: Double? }
+    func brightness() async throws -> Double {
+        let r: Brightness = try await get("/api/brightness")
+        return r.value ?? 0.5
+    }
+
+    func setBrightness(_ v: Double) async throws {
+        try await post("/api/brightness", body: ["value": v])
+    }
+
+    func lockMac() async throws { try await post("/api/lock-mac") }
+    func refreshCookies() async throws { try await post("/api/refresh-cookies") }
+
+    struct FindMyFriend: Codable {
+        let cross: String?
+        let parallel: String?
+        let timeFragment: String?
+        let cropUrl: String?
+    }
+
+    func findmyFriend(force: Bool = false) async throws -> FindMyFriend {
+        var q: [URLQueryItem] = []
+        if force { q.append(URLQueryItem(name: "force", value: "1")) }
+        return try await get("/api/findmy-friend", query: q)
+    }
+
+    func tmuxCancelCopyMode() async throws {
+        try await post("/api/tmux-cancel-copy-mode")
+    }
+
     func previewURL(videoId: String, isLive: Bool = false) async throws -> String? {
         var q = [URLQueryItem(name: "id", value: videoId)]
         if isLive { q.append(URLQueryItem(name: "live", value: "1")) }

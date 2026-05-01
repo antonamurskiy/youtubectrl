@@ -27,8 +27,8 @@ struct RootView: View {
                     .transition(.identity)
             }
 
-            // Phone-sync video frame, hosting AVPlayerHost.containerView.
-            if phoneMode.mode == .sync {
+            // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
+            if phoneMode.mode == .sync || phoneMode.mode == .phoneOnly {
                 VStack(spacing: 0) {
                     GeometryReader { geo in
                         PhonePlayerView(host: services.avHost)

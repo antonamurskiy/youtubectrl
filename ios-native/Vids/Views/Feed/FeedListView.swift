@@ -154,16 +154,24 @@ struct FeedListView: UIViewRepresentable {
             return UIContextMenuConfiguration(identifier: nil, previewProvider: nil) { [weak self] _ in
                 guard let self else { return UIMenu() }
                 let actions: [UIAction] = [
-                    UIAction(title: "More from \(v.channel ?? "channel")", image: UIImage(systemName: "person.crop.rectangle")) { _ in
-                        // Phase 11b: push a channel filter onto FeedStore.
+                    UIAction(title: "More from \(v.channel ?? "channel")", image: UIImage(systemName: "person.crop.rectangle")) { [weak self] _ in
+                        guard let self else { return }
+                        Task { @MainActor in
+                            await self.feed.loadChannel(id: v.channelId, name: v.channel, api: self.services.api)
+                        }
                     },
                     UIAction(title: "Copy link", image: UIImage(systemName: "link")) { _ in
                         if let url = v.url ?? v.videoId.flatMap({ "https://www.youtube.com/watch?v=\($0)" }) {
                             UIPasteboard.general.string = url
                         }
                     },
-                    UIAction(title: "Watch on phone", image: UIImage(systemName: "iphone")) { _ in
-                        // Phase 11b: phone-only mode (separate from sync).
+                    UIAction(title: "Watch on phone", image: UIImage(systemName: "iphone")) { [weak self] _ in
+                        guard let self,
+                              let url = v.url ?? v.videoId.flatMap({ "https://www.youtube.com/watch?v=\($0)" })
+                        else { return }
+                        Task { @MainActor in
+                            await self.services.phoneMode.startPhoneOnly(url: url, services: self.services)
+                        }
                     },
                 ]
                 return UIMenu(title: "", children: actions)

@@ -6,6 +6,7 @@ struct TerminalView: View {
     @Environment(TerminalStore.self) private var terminal
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
+    @State private var renaming: TmuxWindow? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,6 +24,10 @@ struct TerminalView: View {
                                     .foregroundStyle(.white)
                             }
                             .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5)
+                                    .onEnded { _ in renaming = w }
+                            )
                         }
                     }
                     .padding(.horizontal, 12)
@@ -36,6 +41,15 @@ struct TerminalView: View {
         }
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
+        .overlay {
+            if let w = renaming {
+                ZStack {
+                    Color.black.opacity(0.4).ignoresSafeArea()
+                        .onTapGesture { renaming = nil }
+                    TmuxRenamePopover(window: w, open: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }))
+                }
+            }
+        }
     }
 
     private func tabBg(_ w: TmuxWindow) -> SwiftUI.Color {

@@ -5,6 +5,9 @@ struct SecretMenu: View {
     @Environment(PlaybackStore.self) private var playback
     @Environment(ServiceContainer.self) private var services
     @State private var miscOpen: Bool = false
+    @State private var outputs: [ApiClient.AudioOutput] = []
+    @State private var brightness: Double = 0.5
+    @State private var brightnessLoaded: Bool = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,6 +28,7 @@ struct SecretMenu: View {
         }
         .background(Color.black.opacity(0.45).ignoresSafeArea())
         .onTapGesture { ui.secretMenuOpen = false }
+        .task { await loadOutputs() }
     }
 
     private var handle: some View {
@@ -53,12 +57,46 @@ struct SecretMenu: View {
     }
 
     private var outputsSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            row(icon: "speaker.wave.2", title: "Outputs", action: nil, sub: false)
-            // Phase 9b: live device list. For now, single "Speakers" placeholder.
-            row(icon: "•", title: "Speakers", action: {}, sub: true)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("Audio output")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .foregroundStyle(.white.opacity(0.85))
+
+            if outputs.isEmpty {
+                Text("loading…")
+                    .font(.system(size: 12, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.4))
+                    .padding(.horizontal, 24)
+                    .padding(.vertical, 10)
+            } else {
+                ForEach(outputs) { o in
+                    Button(action: { Task { try? await services.api.setAudioOutput(o.name); await loadOutputs() } }) {
+                        HStack {
+                            Text(o.name)
+                                .font(.system(size: 13))
+                                .foregroundStyle(o.active ? Color(hex: "#8ec07c") : .white.opacity(0.85))
+                            Spacer()
+                            if o.active { Image(systemName: "checkmark") }
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 10)
+                        .background(o.active ? Color(hex: "#8ec07c").opacity(0.18) : Color(hex: "#0a0a0a"))
+                        .overlay(alignment: .leading) {
+                            if o.active {
+                                Rectangle().fill(Color(hex: "#8ec07c")).frame(width: 3)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
-        .padding(.vertical, 6)
+        .padding(.bottom, 6)
     }
 
     private var miscToggle: some View {
@@ -79,11 +117,39 @@ struct SecretMenu: View {
     @ViewBuilder
     private var miscSection: some View {
         VStack(spacing: 0) {
-            row(icon: "sun.max", title: "Brightness slider", action: {}, sub: true)
-            row(icon: "rectangle.portrait", title: "Toggle resolution", action: {}, sub: true)
-            row(icon: "key", title: "Refresh cookies", action: {}, sub: true)
-            row(icon: "lock", title: "Lock Mac", action: {}, sub: true)
-            row(icon: "airplayvideo", title: "AirPlay", action: {}, sub: true)
+            HStack {
+                Image(systemName: "sun.max")
+                Text("Brightness").font(.system(size: 13))
+                Spacer()
+                Slider(value: Binding(
+                    get: { brightness },
+                    set: { v in
+                        brightness = v
+                        Task { try? await services.api.setBrightness(v) }
+                    }
+                ), in: 0...1)
+                .frame(width: 140)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .foregroundStyle(.white.opacity(0.85))
+            .background(Color(hex: "#0a0a0a"))
+            .task {
+                if !brightnessLoaded {
+                    if let b = try? await services.api.brightness() { brightness = b }
+                    brightnessLoaded = true
+                }
+            }
+
+            row(icon: "key", title: "Refresh cookies") {
+                Task { try? await services.api.refreshCookies(); await ui.toast("Cookies refreshed") }
+            }
+            row(icon: "lock", title: "Lock Mac") {
+                Task { try? await services.api.lockMac(); await ui.toast("Mac locked") }
+            }
+            row(icon: "airplayvideo", title: "AirPlay") {
+                services.avHost.showAirPlayPicker()
+            }
         }
     }
 
@@ -99,19 +165,23 @@ struct SecretMenu: View {
         .buttonStyle(.plain)
     }
 
-    private func row(icon: String, title: String, action: (() -> Void)?, sub: Bool) -> some View {
-        Button(action: { action?() }) {
+    private func row(icon: String, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
             HStack {
-                Text(icon).font(.system(size: 13))
+                Image(systemName: icon)
                 Text(title).font(.system(size: 13))
                 Spacer()
             }
             .foregroundStyle(.white.opacity(0.85))
-            .padding(.horizontal, sub ? 24 : 12)
+            .padding(.horizontal, 24)
             .padding(.vertical, 10)
-            .background(sub ? Color(hex: "#0a0a0a") : .clear)
+            .background(Color(hex: "#0a0a0a"))
         }
         .buttonStyle(.plain)
-        .disabled(action == nil)
+    }
+
+    @MainActor
+    private func loadOutputs() async {
+        outputs = (try? await services.api.audioOutputs()) ?? []
     }
 }

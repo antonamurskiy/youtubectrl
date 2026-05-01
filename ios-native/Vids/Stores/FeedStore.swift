@@ -62,4 +62,22 @@ final class FeedStore {
             videosByTab[.rec] = resp.videos ?? []
         } catch {}
     }
+
+    @MainActor
+    func loadChannel(id: String?, name: String?, api: ApiClient) async {
+        channelQuery = id ?? name
+        do {
+            let resp = try await api.channel(id: id, name: name)
+            videosByTab[.rec] = resp.videos ?? []
+            shortsByTab[.rec] = []
+            activeTab = .rec
+        } catch {
+            lastError = "channel: \(error)"
+        }
+    }
+
+    @MainActor
+    func clearChannel() {
+        channelQuery = nil
+    }
 }

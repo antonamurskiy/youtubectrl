@@ -32,6 +32,7 @@
 		C3B59EFA6E8035C00EB557DA /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65572894BBBB3AB5F3216CEA /* AppDelegate.swift */; };
 		C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4D339EC7C43E1C7EF37A66E /* FeedStore.swift */; };
 		CD42B7C824BA8122439A88E2 /* ApiTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = EACE012FEFD2349F3E85379D /* ApiTypes.swift */; };
+		DD52FDDC1994595F9CC4C733 /* TmuxRenamePopover.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */; };
 		E40BA8E9B1FF19AB78BD3214 /* PushHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = C0B7CFE15E3082B8C87ABCBB /* PushHandler.swift */; };
 		E623387647B43F0B8FC3BCC6 /* PhoneModeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = EFA06C97010812FA4311BB5E /* PhoneModeStore.swift */; };
 		E77C9A0A21504CCE3D4217BC /* ThumbnailCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A0C52D6101F3F7D06A77584 /* ThumbnailCache.swift */; };
@@ -42,6 +43,7 @@
 		0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretMenu.swift; sourceTree = "<group>"; };
 		16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonePlayerView.swift; sourceTree = "<group>"; };
 		1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBar.swift; sourceTree = "<group>"; };
+		2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TmuxRenamePopover.swift; sourceTree = "<group>"; };
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
@@ -96,6 +98,7 @@
 			isa = PBXGroup;
 			children = (
 				AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */,
+				2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -307,6 +310,7 @@
 				B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */,
 				808F678B00F087DDDBF0F586 /* ThemeStore.swift in Sources */,
 				E77C9A0A21504CCE3D4217BC /* ThumbnailCache.swift in Sources */,
+				DD52FDDC1994595F9CC4C733 /* TmuxRenamePopover.swift in Sources */,
 				1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */,
 				29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */,
 				4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */,
