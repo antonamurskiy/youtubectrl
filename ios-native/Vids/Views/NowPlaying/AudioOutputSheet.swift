@@ -11,14 +11,12 @@ struct AudioOutputSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Image(systemName: "speaker.wave.2.fill")
-                Text("Audio output").font(Font.app(13, weight: .semibold))
+                Text("Audio output").font(Font.app(14, weight: .semibold))
                 Spacer()
-                Button(action: { ui.audioSheetOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 13))
-                }
-                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12).padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
             .foregroundStyle(Color.appText)
 
             Divider().background(Color.appText.opacity(0.1))
@@ -87,9 +85,6 @@ struct AudioOutputSheet: View {
                 }
             }
         }
-        .frame(maxWidth: 320, maxHeight: 480)
-        .background(Color(hex: "#151515"))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
         .task { await load() }
     }
 

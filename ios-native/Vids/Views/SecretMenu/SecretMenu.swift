@@ -18,37 +18,26 @@ struct SecretMenu: View {
     @State private var friend: ApiClient.FindMyFriend? = nil
 
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer()
-            ScrollView {
-                VStack(spacing: 0) {
-                    handle
-                    statusRow
-                    Divider().background(Color.appText.opacity(0.1))
-                    volumeRow
-                    Divider().background(Color.appText.opacity(0.1))
-                    findMyBlock
-                    Divider().background(Color.appText.opacity(0.1))
-                    syncOffsetRow
-                    Divider().background(Color.appText.opacity(0.1))
-                    keepAwakeRow
-                    Divider().background(Color.appText.opacity(0.1))
-                    outputsSection
-                    Divider().background(Color.appText.opacity(0.1))
-                    btSection
-                    Divider().background(Color.appText.opacity(0.1))
-                    miscToggle
-                    if miscOpen { miscSection }
-                    close
-                }
+        ScrollView {
+            VStack(spacing: 0) {
+                statusRow
+                Divider().background(Color.appText.opacity(0.1))
+                volumeRow
+                Divider().background(Color.appText.opacity(0.1))
+                findMyBlock
+                Divider().background(Color.appText.opacity(0.1))
+                syncOffsetRow
+                Divider().background(Color.appText.opacity(0.1))
+                keepAwakeRow
+                Divider().background(Color.appText.opacity(0.1))
+                outputsSection
+                Divider().background(Color.appText.opacity(0.1))
+                btSection
+                Divider().background(Color.appText.opacity(0.1))
+                miscToggle
+                if miscOpen { miscSection }
             }
-            .frame(maxHeight: 640)
-            .background(Color(hex: "#151515"))
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .padding(8)
         }
-        .background(Color.black.opacity(0.45).ignoresSafeArea())
-        .onTapGesture { ui.secretMenuOpen = false }
         .task {
             await loadOutputs()
             await loadVolume()
@@ -59,10 +48,6 @@ struct SecretMenu: View {
     }
 
     // MARK: rows
-
-    private var handle: some View {
-        Capsule().fill(Color.appText.opacity(0.15)).frame(width: 36, height: 4).padding(.top, 8).padding(.bottom, 6)
-    }
 
     private var statusRow: some View {
         HStack(spacing: 8) {

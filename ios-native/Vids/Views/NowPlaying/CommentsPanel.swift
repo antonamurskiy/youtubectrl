@@ -7,37 +7,15 @@ struct CommentsPanel: View {
     @State private var comments: [ApiClient.Comment] = []
     @State private var loading: Bool = false
 
-    @State private var dragOffset: CGFloat = 0
-
     var body: some View {
         VStack(spacing: 0) {
-            // Drag handle.
-            Capsule()
-                .fill(Color.appText.opacity(0.25))
-                .frame(width: 36, height: 4)
-                .padding(.top, 8)
-                .padding(.bottom, 6)
-                .frame(maxWidth: .infinity)
-                .contentShape(Rectangle())
-                .gesture(
-                    DragGesture()
-                        .onChanged { v in dragOffset = max(0, v.translation.height) }
-                        .onEnded { v in
-                            if v.translation.height > 80 { ui.commentsOpen = false }
-                            dragOffset = 0
-                        }
-                )
-
             HStack {
                 Text("Comments").font(Font.app(14, weight: .semibold))
                 Spacer()
-                Button(action: { ui.commentsOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 14))
-                }
-                .buttonStyle(.plain)
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 6)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
             .foregroundStyle(Color.appText)
 
             Divider().background(Color.appText.opacity(0.1))
@@ -70,11 +48,6 @@ struct CommentsPanel: View {
                 .padding(.vertical, 10)
             }
         }
-        .background(Color(hex: "#151515"))
-        .clipShape(.rect(topLeadingRadius: 16, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 16))
-        .frame(maxHeight: UIScreen.main.bounds.height * 0.7)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-        .offset(y: dragOffset)
         .task(id: playback.url) { await load() }
     }
 

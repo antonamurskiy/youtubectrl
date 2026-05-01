@@ -10,15 +10,12 @@ struct QualityMenu: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Quality").font(Font.app(13, weight: .semibold))
+                Text("Quality").font(Font.app(14, weight: .semibold))
                 Spacer()
-                Button(action: { ui.qualityMenuOpen = false }) {
-                    Image(systemName: "xmark").font(.system(size: 13))
-                }
-                .buttonStyle(.plain)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
             .foregroundStyle(Color.appText)
 
             Divider().background(Color.appText.opacity(0.1))
@@ -33,10 +30,6 @@ struct QualityMenu: View {
                 }
             }
         }
-        .background(Color(hex: "#151515"))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .frame(maxWidth: 320)
-        .frame(maxHeight: 400)
         .task { await loadFormats() }
     }
 
@@ -51,8 +44,7 @@ struct QualityMenu: View {
             }
             .foregroundStyle(Color.appText.opacity(0.85))
             .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-            .background(Color(hex: "#0a0a0a"))
+            .padding(.vertical, 12)
         }
         .buttonStyle(.plain)
     }

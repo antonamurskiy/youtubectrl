@@ -149,36 +149,43 @@ struct RootView: View {
             ClaudeFeedView().zIndex(25)
             ClaudeQuickReply().zIndex(28)
 
-            if ui.secretMenuOpen {
-                SecretMenu()
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(40)
-            }
-            if ui.commentsOpen {
-                CommentsPanel()
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .zIndex(41)
-            }
-            if ui.qualityMenuOpen {
-                ZStack {
-                    Color.black.opacity(0.4).ignoresSafeArea()
-                        .onTapGesture { ui.qualityMenuOpen = false }
-                    QualityMenu()
-                }
-                .transition(.opacity)
-                .zIndex(42)
-            }
-            if ui.audioSheetOpen {
-                ZStack {
-                    Color.black.opacity(0.4).ignoresSafeArea()
-                        .onTapGesture { ui.audioSheetOpen = false }
-                    AudioOutputSheet()
-                }
-                .transition(.opacity)
-                .zIndex(43)
-            }
         }
-        .animation(.easeInOut(duration: 0.2), value: ui.secretMenuOpen)
+        .sheet(isPresented: Binding(
+            get: { ui.secretMenuOpen },
+            set: { ui.secretMenuOpen = $0 }
+        )) {
+            SecretMenu()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.commentsOpen },
+            set: { ui.commentsOpen = $0 }
+        )) {
+            CommentsPanel()
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.qualityMenuOpen },
+            set: { ui.qualityMenuOpen = $0 }
+        )) {
+            QualityMenu()
+                .presentationDetents([.height(320)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
+        }
+        .sheet(isPresented: Binding(
+            get: { ui.audioSheetOpen },
+            set: { ui.audioSheetOpen = $0 }
+        )) {
+            AudioOutputSheet()
+                .presentationDetents([.medium, .large])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
+        }
         // Match the SwiftTerm CADisplayLink curve EXACTLY — both
         // use cubic-bezier(0.25, 0.1, 0.25, 1.0) over 0.4s so body bg,
         // FAB, scrubber, np-bar, and the terminal pane traverse the
