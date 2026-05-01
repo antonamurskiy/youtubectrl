@@ -65,9 +65,8 @@ struct RootView: View {
                     feedView
                         .frame(maxWidth: .infinity)
                     if terminal.open {
-                        TerminalView()
+                        TerminalView(bottomInset: bottomInset)
                             .frame(maxWidth: .infinity)
-                            .padding(.bottom, bottomInset)
                             .transition(.move(edge: .trailing).combined(with: .opacity))
                     }
                 }
@@ -76,8 +75,7 @@ struct RootView: View {
                     .opacity(terminal.open ? 0 : 1)
                     .allowsHitTesting(!terminal.open)
                 if terminal.open {
-                    TerminalView()
-                        .padding(.bottom, bottomInset)
+                    TerminalView(bottomInset: bottomInset)
                         .transition(.opacity)
                 }
             }

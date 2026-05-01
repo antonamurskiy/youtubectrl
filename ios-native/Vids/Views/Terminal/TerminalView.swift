@@ -3,12 +3,14 @@ import UIKit
 import SwiftTerm
 
 struct TerminalView: View {
+    let bottomInset: CGFloat
     @Environment(TerminalStore.self) private var terminal
     @Environment(ServiceContainer.self) private var services
     @Environment(ThemeStore.self) private var theme
     @Environment(FontStore.self) private var fonts
     @State private var renaming: TmuxWindow? = nil
     @State private var termCoordinator: TermHost.Coordinator? = nil
+    init(bottomInset: CGFloat = 0) { self.bottomInset = bottomInset }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -82,8 +84,9 @@ struct TerminalView: View {
             // keyboard back (matches React's wasKbOpenAtCloseRef).
             terminal.wasKeyboardOpenAtClose = terminal.keyboardOpen
         }
+        .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
-        .ignoresSafeArea(.container, edges: .bottom)
+        .ignoresSafeArea(.container, edges: bottomInset > 0 ? [] : .bottom)
         .overlay(alignment: .bottomTrailing) {
             if terminal.keyboardOpen {
                 Button(action: dismissKeyboard) {
