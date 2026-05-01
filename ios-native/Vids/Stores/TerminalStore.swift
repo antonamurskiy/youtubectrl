@@ -21,6 +21,10 @@ final class TerminalStore {
     /// Global sendAction(resignFirstResponder:) doesn't route correctly to
     /// SwiftTerm's UIScrollView-based input handling.
     var dismissKeyboard: (() -> Void)? = nil
+    /// Callback set by TermHost so KeyboardObserver can re-theme the
+    /// SwiftTerm accessory view on every keyboard show (SwiftTerm
+    /// rebuilds the buttons per show).
+    var themeAccessory: (() -> Void)? = nil
 
     var activeWindow: TmuxWindow? { windows.first(where: { $0.active }) }
 

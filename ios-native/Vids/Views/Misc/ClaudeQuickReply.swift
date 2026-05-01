@@ -10,7 +10,11 @@ struct ClaudeQuickReply: View {
     @State private var pressed: Int? = nil
 
     var body: some View {
-        if playback.claudeState == "waiting" && !playback.claudeOptions.isEmpty {
+        // Show on waiting OR thinking with options so the user always
+        // sees the latest prompt — the React app does the same.
+        let visible = !playback.claudeOptions.isEmpty &&
+            (playback.claudeState == "waiting" || playback.claudeState == "thinking")
+        if visible {
             VStack(alignment: .leading, spacing: 6) {
                 if let q = playback.claudeQuestion, !q.isEmpty {
                     Text(q)
@@ -52,7 +56,8 @@ struct ClaudeQuickReply: View {
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
             .padding(.horizontal, 12)
-            .padding(.bottom, 90)  // sits above the FAB stack
+            .padding(.bottom, playback.playing ? 280 : 80)
+            .allowsHitTesting(true)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }

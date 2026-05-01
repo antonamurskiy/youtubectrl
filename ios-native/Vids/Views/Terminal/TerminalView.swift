@@ -27,10 +27,11 @@ struct TerminalView: View {
                              terminal.dismissKeyboard = { [weak tv] in
                                  _ = tv?.resignFirstResponder()
                              }
+                             terminal.themeAccessory = { [weak tv] in
+                                 themeAccessoryView(tv?.inputAccessoryView)
+                             }
                              DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak tv] in
                                  tv?.scrollDown(lines: tv?.getTerminal().rows ?? 0)
-                                 // Theme the keyboard accessory after
-                                 // SwiftTerm has built it.
                                  themeAccessoryView(tv?.inputAccessoryView)
                              }
                          })
@@ -165,7 +166,8 @@ extension UIColor {
 }
 
 /// Walks an inputAccessoryView's button-shaped subviews and tints
-/// them with our cream/dark theme.
+/// them with our cream/dark theme. Re-runs whenever the keyboard
+/// appears since SwiftTerm rebuilds buttons per show.
 func themeAccessoryView(_ root: UIView?) {
     guard let root else { return }
     let bg = UIColor(red: 0x15/255, green: 0x15/255, blue: 0x15/255, alpha: 1)
@@ -177,9 +179,18 @@ func themeAccessoryView(_ root: UIView?) {
         if let btn = v as? UIButton {
             btn.backgroundColor = chipBg
             btn.setTitleColor(cream, for: .normal)
+            btn.setTitleColor(cream, for: .highlighted)
+            btn.tintColor = cream
             btn.layer.cornerRadius = 4
             btn.layer.borderWidth = 0
-            return
+            // Some SwiftTerm buttons set bg via UIButton.Configuration —
+            // override via configurationUpdateHandler so it sticks.
+            if #available(iOS 15.0, *), btn.configuration != nil {
+                var c = btn.configuration!
+                c.background.backgroundColor = chipBg
+                c.baseForegroundColor = cream
+                btn.configuration = c
+            }
         }
         for s in v.subviews { walk(s) }
     }

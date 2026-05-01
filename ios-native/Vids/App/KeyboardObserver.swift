@@ -7,6 +7,8 @@ final class KeyboardObserver {
     weak var terminal: TerminalStore?
     private var observers: [Any] = []
 
+    var onKeyboardDidShow: (() -> Void)?
+
     func start(terminal: TerminalStore) {
         self.terminal = terminal
         let nc = NotificationCenter.default
@@ -28,6 +30,13 @@ final class KeyboardObserver {
             Task { @MainActor in
                 self?.terminal?.keyboardOpen = false
                 self?.terminal?.keyboardHeight = 0
+            }
+        })
+        observers.append(nc.addObserver(forName: UIResponder.keyboardDidShowNotification, object: nil, queue: .main) { [weak self] _ in
+            // Keyboard accessory view buttons are rebuilt each show —
+            // re-theme so SwiftTerm's grey doesn't bleed through.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self?.onKeyboardDidShow?()
             }
         })
     }

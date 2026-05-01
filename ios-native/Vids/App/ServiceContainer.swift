@@ -81,7 +81,12 @@ final class ServiceContainer {
 
     func start() async {
         PushHandler.shared.services = self
-        await MainActor.run { keyboard.start(terminal: terminal) }
+        await MainActor.run {
+            keyboard.start(terminal: terminal)
+            keyboard.onKeyboardDidShow = { [weak self] in
+                self?.terminal.themeAccessory?()
+            }
+        }
         ws.connect()
         await feed.loadInitial(api: api)
     }
