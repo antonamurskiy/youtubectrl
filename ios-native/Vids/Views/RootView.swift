@@ -157,10 +157,12 @@ struct RootView: View {
             SecretMenu()
                 .presentationDetents([.medium, .fraction(0.92)])
                 .presentationDragIndicator(.visible)
-                // Sheet shell transparent — each glass card inside paints
-                // its own iOS 26 .glassEffect, like the long-press
-                // preview blob (real Liquid Glass, not flat material).
-                .presentationBackground(.clear)
+                // Dim backdrop behind the glass cards — without it the
+                // cards float over the bright feed with nothing for the
+                // glass tint to push against, looking flat.
+                .presentationBackground {
+                    Color.black.opacity(0.35).ignoresSafeArea()
+                }
         }
         .sheet(isPresented: Binding(
             get: { ui.commentsOpen },

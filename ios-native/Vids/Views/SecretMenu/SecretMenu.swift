@@ -59,7 +59,16 @@ struct SecretMenu: View {
         .padding(.vertical, 14)
         .padding(.horizontal, 16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        // Darker tint pushes the glass forward of the dimmed sheet bg
+        // and a 0.5pt white stroke gives each card a defined edge —
+        // matches how iOS draws the long-press preview blob.
+        .glassEffect(.regular.tint(.black.opacity(0.25)),
+                     in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .strokeBorder(Color.white.opacity(0.18), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.35), radius: 16, y: 6)
     }
 
     /// Section with an optional header label, content stacked below.
