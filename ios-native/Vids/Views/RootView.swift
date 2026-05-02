@@ -86,12 +86,10 @@ struct RootView: View {
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
             // Sized via GeometryReader from the parent so it adapts to
             // landscape + iPad regular size class.
-            // Hide the inline frame while PiP is active — the
-            // AVPlayerLayer's content has moved to the system PiP
-            // window, leaving only a black panel where the inline
-            // video used to be.
-            if (phoneMode.mode == .sync || phoneMode.mode == .phoneOnly)
-                && !services.avHost.pipActive {
+            // Inline player frame; hidden via opacity (not unmounted)
+            // when PiP is active so the AVPlayerLayer stays attached
+            // and gating bugs can't accidentally keep it off-screen.
+            if phoneMode.mode == .sync || phoneMode.mode == .phoneOnly {
                 GeometryReader { outer in
                     let availW = outer.size.width
                     let availH = outer.size.height - 90  // header + safe area
@@ -104,12 +102,19 @@ struct RootView: View {
                         PhonePlayerView(host: services.avHost)
                             .frame(width: w, height: h)
                             .frame(maxWidth: .infinity)
+                            // Hidden during PiP so the empty layer
+                            // doesn't show a black box, but stays
+                            // mounted so the AVPlayerLayer hierarchy
+                            // is preserved.
+                            .opacity(services.avHost.pipActive ? 0 : 1)
                         Spacer(minLength: 0)
                     }
                     .padding(.top, 70)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .zIndex(5)
+                // Above the top safe-area glass strip (zIndex 17) so
+                // the inline player is never visually obscured by it.
+                .zIndex(19)
             }
 
             // Now-playing bar — hidden when terminal+keyboard. On
