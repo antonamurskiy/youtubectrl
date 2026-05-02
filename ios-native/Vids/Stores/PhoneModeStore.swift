@@ -96,6 +96,19 @@ final class PhoneModeStore {
             services.playback.duration = resp.durationSec ?? 0
             services.playback.isLive = resp.isLive ?? false
             services.playback.player = "phone"
+            // Drive the scrubber off AVPlayer's currentTime (mpv on
+            // the Mac is muted/hidden so the server's position broadcast
+            // is meaningless).
+            services.avHost.startProgressUpdates { [weak services] sec in
+                services?.playback.position = sec
+                if let h = services?.avHost.currentItemDurationSeconds, h > 0 {
+                    services?.playback.duration = h
+                }
+                // Reset interpolation so ScrubberView's CADisplayLink
+                // uses our written position directly instead of a stale
+                // serverTs-anchored value.
+                services?.playback.serverTs = 0
+            }
             // No live sync in phone-only mode (mpv is paused/hidden, AVPlayer is authoritative).
         } catch {
             lastError = "phone-only: \(error)"
@@ -106,6 +119,7 @@ final class PhoneModeStore {
     func switchToComputer(services: ServiceContainer) async {
         services.liveSync.stop()
         services.avHost.disableVolumeIntercept()
+        services.avHost.stopProgressUpdates()
         services.avHost.stop()
         services.avHost.clearNowPlaying()
         try? await services.api.stopPhoneStream()

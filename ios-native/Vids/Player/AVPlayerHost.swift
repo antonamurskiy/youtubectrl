@@ -172,6 +172,33 @@ final class AVPlayerHost: NSObject {
         return d.seconds
     }
 
+    /// Current playback position in seconds, or 0.
+    var currentTimeSeconds: Double {
+        let t = player.currentTime()
+        return t.isNumeric ? t.seconds : 0
+    }
+
+    private var progressObserver: Any?
+    /// Begin/replace a periodic-time observer that fires `cb` 4×/sec
+    /// with the AVPlayer's current playback position. Used by phone-only
+    /// mode to drive the in-app scrubber off AVPlayer (mpv's position
+    /// from the server is meaningless when mpv is muted/hidden).
+    func startProgressUpdates(_ cb: @escaping (Double) -> Void) {
+        stopProgressUpdates()
+        let interval = CMTime(seconds: 0.25, preferredTimescale: 600)
+        progressObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
+            guard time.isNumeric else { return }
+            cb(time.seconds)
+        }
+    }
+
+    func stopProgressUpdates() {
+        if let o = progressObserver {
+            player.removeTimeObserver(o)
+            progressObserver = nil
+        }
+    }
+
     func seek(toSeconds s: Double) async {
         // Use loose tolerance so AVPlayer can land on the nearest
         // keyframe — strict zero tolerance fails on streams (Rumble
