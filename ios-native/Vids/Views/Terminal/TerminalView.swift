@@ -59,11 +59,11 @@ struct TerminalView: View {
                 // Each tmux tab is its own glass pill, grouped by
                 // GlassEffectContainer so they morph as a unit. Tint
                 // mirrors the active theme (NPBar formula).
-                let tint: Color = {
+                let tint: SwiftUI.Color = {
                     if let r = theme.resolved {
                         return r.darken(0.55).opacity(0.7)
                     }
-                    return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
+                    return SwiftUI.Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
                 }()
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
