@@ -59,7 +59,7 @@ struct ClaudeFeedView: View {
     @Environment(TerminalStore.self) private var terminal
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(terminal.open ? [] : Array(push.feed.suffix(8).reversed())) { line in
                 FeedLineView(line: line, lifetime: push.lifetime, tintHex: tintHex(for: line.text))
             }
@@ -89,32 +89,35 @@ private struct FeedLineView: View {
     @State private var visible: Bool = false
     @State private var fading: Bool = false
 
-    private var borderColor: Color {
-        if let h = tintHex { return Color(hex: h) }
-        return Color(hex: "#a89984")
+    private var pillTint: Color {
+        // Tmux window color (when prefixed) drives the glass tint —
+        // matches the FAB/NPBar/pill convention.
+        if let h = tintHex { return Color(hex: h).opacity(0.55) }
+        return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
     }
     private var textColor: Color {
-        // Tinted lines: brighten the tint so the text reads off the dark bg.
-        // Default: cream.
-        if let h = tintHex { return Color(hex: h).lighten(0.35) }
+        if let h = tintHex { return Color(hex: h).lighten(0.45) }
         return Color(hex: "#ebdbb2")
     }
 
     var body: some View {
         Text(line.text)
             .font(Font.app(12))
-            .tracking(1)
+            .tracking(0.3)
             .foregroundStyle(textColor)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color(hex: "#151515").opacity(0.95))
-            .overlay(Rectangle().stroke(borderColor, lineWidth: 1))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            // iOS 26 Liquid Glass capsule — same material the
+            // header pills + FAB stack + NPBar use, so the kill
+            // feed reads as part of the same chrome instead of a
+            // flat-bordered outlier.
+            .glassEffect(.regular.tint(pillTint).interactive(),
+                         in: Capsule())
+            .clipShape(Capsule())
             .opacity(visible && !fading ? 1 : 0)
             .scaleEffect(y: fading ? 0.7 : 1, anchor: .top)
             .onAppear {
                 withAnimation(.easeOut(duration: 0.2)) { visible = true }
-                // Start fade-out 1.5s before the prune timer drops the line.
                 let fadeStart = max(0, lifetime - 1.5)
                 DispatchQueue.main.asyncAfter(deadline: .now() + fadeStart) {
                     withAnimation(.easeIn(duration: 1.4)) { fading = true }
