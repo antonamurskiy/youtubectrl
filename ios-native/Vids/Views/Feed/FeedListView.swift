@@ -15,7 +15,7 @@ struct FeedListView: UIViewRepresentable {
     }
 
     func makeUIView(context: Context) -> UICollectionView {
-        let layout = UICollectionViewCompositionalLayout { sectionIndex, env in
+        let layout = NoZoomCompositionalLayout(sectionProvider: { sectionIndex, env in
             let isShorts = sectionIndex == 1
             if isShorts {
                 let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .absolute(140), heightDimension: .absolute(220)))
@@ -48,7 +48,7 @@ struct FeedListView: UIViewRepresentable {
             section.interGroupSpacing = 12
             section.contentInsets = .init(top: 110, leading: 0, bottom: 280, trailing: 0)
             return section
-        }
+        })
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)
         cv.backgroundColor = .clear
         cv.alwaysBounceVertical = true
@@ -362,5 +362,18 @@ struct FeedListView: UIViewRepresentable {
                 return UIMenu(title: "", children: actions)
             }
         }
+    }
+}
+
+/// CompositionalLayout subclass that returns FINAL layout attributes
+/// for both appearing and disappearing items — kills the iOS 26
+/// default "zoom in" appearance animation new cells get when they
+/// scroll into view.
+final class NoZoomCompositionalLayout: UICollectionViewCompositionalLayout {
+    override func initialLayoutAttributesForAppearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        return layoutAttributesForItem(at: itemIndexPath)
+    }
+    override func finalLayoutAttributesForDisappearingItem(at itemIndexPath: IndexPath) -> UICollectionViewLayoutAttributes? {
+        return layoutAttributesForItem(at: itemIndexPath)
     }
 }
