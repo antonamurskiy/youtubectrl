@@ -18,9 +18,9 @@ struct HeaderView: View {
         return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
     }
 
-    /// Uniform pill metrics so all three nav capsules render the same
-    /// height and content type size.
-    private static let pillHeight: CGFloat = 44
+    /// Uniform font size across the three nav pills — pill height is
+    /// derived from content (font + vertical padding) so type-size
+    /// changes don't fight a hardcoded frame.
     private static let pillFont: CGFloat = 13
 
     var body: some View {
@@ -55,22 +55,28 @@ struct HeaderView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 18)
-                .frame(height: Self.pillHeight)
+                .padding(.vertical, 12)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
-                // Pill 2: tabs — active highlight follows the theme.
-                TabsRow(activeTab: feed.activeTab,
-                        fontSize: Self.pillFont,
-                        highlightTint: theme.resolved ?? Color.appText) { tab in
-                    Haptics.select()
-                    feed.activeTab = tab
-                    Task { await feed.load(tab: tab, api: services.api) }
+                // Pill 2: tabs — native segmented Picker. iOS handles
+                // the tap targets, sliding selector pill, and tint
+                // automatically. Wrapped in the same glass capsule
+                // chrome as the other pills.
+                Picker("Tab", selection: Binding(
+                    get: { feed.activeTab },
+                    set: { newTab in
+                        Haptics.select()
+                        feed.activeTab = newTab
+                        Task { await feed.load(tab: newTab, api: services.api) }
+                    }
+                )) {
+                    ForEach(FeedTab.allCases) { tab in
+                        Text(tab.label).tag(tab)
+                    }
                 }
-                .padding(.horizontal, 12)
-                .frame(height: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
-                .clipShape(Capsule())
+                .pickerStyle(.segmented)
+                .tint(theme.resolved ?? Color.appText)
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -80,7 +86,7 @@ struct HeaderView: View {
                     StatusDot(on: !(playback.macStatus.screenOff ?? false))
                 }
                 .padding(.horizontal, 18)
-                .frame(height: Self.pillHeight)
+                .padding(.vertical, 12)
                 .contentShape(Capsule())
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
