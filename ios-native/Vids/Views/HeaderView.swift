@@ -20,8 +20,8 @@ struct HeaderView: View {
 
     /// Uniform pill metrics so all three nav capsules render the same
     /// height and content type size.
-    private static let pillHeight: CGFloat = 36
-    private static let pillFont: CGFloat = 12
+    private static let pillHeight: CGFloat = 44
+    private static let pillFont: CGFloat = 13
 
     var body: some View {
         GlassEffectContainer(spacing: 6) {
