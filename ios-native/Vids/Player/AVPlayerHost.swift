@@ -165,7 +165,13 @@ final class AVPlayerHost: NSObject {
     }
 
     func seek(toSeconds s: Double) async {
-        await player.seek(to: CMTime(seconds: s, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+        // Use loose tolerance so AVPlayer can land on the nearest
+        // keyframe — strict zero tolerance fails on streams (Rumble
+        // among them) that don't support fine-grained byte-range
+        // seeking on every offset.
+        await player.seek(to: CMTime(seconds: s, preferredTimescale: 600),
+                          toleranceBefore: .positiveInfinity,
+                          toleranceAfter: .positiveInfinity)
     }
 
     /// Frame-accurate (HLS PDT-based) seek. Used by LiveSyncEngine.
