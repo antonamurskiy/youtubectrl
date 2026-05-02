@@ -309,12 +309,10 @@ struct RootView: View {
         if terminal.keyboardOpen {
             return terminal.keyboardHeight + 16
         }
-        // Lifted by tab bar when feed pane is showing.
-        let tabBar: CGFloat = terminal.open ? 0 : 56
-        // Just above the now-playing bar (~200pt rendered) when
-        // playing, otherwise just above the home indicator.
+        // Always sit at the lifted (above tab bar) position so the
+        // FABs don't shift between feed + terminal panes.
         let baseAboveNP: CGFloat = playback.playing ? 210 : 32
-        return baseAboveNP + tabBar
+        return baseAboveNP + 56
     }
 
     // feedView + cycleFeedTab removed — feed lives in MainTabView.
