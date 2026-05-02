@@ -62,14 +62,8 @@ struct HeaderView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .padding(.horizontal, 4)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.pillHeight)
-                // Tint the surrounding capsule the same dark glass
-                // colour as the search/dots pills. The Picker's own
-                // iOS 26 Liquid Glass selected pill + magnifier
-                // render on top of this background.
-                .background(pillTint, in: Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
