@@ -93,8 +93,7 @@ struct SecretMenu: View {
         }
     }
 
-    /// Rows separated by faint gradient hairlines that fade at the
-    /// margins instead of edge-to-edge solid dividers.
+    /// Rows separated by a flat hairline.
     private struct SeparatedRows: _VariadicView_MultiViewRoot {
         @ViewBuilder
         func body(children: _VariadicView.Children) -> some View {
@@ -103,15 +102,9 @@ struct SecretMenu: View {
                 child
                     .padding(.vertical, 12)
                 if child.id != last {
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.04),
-                            Color.white.opacity(0.18),
-                            Color.white.opacity(0.04),
-                        ],
-                        startPoint: .leading, endPoint: .trailing
-                    )
-                    .frame(height: 1)
+                    Rectangle()
+                        .fill(Color.white.opacity(0.10))
+                        .frame(height: 0.5)
                 }
             }
         }

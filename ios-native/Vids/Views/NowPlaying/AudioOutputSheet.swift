@@ -183,12 +183,9 @@ struct AudioOutputSheet: View {
     }
 
     private var hairline: some View {
-        LinearGradient(colors: [
-            Color.white.opacity(0.04),
-            Color.white.opacity(0.16),
-            Color.white.opacity(0.04),
-        ], startPoint: .leading, endPoint: .trailing)
-        .frame(height: 0.5)
+        Rectangle()
+            .fill(Color.white.opacity(0.10))
+            .frame(height: 0.5)
     }
 
     private func outputSymbol(_ name: String) -> String {
