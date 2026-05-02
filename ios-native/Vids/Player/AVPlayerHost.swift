@@ -77,6 +77,7 @@ final class AVPlayerHost: NSObject {
     // MARK: - Load
 
     /// Single-URL path (progressive MP4 / HLS).
+    @MainActor
     func load(url: URL, position: Double = 0, autoplay: Bool = true, muted: Bool = false) {
         // Defensive: clear stale pipActive that might be stuck true
         // from a prior session — otherwise PhonePlayerView's mount
@@ -93,9 +94,15 @@ final class AVPlayerHost: NSObject {
     func loadDASH(videoURL: URL, audioURL: URL, durationHint: Double = 0,
                   position: Double = 0, autoplay: Bool = true, muted: Bool = false) async throws {
         let item = try await buildCompositionItem(videoURL: videoURL, audioURL: audioURL, durationHint: durationHint)
-        applyItem(item, position: position, autoplay: autoplay, muted: muted)
+        // applyItem touches UIApplication.isIdleTimerDisabled which
+        // requires main thread — hop explicitly because the await
+        // above resumes on whatever Task executor we were on.
+        await MainActor.run {
+            applyItem(item, position: position, autoplay: autoplay, muted: muted)
+        }
     }
 
+    @MainActor
     private func applyItem(_ item: AVPlayerItem, position: Double, autoplay: Bool, muted: Bool) {
         // PiP-friendly swap: pause → replaceCurrentItem → resume. Direct
         // replacement on a playing player while PiP is active leaves the
@@ -159,9 +166,9 @@ final class AVPlayerHost: NSObject {
 
     // MARK: - Transport
 
-    func play() { player.play(); UIApplication.shared.isIdleTimerDisabled = true }
-    func pause() { player.pause(); UIApplication.shared.isIdleTimerDisabled = false }
-    func stop() {
+    @MainActor func play() { player.play(); UIApplication.shared.isIdleTimerDisabled = true }
+    @MainActor func pause() { player.pause(); UIApplication.shared.isIdleTimerDisabled = false }
+    @MainActor func stop() {
         player.pause()
         player.replaceCurrentItem(with: nil)
         UIApplication.shared.isIdleTimerDisabled = false
