@@ -81,6 +81,7 @@ final class PhoneModeStore {
                 services.avHost.load(url: u, position: 0, autoplay: true, muted: false)
             } else {
                 lastError = "phone-only: no streamUrl"
+                await services.ui.toast("Watch-on-phone: no stream URL")
                 return
             }
             mode = .phoneOnly
@@ -112,6 +113,7 @@ final class PhoneModeStore {
             // No live sync in phone-only mode (mpv is paused/hidden, AVPlayer is authoritative).
         } catch {
             lastError = "phone-only: \(error)"
+            await services.ui.toast("Watch-on-phone failed: \(error.localizedDescription)")
         }
     }
 

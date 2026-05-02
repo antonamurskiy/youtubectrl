@@ -215,18 +215,34 @@ struct FeedListView: UIViewRepresentable {
             switch item {
             case .video(let v):
                 guard let url = v.url ?? v.videoId.flatMap({ "https://www.youtube.com/watch?v=\($0)" }) else { return }
-                Task { @MainActor in
-                    do { try await self.services.api.play(url: url, title: v.title, channel: v.channel, thumbnail: v.thumbnail, isLive: v.isLive ?? v.live, startPercent: v.startPercent) }
-                    catch { self.services.ui.toast("Play failed") }
-                }
+                playFromCard(url: url, title: v.title, channel: v.channel,
+                             thumbnail: v.thumbnail, isLive: v.isLive ?? v.live,
+                             startPercent: v.startPercent)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
             case .short(let s):
                 guard let id = s.videoId else { return }
-                Task { @MainActor in
-                    do { try await self.services.api.play(url: "https://www.youtube.com/watch?v=\(id)", title: s.title) }
-                    catch { self.services.ui.toast("Play failed") }
-                }
+                playFromCard(url: "https://www.youtube.com/watch?v=\(id)",
+                             title: s.title, channel: nil, thumbnail: nil,
+                             isLive: nil, startPercent: nil)
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            }
+        }
+
+        /// Tap-to-play that respects the current phone-mode. In phone-only
+        /// the new URL goes through startPhoneOnly so AVPlayer picks it
+        /// up; otherwise the Mac plays it via /api/play.
+        private func playFromCard(url: String, title: String?, channel: String?,
+                                  thumbnail: String?, isLive: Bool?, startPercent: Double?) {
+            let services = self.services
+            Task { @MainActor in
+                if services.phoneMode.mode == .phoneOnly {
+                    await services.phoneMode.startPhoneOnly(url: url, services: services)
+                } else {
+                    do { try await services.api.play(url: url, title: title, channel: channel,
+                                                     thumbnail: thumbnail, isLive: isLive,
+                                                     startPercent: startPercent) }
+                    catch { services.ui.toast("Play failed") }
+                }
             }
         }
 
