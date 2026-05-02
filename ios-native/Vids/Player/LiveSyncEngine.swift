@@ -116,6 +116,16 @@ final class LiveSyncEngine {
         let elapsed = max(0, min(2000, nowMs + clockOffsetMs - serverTsMs))
         let mpvPdtNow = serverPdtMs + elapsed
 
+        // Stale-server guard: if elapsed clamped at the 2000ms ceiling,
+        // the WS hasn't delivered a fresh playback message for >=2s.
+        // Don't seek against stale serverPdtMs — engine would chase a
+        // frozen target while phone keeps advancing, ballooning drift
+        // by 1000ms per tick.
+        if elapsed >= 2000 {
+            rawDriftMs = 0
+            return
+        }
+
         let liveState = host.liveState()
         guard let phonePdt = liveState.currentDateMs else { return }
 
