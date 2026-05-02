@@ -179,7 +179,7 @@ struct RootView: View {
                         // Extends well past the safe area + the 36pt
                         // header pill so the gradient mask has room
                         // to fade smoothly to clear below the pill.
-                        .frame(height: proxy.safeAreaInsets.top + 130)
+                        .frame(height: proxy.safeAreaInsets.top + 220)
                         .mask(
                             LinearGradient(
                                 colors: [.black, .clear],
