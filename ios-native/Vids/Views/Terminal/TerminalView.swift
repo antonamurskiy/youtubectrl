@@ -55,21 +55,19 @@ struct TerminalView: View {
                     .frame(width: 56)
             }
 
+        }
+        // Tab strip lives as a top-trailing overlay so it can ignore
+        // the keyboard inset in isolation — putting it inside the
+        // ZStack tied it to the same layout pass as the SwiftTerm host
+        // and the keyboard pushed both up together.
+        .overlay(alignment: .topTrailing) {
             if terminal.windows.count > 1 {
-                // Each tmux tab is its own glass pill, grouped by
-                // GlassEffectContainer so they morph as a unit. Tint
-                // mirrors the active theme (NPBar formula).
-                let tint: SwiftUI.Color = {
-                    if let r = theme.resolved {
-                        return r.darken(0.55).opacity(0.7)
-                    }
-                    return SwiftUI.Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
-                }()
-                // Native iOS 26 segmented Picker — OS-owned Liquid
-                // Glass chrome + magnify-on-drag lens. With optimistic
-                // flip on tap (selection writes to terminal.windows
-                // immediately, server confirms on next broadcast).
                 let activeIdx = terminal.windows.firstIndex(where: { $0.active }) ?? 0
+                let perTab: CGFloat = 64
+                // Tint the selected segment with the active tmux color
+                // (same color the rest of the app theme uses). Tinting
+                // is global via UISegmentedControl.appearance() — we
+                // refresh it whenever theme.activeTmuxTint changes.
                 Picker("Window", selection: Binding(
                     get: { activeIdx },
                     set: { newIdx in
@@ -85,9 +83,9 @@ struct TerminalView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .padding(.horizontal, 8)
+                .frame(width: perTab * CGFloat(terminal.windows.count))
+                .padding(.trailing, 8)
                 .padding(.top, 4)
-                .ignoresSafeArea(.keyboard, edges: .bottom)
                 .simultaneousGesture(
                     LongPressGesture(minimumDuration: 0.5).onEnded { _ in
                         if activeIdx < terminal.windows.count {
@@ -95,6 +93,9 @@ struct TerminalView: View {
                         }
                     }
                 )
+                .onAppear { applyTmuxTabTint() }
+                .onChange(of: theme.activeTmuxTint) { _, _ in applyTmuxTabTint() }
+                .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
         .onDisappear {
@@ -126,6 +127,30 @@ struct TerminalView: View {
         // UIScrollView-based UIKeyInput conformance. Call resign
         // directly on the captured TerminalView reference.
         terminal.dismissKeyboard?()
+    }
+
+    /// Tint the segmented Picker's selected pill with the active tmux
+    /// theme color so the strip visually tracks whichever pane the
+    /// user is on. Falls back to a neutral if no theme is set.
+    private func applyTmuxTabTint() {
+        let tint: UIColor = {
+            if let c = theme.activeTmuxTint { return UIColor(c).withAlphaComponent(0.85) }
+            return UIColor(white: 0.45, alpha: 0.7)
+        }()
+        UISegmentedControl.appearance().selectedSegmentTintColor = tint
+        // Force-refresh any visible segmented controls so the new
+        // tint takes effect immediately. .appearance() only applies
+        // to newly-instantiated controls otherwise.
+        UIApplication.shared.connectedScenes
+            .compactMap { ($0 as? UIWindowScene)?.windows.first }
+            .forEach { $0.subviews.forEach { recolorSegmentedDescendants($0, tint: tint) } }
+    }
+
+    private func recolorSegmentedDescendants(_ v: UIView, tint: UIColor) {
+        if let seg = v as? UISegmentedControl {
+            seg.selectedSegmentTintColor = tint
+        }
+        for sub in v.subviews { recolorSegmentedDescendants(sub, tint: tint) }
     }
 
     /// Optimistic local active-flag flip so the terminal background
