@@ -1,11 +1,10 @@
 import SwiftUI
 import UIKit
 
-/// Top-right segmented Picker for tmux windows, rendered as a sibling
-/// of TerminalView in RootView so its .ignoresSafeArea(.keyboard) is
-/// effective — the same modifier applied inside TerminalView's body
-/// or via an .overlay() got carried up with the parent layout when
-/// the soft keyboard opened.
+/// Top-right segmented Picker for tmux windows. Wraps a per-instance
+/// UISegmentedControl via UIViewRepresentable so tint + font config
+/// is scoped to JUST this strip (UISegmentedControl.appearance() is
+/// global and was leaking to the bottom feed Picker on the homepage).
 struct TmuxTabStrip: View {
     @Environment(TerminalStore.self) private var terminal
     @Environment(ServiceContainer.self) private var services
@@ -18,35 +17,25 @@ struct TmuxTabStrip: View {
     var body: some View {
         if terminal.windows.count > 1 {
             let activeIdx = terminal.windows.firstIndex(where: { $0.active }) ?? 0
-            Picker("Window", selection: Binding(
-                get: { activeIdx },
-                set: { newIdx in
+            TmuxSegmentedRep(
+                titles: terminal.windows.map { $0.name },
+                selectedIndex: activeIdx,
+                tint: theme.activeTmuxTint.flatMap { UIColor($0).withAlphaComponent(0.85) }
+                       ?? UIColor(white: 0.45, alpha: 0.7),
+                font: fonts.font(size: 13),
+                onSelect: { newIdx in
                     guard newIdx < terminal.windows.count, newIdx != activeIdx else { return }
                     let w = terminal.windows[newIdx]
                     optimisticallySelect(window: w)
                     Task { try? await services.api.tmuxSelect(index: w.index) }
-                }
-            )) {
-                ForEach(Array(terminal.windows.enumerated()), id: \.offset) { idx, w in
-                    Text(w.name).tag(idx)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(width: perTab * CGFloat(terminal.windows.count))
-            .padding(.trailing, 8)
-            .padding(.top, 4)
-            .simultaneousGesture(
-                LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                },
+                onLongPress: {
                     if activeIdx < terminal.windows.count {
                         renaming = terminal.windows[activeIdx]
                     }
                 }
             )
-            .onAppear { applyTint() }
-            .onChange(of: theme.activeTmuxTint) { _, _ in applyTint() }
-            .onChange(of: fonts.label) { _, _ in applyTint() }
-            .onChange(of: fonts.size) { _, _ in applyTint() }
+            .frame(width: perTab * CGFloat(terminal.windows.count), height: 32)
         }
     }
 
@@ -58,28 +47,75 @@ struct TmuxTabStrip: View {
                        title: existing.title)
         }
     }
+}
 
-    private func applyTint() {
-        let tint: UIColor = {
-            if let c = theme.activeTmuxTint { return UIColor(c).withAlphaComponent(0.85) }
-            return UIColor(white: 0.45, alpha: 0.7)
-        }()
-        let app = UISegmentedControl.appearance()
-        app.selectedSegmentTintColor = tint
-        let f = fonts.font(size: 13)
-        app.setTitleTextAttributes([.font: f], for: .normal)
-        app.setTitleTextAttributes([.font: f], for: .selected)
-        UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.windows.first }
-            .forEach { recolor($0, tint: tint, font: f) }
+/// UISegmentedControl bridge — config applied per instance, no global
+/// appearance leakage. Native iOS 26 Liquid Glass + magnify lens.
+private struct TmuxSegmentedRep: UIViewRepresentable {
+    let titles: [String]
+    let selectedIndex: Int
+    let tint: UIColor
+    let font: UIFont
+    let onSelect: (Int) -> Void
+    let onLongPress: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelect: onSelect, onLongPress: onLongPress)
     }
 
-    private func recolor(_ v: UIView, tint: UIColor, font: UIFont) {
-        if let seg = v as? UISegmentedControl {
-            seg.selectedSegmentTintColor = tint
-            seg.setTitleTextAttributes([.font: font], for: .normal)
-            seg.setTitleTextAttributes([.font: font], for: .selected)
+    func makeUIView(context: Context) -> UISegmentedControl {
+        let sc = UISegmentedControl(items: titles)
+        sc.selectedSegmentIndex = selectedIndex
+        sc.addTarget(context.coordinator, action: #selector(Coordinator.changed(_:)),
+                     for: .valueChanged)
+        let lp = UILongPressGestureRecognizer(target: context.coordinator,
+                                              action: #selector(Coordinator.longPressed(_:)))
+        lp.minimumPressDuration = 0.5
+        sc.addGestureRecognizer(lp)
+        sc.selectedSegmentTintColor = tint
+        sc.setTitleTextAttributes([.font: font], for: .normal)
+        sc.setTitleTextAttributes([.font: font], for: .selected)
+        return sc
+    }
+
+    func updateUIView(_ sc: UISegmentedControl, context: Context) {
+        // Re-sync titles if the window list changed.
+        if sc.numberOfSegments != titles.count {
+            sc.removeAllSegments()
+            for (i, t) in titles.enumerated() {
+                sc.insertSegment(withTitle: t, at: i, animated: false)
+            }
+            sc.setTitleTextAttributes([.font: font], for: .normal)
+            sc.setTitleTextAttributes([.font: font], for: .selected)
+        } else {
+            for (i, t) in titles.enumerated() {
+                if sc.titleForSegment(at: i) != t {
+                    sc.setTitle(t, forSegmentAt: i)
+                }
+            }
         }
-        for sub in v.subviews { recolor(sub, tint: tint, font: font) }
+        if sc.selectedSegmentIndex != selectedIndex {
+            sc.selectedSegmentIndex = selectedIndex
+        }
+        if sc.selectedSegmentTintColor != tint {
+            sc.selectedSegmentTintColor = tint
+        }
+        context.coordinator.onSelect = onSelect
+        context.coordinator.onLongPress = onLongPress
+    }
+
+    final class Coordinator: NSObject {
+        var onSelect: (Int) -> Void
+        var onLongPress: () -> Void
+        init(onSelect: @escaping (Int) -> Void, onLongPress: @escaping () -> Void) {
+            self.onSelect = onSelect
+            self.onLongPress = onLongPress
+        }
+        @objc func changed(_ sender: UISegmentedControl) {
+            onSelect(sender.selectedSegmentIndex)
+        }
+        @objc func longPressed(_ g: UILongPressGestureRecognizer) {
+            if g.state == .began { onLongPress() }
+        }
     }
 }
