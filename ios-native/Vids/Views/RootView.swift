@@ -176,7 +176,10 @@ struct RootView: View {
                     // Island blur in without a hard horizontal edge.
                     Rectangle()
                         .fill(.thinMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 60)
+                        // Extends well past the safe area + the 36pt
+                        // header pill so the gradient mask has room
+                        // to fade smoothly to clear below the pill.
+                        .frame(height: proxy.safeAreaInsets.top + 130)
                         .mask(
                             LinearGradient(
                                 colors: [.black, .clear],
