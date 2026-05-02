@@ -9,6 +9,7 @@ struct ClaudeQuickReply: View {
     @Environment(ServiceContainer.self) private var services
     @State private var lastShownKey: String = ""
     @State private var presented: Bool = false
+    @State private var dismissTask: Task<Void, Never>? = nil
 
     private var promptKey: String {
         let opts = playback.claudeOptions.map { "\($0.n):\($0.text)" }.joined(separator: "|")
@@ -43,14 +44,27 @@ struct ClaudeQuickReply: View {
     }
 
     /// Drive presentation state from the server's claude state. New prompt
-    /// (key change) auto-shows; transition out of "waiting" auto-hides.
+    /// (key change) auto-shows. Transition out of "waiting" doesn't dismiss
+    /// immediately — Claude often flips to "idle" within ~200ms of the
+    /// prompt appearing, before the user can read + tap. Hold the dialog
+    /// open for 6s after the waiting state ends so taps still land.
     private func syncPresent() {
         let waiting = playback.claudeState == "waiting" && !playback.claudeOptions.isEmpty
         if waiting && promptKey != lastShownKey {
+            dismissTask?.cancel()
+            dismissTask = nil
             lastShownKey = promptKey
             presented = true
-        } else if !waiting {
-            presented = false
+        } else if !waiting && presented {
+            // Server says no longer waiting. Schedule a delayed dismiss
+            // so a fast-flipping Claude state doesn't yank the dialog
+            // out from under a tap.
+            dismissTask?.cancel()
+            dismissTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 6_000_000_000)
+                guard !Task.isCancelled else { return }
+                presented = false
+            }
         }
     }
 }
