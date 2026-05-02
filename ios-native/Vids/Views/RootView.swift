@@ -151,17 +151,20 @@ struct RootView: View {
                 .zIndex(20)
 
             // Floating top nav pill — right-aligned over the feed,
-            // hidden when terminal is open (terminal has its own
-            // tmux tabs strip).
+            // hidden when terminal is open. Pinned to top via frame
+            // alignment, NOT a VStack with Spacer — Spacer fills the
+            // rest of the screen and would intercept touches meant
+            // for NPBar / FAB stack underneath.
             if !terminal.open {
-                VStack(spacing: 0) {
-                    HStack {
-                        Spacer(minLength: 0)
-                        HeaderView(searchFocused: $searchFocused)
-                            .fixedSize()
-                    }
-                    Spacer()
+                HStack {
+                    Spacer(minLength: 0)
+                    HeaderView(searchFocused: $searchFocused)
+                        .fixedSize()
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .allowsHitTesting(true) // pill content captures hits;
+                                        // empty area passes through
+                                        // (no painted bg outside pill)
                 .zIndex(18)
             }
 
