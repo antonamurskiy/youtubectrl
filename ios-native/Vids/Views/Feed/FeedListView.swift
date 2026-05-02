@@ -30,8 +30,20 @@ struct FeedListView: UIViewRepresentable {
                 section.contentInsets = .init(top: 110, leading: 12, bottom: 8, trailing: 12)
                 return section
             }
-            let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)))
-            let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)), subitems: [item])
+            // Absolute height instead of estimated — estimated()
+            // forces a relayout every time SwiftUI's UIHostingConfiguration
+            // returns a slightly different real height, which manifests
+            // as cards visibly shrinking + expanding as they scroll
+            // into view.
+            //
+            // Cell anatomy (full-width):
+            //   thumbnail = (env.container.contentSize.width × 9 / 16)
+            //   + 6pt gap + 14pt title (2 lines = 36pt) + 2pt + 16pt
+            //   meta row → ~thumb + 60pt
+            let w = env.container.contentSize.width
+            let cellH = (w * 9 / 16) + 60
+            let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cellH)))
+            let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cellH)), subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 12
             section.contentInsets = .init(top: 110, leading: 0, bottom: 280, trailing: 0)
