@@ -23,17 +23,18 @@ struct FeedListView: UIViewRepresentable {
                 let section = NSCollectionLayoutSection(group: group)
                 section.orthogonalScrollingBehavior = .continuousGroupLeadingBoundary
                 section.interGroupSpacing = 8
-                // Header pill + small gap; safe area is handled by
-                // the SwiftUI parent (we don't .ignoresSafeArea(.top)
-                // anymore — it caused recursive cell layout on iOS 26).
-                section.contentInsets = .init(top: 50, leading: 12, bottom: 8, trailing: 12)
+                // Cells now scroll under the safe area / Dynamic
+                // Island. Top inset = ~60pt safe area + 36pt header
+                // pill + gap = ~110pt so the first row starts under
+                // the floating header.
+                section.contentInsets = .init(top: 110, leading: 12, bottom: 8, trailing: 12)
                 return section
             }
             let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)))
             let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)), subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 12
-            section.contentInsets = .init(top: 50, leading: 0, bottom: 280, trailing: 0)
+            section.contentInsets = .init(top: 110, leading: 0, bottom: 280, trailing: 0)
             return section
         }
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)

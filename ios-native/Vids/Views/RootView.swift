@@ -344,14 +344,11 @@ struct RootView: View {
             }
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
-                    // Extending into the top safe area triggered
-                    // recursive _updateVisibleCellsNow on iOS 26
-                    // (cells re-measured forever as the collection
-                    // view bounds changed). Top gray strip is the
-                    // lesser evil — fix later via a top blur layer
-                    // instead of letting the collection view extend
-                    // there directly.
-                    .ignoresSafeArea(.container, edges: .bottom)
+                    // Extend into the top safe area so cells scroll
+                    // under the Dynamic Island. The glass strip at
+                    // zIndex 17 covers the gap statically, the cells
+                    // blur through it as they pass.
+                    .ignoresSafeArea(.container, edges: [.top, .bottom])
                 if feed.currentVideos.isEmpty {
                     if let err = feed.lastError {
                         Text(err)
