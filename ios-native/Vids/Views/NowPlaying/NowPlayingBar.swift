@@ -16,7 +16,7 @@ struct NowPlayingBar: View {
 
             hairline.padding(.top, 8)
 
-            // Sub-row: -10, time, eye, LIVE/GO LIVE, audio, PiP, duration, +10
+            // Sub-row: skip ±10 + time labels + eye + LIVE + audio
             HStack(spacing: 8) {
                 skipBtn("-10") { Task { try? await services.api.skip(-10) } }
                 Text(positionLabel)
@@ -39,9 +39,7 @@ struct NowPlayingBar: View {
                         Task { try? await services.api.goLive() }
                     }
                 Spacer(minLength: 0)
-                speedButton
                 audioButton
-                pipButton
                 Text(durationLabel)
                     .font(Font.app(11, design: .monospaced))
                     .foregroundStyle(Color.appText.opacity(0.65))
@@ -54,24 +52,34 @@ struct NowPlayingBar: View {
 
             hairline
 
-            // Button row: monitor laptop / LG, maximize, fullscreen, mode, stop
-            HStack(spacing: 8) {
+            // Window-mode + extras row — equally spaced (no Spacer
+            // pushing stop to the trailing edge). speed + pip live
+            // here too so the sub-row above stays uncluttered.
+            HStack(spacing: 0) {
                 npBtn(active: playback.monitor == "laptop", systemName: "laptopcomputer") {
                     Task { try? await services.api.moveMonitor("laptop") }
                 }
+                Spacer(minLength: 0)
                 npBtn(active: playback.monitor == "lg", systemName: "display") {
                     Task { try? await services.api.moveMonitor("lg") }
                 }
+                Spacer(minLength: 0)
                 npBtn(active: playback.windowMode == "maximize", systemName: "arrow.up.left.and.arrow.down.right.square") {
                     Task { try? await services.api.toggleMaximize() }
                 }
+                Spacer(minLength: 0)
                 npBtn(active: playback.windowMode == "fullscreen", systemName: "rectangle.inset.filled") {
                     Task { try? await services.api.toggleFullscreen() }
                 }
+                Spacer(minLength: 0)
                 npBtn(active: phoneMode.mode != .computer, systemName: phoneMode.mode == .sync ? "iphone.gen3" : (phoneMode.mode == .phoneOnly ? "iphone.badge.play" : "macbook")) {
                     Task { await phoneMode.toggle(services: services) }
                 }
-                Spacer()
+                Spacer(minLength: 0)
+                speedButton
+                Spacer(minLength: 0)
+                pipButton
+                Spacer(minLength: 0)
                 npBtn(active: false, systemName: "stop.fill") {
                     Task { try? await services.api.stop() }
                 }
