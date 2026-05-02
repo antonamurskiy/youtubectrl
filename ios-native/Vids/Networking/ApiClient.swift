@@ -283,10 +283,18 @@ actor ApiClient {
         let parallel: String?
         let timeFragment: String?
         let cropUrl: String?
+        // Error path — server returns {ok:false, reason, hint} when
+        // FindMy isn't running / no pin / name missing. Decode them
+        // so the UI can show *why* there's no location.
+        let ok: Bool?
+        let reason: String?
+        let hint: String?
     }
 
-    func findmyFriend(force: Bool = false) async throws -> FindMyFriend {
-        var q: [URLQueryItem] = []
+    /// Server requires a `name` query param matching the FindMy
+    /// contact label (Maria's email prefix). Per CLAUDE.md.
+    func findmyFriend(name: String = "mchimishkyan", force: Bool = false) async throws -> FindMyFriend {
+        var q: [URLQueryItem] = [URLQueryItem(name: "name", value: name)]
         if force { q.append(URLQueryItem(name: "force", value: "1")) }
         return try await get("/api/findmy-friend", query: q)
     }

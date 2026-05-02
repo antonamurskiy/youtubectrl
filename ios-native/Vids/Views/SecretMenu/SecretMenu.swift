@@ -116,6 +116,11 @@ struct SecretMenu: View {
                         if let t = f.timeFragment {
                             Text(t).font(.caption.monospaced()).foregroundStyle(.secondary)
                         }
+                    } else if let f = friend, f.ok == false {
+                        Text(f.reason ?? "no data").foregroundStyle(.secondary)
+                        if let h = f.hint {
+                            Text(h).font(.caption).foregroundStyle(.secondary)
+                        }
                     } else {
                         Text("tap refresh").foregroundStyle(.secondary)
                     }
