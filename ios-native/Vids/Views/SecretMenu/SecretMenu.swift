@@ -15,6 +15,10 @@ struct SecretMenu: View {
     @State private var stealth: Bool = false
     @State private var friend: ApiClient.FindMyFriend? = nil
     @State private var refreshingFriend: Bool = false
+    /// True once the volume + sync offset + stealth fetches have
+    /// returned so sliders/toggles render at their real values
+    /// instead of animating from default (0/false) → server value.
+    @State private var loaded: Bool = false
 
     var body: some View {
         // iOS 26 Liquid Glass spacing — measured against stock Settings
@@ -44,11 +48,21 @@ struct SecretMenu: View {
         // Drop the system blue accent — propagates to Toggle, Slider,
         // Button, Picker checkmarks, etc.
         .tint(Color(hex: "#8ec07c"))
+        .opacity(loaded ? 1 : 0)
         .task {
+            // Run the cheap fetches in parallel so the menu populates in
+            // ~one round-trip instead of four serial ones. friend +
+            // outputs + bluetooth load lazily after.
+            async let v: () = loadVolume()
+            async let s: () = loadSyncOffset()
+            async let st: () = loadStealth()
+            _ = await (v, s, st)
+            // Disable the implicit appearance animation for this first
+            // value population so the sliders snap to their real values.
+            var t = Transaction()
+            t.disablesAnimations = true
+            withTransaction(t) { loaded = true }
             await loadOutputs()
-            await loadVolume()
-            await loadSyncOffset()
-            await loadStealth()
             await refreshFriend(force: false)
         }
     }
