@@ -354,6 +354,12 @@ struct RootView: View {
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
                     .ignoresSafeArea(.container, edges: [.top, .bottom])
+                    // SwiftUI iOS 26 modifier — propagates down to
+                    // the inner UIScrollView and disables the
+                    // scroll-edge media lensing that's been scaling
+                    // thumbnails as they cross the safe-area band.
+                    // .topEdgeEffect.isHidden alone wasn't enough.
+                    .scrollEdgeEffectStyle(nil, for: .top)
                 if feed.currentVideos.isEmpty {
                     if let err = feed.lastError {
                         Text(err)
