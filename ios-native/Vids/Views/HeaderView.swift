@@ -120,9 +120,15 @@ private struct TabsRow: View {
                     Button(action: { onTap(tab) }) {
                         Text(tab.label)
                             .font(Font.app(fontSize, weight: .semibold))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
+                            // Bigger inner padding + explicit hit
+                            // shape so each tab claims a 44pt tap
+                            // target. Without contentShape the
+                            // Button only hit-tests the painted text
+                            // bounding box, which was tiny.
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 10)
                             .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
+                            .contentShape(Capsule())
                     }
                     .buttonStyle(.plain)
                     .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
