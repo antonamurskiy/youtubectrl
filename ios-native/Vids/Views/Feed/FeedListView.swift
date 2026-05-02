@@ -174,26 +174,32 @@ struct FeedListView: UIViewRepresentable {
             // chosen font changes.
             let svcs = self.services
             let videoReg = UICollectionView.CellRegistration<UICollectionViewCell, Video> { cell, _, video in
-                cell.contentConfiguration = UIHostingConfiguration {
-                    VideoCellView(video: video)
-                        .environment(svcs)
-                        .environment(svcs.fonts)
-                        .environment(svcs.ui)
-                        .environment(svcs.playback)
-                        .font(Font.app(svcs.fonts.size))
+                UIView.performWithoutAnimation {
+                    cell.contentConfiguration = UIHostingConfiguration {
+                        VideoCellView(video: video)
+                            .environment(svcs)
+                            .environment(svcs.fonts)
+                            .environment(svcs.ui)
+                            .environment(svcs.playback)
+                            .font(Font.app(svcs.fonts.size))
+                    }
+                    .margins(.all, 0)
+                    cell.backgroundConfiguration = .clear()
+                    cell.layer.removeAllAnimations()
                 }
-                .margins(.all, 0)
-                cell.backgroundConfiguration = .clear()
             }
             let shortReg = UICollectionView.CellRegistration<UICollectionViewCell, Short> { cell, _, short in
-                cell.contentConfiguration = UIHostingConfiguration {
-                    ShortCellView(short: short)
-                        .environment(svcs)
-                        .environment(svcs.fonts)
-                        .font(Font.app(svcs.fonts.size))
+                UIView.performWithoutAnimation {
+                    cell.contentConfiguration = UIHostingConfiguration {
+                        ShortCellView(short: short)
+                            .environment(svcs)
+                            .environment(svcs.fonts)
+                            .font(Font.app(svcs.fonts.size))
+                    }
+                    .margins(.all, 0)
+                    cell.backgroundConfiguration = .clear()
+                    cell.layer.removeAllAnimations()
                 }
-                .margins(.all, 0)
-                cell.backgroundConfiguration = .clear()
             }
             dataSource = UICollectionViewDiffableDataSource<Section, Item>(collectionView: cv) { cv, indexPath, item in
                 switch item {
@@ -215,6 +221,20 @@ struct FeedListView: UIViewRepresentable {
                 snap.appendItems(shorts.map { .short($0) }, toSection: .shorts)
             }
             dataSource.apply(snap, animatingDifferences: false)
+        }
+
+        // Cells were appearing scaled-up and animating to identity
+        // because UIKit's default `appearance attributes` for newly
+        // dequeued cells under a CompositionalLayout in iOS 26 include
+        // a transient transform. Force the final transform on display.
+        func collectionView(_ collectionView: UICollectionView,
+                            willDisplay cell: UICollectionViewCell,
+                            forItemAt indexPath: IndexPath) {
+            UIView.performWithoutAnimation {
+                cell.transform = .identity
+                cell.alpha = 1
+                cell.layer.removeAllAnimations()
+            }
         }
 
         func collectionView(_ cv: UICollectionView, didSelectItemAt indexPath: IndexPath) {
