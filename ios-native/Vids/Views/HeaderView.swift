@@ -51,7 +51,7 @@ struct HeaderView: View {
                             searchTask?.cancel()
                             Task { await feed.search(searchText, api: services.api) }
                         }
-                        .frame(width: 110, alignment: .leading)
+                        .frame(width: 70, alignment: .leading)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
