@@ -62,8 +62,16 @@ struct HeaderView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .padding(.horizontal, 4)
+                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.pillHeight)
+                // Same outer glass capsule as the search + dots pills.
+                // Segmented control's own iOS 26 Liquid Glass + magnifier
+                // renders inside it — the small inner-bar artifact is
+                // unavoidable since clearing it kills the magnifier.
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
