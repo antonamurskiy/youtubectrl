@@ -124,6 +124,28 @@ struct TmuxWindow: Codable, Hashable, Identifiable {
     let name: String
     let active: Bool
     let title: String?
+
+    enum CodingKeys: String, CodingKey { case index, name, active, title }
+
+    // Custom decoder defaults missing/null fields so a single malformed
+    // tmux window broadcast (e.g. {"index":null,"active":false} mid-
+    // startup) doesn't blow up the entire PlaybackPayload decode and
+    // freeze every @Observable downstream (title, macStatus, etc).
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.index = (try? c.decode(Int.self, forKey: .index)) ?? -1
+        self.name  = (try? c.decode(String.self, forKey: .name)) ?? ""
+        self.active = (try? c.decode(Bool.self, forKey: .active)) ?? false
+        self.title = try? c.decode(String.self, forKey: .title)
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(index, forKey: .index)
+        try c.encode(name, forKey: .name)
+        try c.encode(active, forKey: .active)
+        try c.encodeIfPresent(title, forKey: .title)
+    }
 }
 
 struct PlaybackPayload: Codable {
