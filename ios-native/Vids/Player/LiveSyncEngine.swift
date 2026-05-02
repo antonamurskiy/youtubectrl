@@ -148,22 +148,24 @@ final class LiveSyncEngine {
         }
         let isSettled = settledTickCount >= settledSamplesNeeded
 
-        if calibPending, let last = lastSeekAt, Date().timeIntervalSince(last) >= postSeekSettleSec {
-            postSeekSamples.append(drift * 1000)
-            let recent = Array(postSeekSamples.suffix(stableSampleCount))
-            if recent.count >= stableSampleCount {
-                let mean = recent.reduce(0, +) / Double(recent.count)
-                let variance = recent.map { abs($0 - mean) }.max() ?? 0
-                if variance <= stableVarianceMs {
-                    biasMs += (mean * learningRate).rounded()
-                    calibPending = false
-                    postSeekSamples.removeAll()
-                    // Apply the new bias only if not yet settled.
-                    // Once settled, freezing bias prevents the
-                    // periodic micro-skip the user reported.
-                    if !isSettled {
-                        forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
-                    }
+        // Calibrate using the main 5-sample EMA (smoothedDriftMs),
+        // matching React's PhonePlayer.jsx:
+        //   seekBiasRef += round(smoothedDrift * 1000 * 0.7)
+        // The previous Swift port used a separate postSeekSamples
+        // array which has different smoothing characteristics and
+        // wasn't converging the way the React version does.
+        if calibPending, let last = lastSeekAt,
+           Date().timeIntervalSince(last) >= postSeekSettleSec,
+           samples.count >= stableSampleCount {
+            // Use the EMA window's own variance as the stability gate.
+            let recent = Array(samples.suffix(stableSampleCount))
+            let mean = recent.reduce(0, +) / Double(recent.count)
+            let variance = recent.map { abs($0 - mean) }.max() ?? 0
+            if variance <= stableVarianceMs {
+                biasMs += (smoothedDriftMs * learningRate).rounded()
+                calibPending = false
+                if !isSettled {
+                    forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
                 }
             }
         }
