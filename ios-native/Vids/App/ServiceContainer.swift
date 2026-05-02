@@ -79,6 +79,7 @@ final class ServiceContainer {
             }
         }
         self.liveSync.attach(host: self.avHost, clockOffset: 0)
+        self.liveSync.api = self.api
     }
 
     func start() async {

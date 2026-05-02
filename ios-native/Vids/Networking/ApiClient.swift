@@ -31,6 +31,13 @@ actor ApiClient {
         return try decoder.decode(T.self, from: data)
     }
 
+    /// Log line to the server's /api/client-log endpoint
+    /// (/tmp/ytctl-client.log). Used by LiveSyncEngine to surface
+    /// drift/bias/seek state in real time.
+    func clientLog(_ payload: [String: Any]) async throws {
+        try await post("/api/client-log", body: payload)
+    }
+
     private func post(_ path: String, body: [String: Any] = [:]) async throws {
         var req = URLRequest(url: url(path))
         req.httpMethod = "POST"

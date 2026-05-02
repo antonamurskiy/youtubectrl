@@ -95,6 +95,12 @@ final class LiveSyncEngine {
     private var serverPdtMs: Double = 0
     private var serverTsMs: Double = 0
 
+    /// When true, every tick POSTs its full state to /api/client-log
+    /// so I can `tail -f /tmp/ytctl-client.log` and tweak parameters
+    /// against real readings.
+    var debugLogging: Bool = true
+    var api: ApiClient?
+
     private func tick() {
         guard enabled, let host else { return }
         // Server's PDT now = serverPdtMs + (wall-clock since serverTs).
@@ -149,6 +155,23 @@ final class LiveSyncEngine {
                          && cooldownOk
         if shouldSeek {
             forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+        }
+
+        if debugLogging, let api {
+            let payload: [String: Any] = [
+                "tag": "livesync",
+                "rawDriftMs": Int(rawDriftMs.rounded()),
+                "smoothedMs": Int(smoothedDriftMs.rounded()),
+                "biasMs": Int(biasMs),
+                "mpvPdt": Int(mpvPdtNow),
+                "phonePdt": Int(phonePdt),
+                "elapsed": Int(elapsed),
+                "calibPending": calibPending,
+                "shouldSeek": shouldSeek,
+                "cooldownOk": cooldownOk,
+                "secondsSinceSeek": lastSeekAt.map { Int(Date().timeIntervalSince($0)) } ?? -1,
+            ]
+            Task { try? await api.clientLog(payload) }
         }
     }
 
