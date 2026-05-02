@@ -24,7 +24,7 @@ struct HeaderView: View {
     private static let pillFont: CGFloat = 12
 
     var body: some View {
-        GlassEffectContainer(spacing: 6) {
+        Group {
             HStack(spacing: 6) {
                 // Pill 1: search
                 HStack(spacing: 0) {
@@ -56,7 +56,7 @@ struct HeaderView: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(height: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .background(pillTint, in: Capsule())
 
                 // Pill 2: tabs — active highlight follows the theme.
                 TabsRow(activeTab: feed.activeTab,
@@ -68,7 +68,7 @@ struct HeaderView: View {
                 }
                 .padding(.horizontal, 6)
                 .frame(height: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .background(pillTint, in: Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -80,7 +80,7 @@ struct HeaderView: View {
                 .padding(.horizontal, 14)
                 .frame(height: Self.pillHeight)
                 .contentShape(Capsule())
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .background(pillTint, in: Capsule())
                 .onLongPressGesture(minimumDuration: 0.5) {
                     Haptics.success()
                     services.ui.secretMenuOpen = true
@@ -110,7 +110,7 @@ private struct TabsRow: View {
         // GlassEffectContainer lets the active tab pill morph through
         // glass between tabs — same Liquid Glass union that Apple uses
         // on the iOS 26 Camera mode picker.
-        GlassEffectContainer(spacing: 2) {
+        Group {
             HStack(spacing: 2) {
                 ForEach(FeedTab.allCases) { tab in
                     let active = activeTab == tab
@@ -143,9 +143,7 @@ private struct ActiveTabGlass: ViewModifier {
             content
                 // Active tab pill picks up the theme tint (tmux pane
                 // color or per-tab tint) instead of a fixed cream wash.
-                .glassEffect(.regular.tint(tint.opacity(0.45)).interactive(),
-                             in: Capsule())
-                .glassEffectID(id, in: ns)
+                .background(tint.opacity(0.45), in: Capsule())
         } else {
             content
         }
