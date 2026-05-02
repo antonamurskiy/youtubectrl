@@ -171,9 +171,24 @@ struct RootView: View {
                 // screen top down to the safe-area edge — header pill
                 // sits below.
                 GeometryReader { proxy in
+                    // Glass strip masked by a vertical gradient —
+                    // opaque at the screen top, fading to clear right
+                    // before the safe-area edge so cells scrolling
+                    // underneath blur smoothly into view instead of
+                    // hitting a hard horizontal line.
                     Rectangle()
                         .fill(.thinMaterial)
-                        .frame(height: proxy.safeAreaInsets.top)
+                        .frame(height: proxy.safeAreaInsets.top + 12)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black, location: 0),
+                                    .init(color: .black, location: 0.7),
+                                    .init(color: .clear, location: 1),
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
                         .ignoresSafeArea(.container, edges: .top)
                 }
                 .allowsHitTesting(false)
