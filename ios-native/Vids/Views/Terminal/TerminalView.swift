@@ -56,50 +56,6 @@ struct TerminalView: View {
             }
 
         }
-        // Tab strip lives as a top-trailing overlay so it can ignore
-        // the keyboard inset in isolation — putting it inside the
-        // ZStack tied it to the same layout pass as the SwiftTerm host
-        // and the keyboard pushed both up together.
-        .overlay(alignment: .topTrailing) {
-            if terminal.windows.count > 1 {
-                let activeIdx = terminal.windows.firstIndex(where: { $0.active }) ?? 0
-                let perTab: CGFloat = 64
-                // Tint the selected segment with the active tmux color
-                // (same color the rest of the app theme uses). Tinting
-                // is global via UISegmentedControl.appearance() — we
-                // refresh it whenever theme.activeTmuxTint changes.
-                Picker("Window", selection: Binding(
-                    get: { activeIdx },
-                    set: { newIdx in
-                        guard newIdx < terminal.windows.count, newIdx != activeIdx else { return }
-                        let w = terminal.windows[newIdx]
-                        optimisticallySelect(window: w)
-                        Task { try? await services.api.tmuxSelect(index: w.index) }
-                    }
-                )) {
-                    ForEach(Array(terminal.windows.enumerated()), id: \.offset) { idx, w in
-                        Text(w.name).tag(idx)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: perTab * CGFloat(terminal.windows.count))
-                .padding(.trailing, 8)
-                .padding(.top, 4)
-                .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
-                        if activeIdx < terminal.windows.count {
-                            renaming = terminal.windows[activeIdx]
-                        }
-                    }
-                )
-                .onAppear { applyTmuxTabTint() }
-                .onChange(of: theme.activeTmuxTint) { _, _ in applyTmuxTabTint() }
-                .onChange(of: fonts.label) { _, _ in applyTmuxTabTint() }
-                .onChange(of: fonts.size) { _, _ in applyTmuxTabTint() }
-                .ignoresSafeArea(.keyboard, edges: .bottom)
-            }
-        }
         .onDisappear {
             terminal.wasKeyboardOpenAtClose = terminal.keyboardOpen
         }
@@ -131,50 +87,10 @@ struct TerminalView: View {
         terminal.dismissKeyboard?()
     }
 
-    /// Tint the segmented Picker's selected pill with the active tmux
-    /// theme color so the strip visually tracks whichever pane the
-    /// user is on. Falls back to a neutral if no theme is set. Also
-    /// applies the user's chosen font to the Picker title text since
-    /// UISegmentedControl uses system font by default and doesn't
-    /// inherit SwiftUI's environment font.
-    private func applyTmuxTabTint() {
-        let tint: UIColor = {
-            if let c = theme.activeTmuxTint { return UIColor(c).withAlphaComponent(0.85) }
-            return UIColor(white: 0.45, alpha: 0.7)
-        }()
-        let app = UISegmentedControl.appearance()
-        app.selectedSegmentTintColor = tint
-        let f = fonts.font(size: 13)
-        app.setTitleTextAttributes([.font: f], for: .normal)
-        app.setTitleTextAttributes([.font: f], for: .selected)
-        // Force-refresh any visible segmented controls so the new
-        // tint + font take effect immediately. .appearance() only
-        // applies to newly-instantiated controls otherwise.
-        UIApplication.shared.connectedScenes
-            .compactMap { ($0 as? UIWindowScene)?.windows.first }
-            .forEach { $0.subviews.forEach { recolorSegmentedDescendants($0, tint: tint, font: f) } }
-    }
-
-    private func recolorSegmentedDescendants(_ v: UIView, tint: UIColor, font: UIFont) {
-        if let seg = v as? UISegmentedControl {
-            seg.selectedSegmentTintColor = tint
-            seg.setTitleTextAttributes([.font: font], for: .normal)
-            seg.setTitleTextAttributes([.font: font], for: .selected)
-        }
-        for sub in v.subviews { recolorSegmentedDescendants(sub, tint: tint, font: font) }
-    }
-
-    /// Optimistic local active-flag flip so the terminal background
-    /// retints the moment the user taps a tab, without waiting for
-    /// the next server broadcast (~1s).
-    private func optimisticallySelect(window w: TmuxWindow) {
-        terminal.windows = terminal.windows.map { existing in
-            TmuxWindow(index: existing.index,
-                       name: existing.name,
-                       active: existing.index == w.index,
-                       title: existing.title)
-        }
-    }
+    // Tab-strip tint + font helpers moved to TmuxTabStrip.swift; the
+    // strip itself is rendered by RootView as a sibling so its
+    // .ignoresSafeArea(.keyboard) is effective (was being carried up
+    // by parent layout when the keyboard opened).
 
     private func switchTmuxWindow(by delta: Int) {
         let windows = terminal.windows

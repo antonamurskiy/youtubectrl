@@ -14,6 +14,7 @@
 		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
 		20679D20FB8C8A779EC62D9F /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42457BC72FA994917802D752 /* MainTabView.swift */; };
 		22A39A9D83262B14E9665774 /* FontStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2465BFECA4E139AC71688AF1 /* FontStore.swift */; };
+		239458F878EE4972285AFC1C /* TmuxTabStrip.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F22D79B5DC8DD3E7DAA7599 /* TmuxTabStrip.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
 		285D684AC6072105BA50CB06 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */; };
 		29F1C20B3F44819AE9603C60 /* UIStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 581FDCC94E632C0CBFD956B7 /* UIStore.swift */; };
@@ -69,6 +70,7 @@
 		42457BC72FA994917802D752 /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
 		4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardObserver.swift; sourceTree = "<group>"; };
+		4F22D79B5DC8DD3E7DAA7599 /* TmuxTabStrip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TmuxTabStrip.swift; sourceTree = "<group>"; };
 		4F91E9E068675B931E6A9A39 /* ScrubPreviewOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubPreviewOverlay.swift; sourceTree = "<group>"; };
 		52D4C7D4575FAF706DB5953D /* QualityMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualityMenu.swift; sourceTree = "<group>"; };
 		55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveSyncEngine.swift; sourceTree = "<group>"; };
@@ -134,6 +136,7 @@
 				E3CFD3767B5F169D370E6215 /* ScrollZoneOverlay.swift */,
 				AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */,
 				2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */,
+				4F22D79B5DC8DD3E7DAA7599 /* TmuxTabStrip.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -423,6 +426,7 @@
 				1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */,
 				20679D20FB8C8A779EC62D9F /* MainTabView.swift in Sources */,
 				4F3BBD7873E99C1B5015A883 /* StatusDotsPill.swift in Sources */,
+				239458F878EE4972285AFC1C /* TmuxTabStrip.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

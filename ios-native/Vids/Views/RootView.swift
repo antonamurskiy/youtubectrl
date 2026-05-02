@@ -18,6 +18,7 @@ struct RootView: View {
     @Environment(FontStore.self) private var fonts
 
     @State private var npBarHeight: CGFloat = 0
+    @State private var renamingTmux: TmuxWindow? = nil
     @State private var npBarFrame: CGRect = .zero
     @Environment(\.horizontalSizeClass) private var hSize
 
@@ -193,6 +194,19 @@ struct RootView: View {
                     .zIndex(18)
             }
 
+            // Tmux tab strip — top-right, only when terminal is open.
+            // Sibling at RootView level (not inside TerminalView) so
+            // .ignoresSafeArea(.keyboard) actually pins it through
+            // soft-keyboard show/hide. Per-window rename target lifts
+            // up to RootView's renamingTmux state which TmuxTabStrip
+            // writes via Binding.
+            if terminal.open {
+                TmuxTabStrip(renaming: $renamingTmux)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                    .ignoresSafeArea(.keyboard, edges: .all)
+                    .zIndex(19)
+            }
+
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
@@ -205,6 +219,15 @@ struct RootView: View {
                 .zIndex(15)
                 .ignoresSafeArea()
 
+        }
+        .sheet(item: Binding(
+            get: { renamingTmux },
+            set: { renamingTmux = $0 }
+        )) { w in
+            TmuxRenamePopover(window: w, open: Binding(get: { renamingTmux != nil }, set: { if !$0 { renamingTmux = nil } }))
+                .presentationDetents([.height(360)])
+                .presentationDragIndicator(.visible)
+                .presentationBackground(.regularMaterial)
         }
         .sheet(isPresented: Binding(
             get: { ui.secretMenuOpen },
