@@ -10,10 +10,11 @@ import SwiftUI
 /// just above the bar's top edge.
 struct ScrubPreviewOverlay: View {
     @Environment(ScrubState.self) private var scrub
-    /// NP bar height (works via NPBarHeightKey). We don't need the full
-    /// frame — the bar always spans the screen bottom, so screen size +
-    /// npBarHeight is enough to compute where the scrubber track lives.
+    /// NP bar height (works via NPBarHeightKey).
     let barHeight: CGFloat
+    /// How far the NP bar is lifted off the screen bottom (e.g. tab
+    /// bar height when MainTabView's bar is showing). Default 0.
+    var bottomOffset: CGFloat = 0
 
     var body: some View {
         if scrub.active && barHeight > 0 {
@@ -40,8 +41,8 @@ struct ScrubPreviewOverlay: View {
         let lo: CGFloat = 8
         let hi: CGFloat = screen.width - tileW - 8
         let tileX: CGFloat = max(lo, min(hi, cx - tileW / 2))
-        // Bar sits at screen.height - barHeight; preview floats above.
-        let tileY: CGFloat = screen.height - barHeight - tileH - 28
+        // Bar sits at screen.height - barHeight - bottomOffset.
+        let tileY: CGFloat = screen.height - barHeight - bottomOffset - tileH - 28
 
         VStack(spacing: 6) {
             // Show the image at its natural aspect — let the IMAGE

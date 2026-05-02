@@ -128,7 +128,10 @@ struct RootView: View {
                     } action: { newValue in
                         npBarHeight = newValue
                     }
-                    .padding(.bottom, 56)   // tab-bar height
+                    // Tab bar only renders in the feed pane, not the
+                    // terminal pane. Drop the offset when terminal is
+                    // open so NPBar sits flush at the bottom.
+                    .padding(.bottom, terminal.open ? 0 : 56)
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                     .transition(.opacity)
                     .zIndex(10)
@@ -152,10 +155,30 @@ struct RootView: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
                 .zIndex(20)
 
-            // Floating top-right status pill — replaces the old
-            // HeaderView's status-dots cluster. Search + tabs moved
-            // to the bottom TabView (MainTabView).
+            // Top-edge live blur strip — masks cells scrolling under
+            // the Dynamic Island. Same shape we had before: hold full
+            // opacity for ~35% of the strip, fade to clear so the
+            // bottom edge is smooth.
             if !terminal.open {
+                GeometryReader { proxy in
+                    Rectangle()
+                        .fill(.regularMaterial)
+                        .frame(height: proxy.safeAreaInsets.top + 60)
+                        .mask(
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black, location: 0),
+                                    .init(color: .black, location: 0.55),
+                                    .init(color: .clear, location: 1),
+                                ],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .ignoresSafeArea(.container, edges: .top)
+                }
+                .allowsHitTesting(false)
+                .zIndex(17)
+
                 StatusDotsPill()
                     .padding(.trailing, 16)
                     .padding(.top, 8)
@@ -170,7 +193,8 @@ struct RootView: View {
             // Sibling overlay so the floating tile lives ABOVE the
             // NPBar's glass clip — same layer pattern AVKit uses for
             // its scrub preview thumbnail.
-            ScrubPreviewOverlay(barHeight: npBarHeight)
+            ScrubPreviewOverlay(barHeight: npBarHeight,
+                                bottomOffset: terminal.open ? 0 : 56)
                 .zIndex(15)
                 .ignoresSafeArea()
 
@@ -282,14 +306,15 @@ struct RootView: View {
     }
 
     private var fabBottomPadding: CGFloat {
-        // FABs only move based on whether keyboard is up. Terminal
-        // toggle alone (with keyboard down) shouldn't shift them.
         if terminal.keyboardOpen {
             return terminal.keyboardHeight + 16
         }
+        // Lifted by tab bar when feed pane is showing.
+        let tabBar: CGFloat = terminal.open ? 0 : 56
         // Just above the now-playing bar (~200pt rendered) when
         // playing, otherwise just above the home indicator.
-        return playback.playing ? 210 : 32
+        let baseAboveNP: CGFloat = playback.playing ? 210 : 32
+        return baseAboveNP + tabBar
     }
 
     // feedView + cycleFeedTab removed — feed lives in MainTabView.

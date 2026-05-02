@@ -57,6 +57,14 @@ struct MainTabView: View {
                 Task { await feed.load(tab: tab, api: services.api) }
             }
         }
+        // Belt-and-braces initial load — ServiceContainer.start()
+        // already loads .rec, but if mount races that or if the user
+        // first lands on a non-.rec tab we still want a fresh fetch.
+        .task {
+            if feed.currentVideos.isEmpty {
+                await feed.load(tab: feed.activeTab, api: services.api)
+            }
+        }
         // NowPlayingBar is NOT placed in .tabViewBottomAccessory —
         // that slot expects a small mini-player pill (Apple Music
         // collapsed style), and our NPBar is a full multi-row
