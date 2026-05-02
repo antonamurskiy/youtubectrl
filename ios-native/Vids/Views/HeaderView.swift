@@ -72,7 +72,10 @@ struct HeaderView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                // Outer pill is non-interactive — only the active
+                // inner tab is .interactive() so its magnifier touch
+                // tracking isn't fighting an outer glass tracker.
+                .glassEffect(.regular.tint(pillTint), in: Capsule())
                 .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
