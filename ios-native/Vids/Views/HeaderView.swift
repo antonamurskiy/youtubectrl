@@ -136,56 +136,83 @@ struct HeaderView: View {
         }
     }
 
-    /// Outer glass capsule (chrome) + a SECOND floating glass capsule
-    /// positioned over the active tab. The floating capsule uses
-    /// `.glassEffect(.regular.interactive(), in: Capsule())` with NO
-    /// fill — so the iOS 26 Liquid Glass material refracts/magnifies
-    /// the label sitting beneath it. Drag the strip and the floating
-    /// glass follows the finger; labels under it appear lensed.
+    /// Slack-style tabs pill:
+    ///  • outer tinted glass chrome (the "track")
+    ///  • inactive labels drawn flat behind
+    ///  • a floating Liquid Glass lens that LIFTS OUT of the chrome
+    ///    while dragging and contains the currently-hovered label,
+    ///    rendered bigger inside it
+    /// The lens is allowed to extend above the chrome (no outer clip).
     private var slackTabsPill: some View {
         let tabs = FeedTab.allCases
+        let isDragging = tabDragX != nil
+        // Which tab the lens is currently sitting over.
+        let lensTab: FeedTab = {
+            if let x = tabDragX, tabsStripWidth > 0 {
+                let segW = tabsStripWidth / CGFloat(tabs.count)
+                let idx = max(0, min(tabs.count - 1, Int(x / segW)))
+                return tabs[idx]
+            }
+            return feed.activeTab
+        }()
+
         return ZStack(alignment: .leading) {
-            // Layer 1 — bottom labels (always rendered).
+            // Chrome.
+            Capsule()
+                .fill(Color.clear)
+                .glassEffect(.regular.tint(pillTint), in: Capsule())
+                .frame(height: Self.pillHeight)
+
+            // Background labels — dimmed for the tab the lens sits
+            // over, since that label is re-rendered on top of the lens.
             HStack(spacing: 0) {
                 ForEach(tabs) { tab in
                     Text(tab.label)
                         .font(Font.app(Self.pillFont, weight: .semibold))
-                        .foregroundStyle(Color.appText.opacity(0.85))
+                        .foregroundStyle(
+                            tab == lensTab
+                                ? Color.appText.opacity(0)
+                                : Color.appText.opacity(0.65)
+                        )
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 8)
                         .contentShape(Capsule())
                         .onTapGesture { selectTab(tab) }
                 }
             }
+            .padding(.horizontal, 4)
+            .frame(height: Self.pillHeight)
 
-            // Layer 2 — floating Liquid Glass lens. Width = one tab
-            // segment. x-offset tracks drag if active, else snaps to
-            // active tab. .interactive() makes the glass press +
-            // refract under touch — that's the "magnifying glass."
+            // Floating lens with the lens-tab label INSIDE it. Label
+            // grows while dragging — looks like a magnifier.
             if tabsStripWidth > 0 {
                 let segW = tabsStripWidth / CGFloat(tabs.count)
-                let activeIdx = tabs.firstIndex(of: feed.activeTab) ?? 0
-                let restingX = CGFloat(activeIdx) * segW
-                let dragSnappedX: CGFloat = {
-                    guard let x = tabDragX else { return restingX }
-                    let idx = max(0, min(tabs.count - 1, Int(x / segW)))
-                    return CGFloat(idx) * segW
-                }()
+                let lensIdx = tabs.firstIndex(of: lensTab) ?? 0
+                let lensX = CGFloat(lensIdx) * segW + 4
+                let lensH = Self.pillHeight + (isDragging ? 18 : 0)
+                let lensYOffset: CGFloat = isDragging ? -14 : 0
+
                 Capsule()
-                    .fill(Color.white.opacity(0.001)) // invisible, gives glass a host shape
+                    .fill(Color.white.opacity(0.001))
                     .glassEffect(.regular.interactive(), in: Capsule())
-                    .frame(width: segW, height: Self.pillHeight - 8)
-                    .offset(x: dragSnappedX, y: 0)
+                    .overlay {
+                        Text(lensTab.label)
+                            .font(Font.app(Self.pillFont, weight: .semibold))
+                            .foregroundStyle(Color.appText)
+                            .scaleEffect(isDragging ? 1.18 : 1.0)
+                            .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.7),
+                                       value: isDragging)
+                    }
+                    .frame(width: segW, height: lensH)
+                    .offset(x: lensX, y: lensYOffset)
                     .animation(.interactiveSpring(response: 0.28, dampingFraction: 0.78),
-                               value: dragSnappedX)
+                               value: lensX)
+                    .animation(.interactiveSpring(response: 0.32, dampingFraction: 0.7),
+                               value: isDragging)
                     .allowsHitTesting(false)
             }
         }
-        .padding(.horizontal, 4)
         .frame(maxWidth: .infinity)
-        .frame(height: Self.pillHeight)
-        .glassEffect(.regular.tint(pillTint), in: Capsule())
-        .clipShape(Capsule())
         .background(
             GeometryReader { geo in
                 Color.clear
