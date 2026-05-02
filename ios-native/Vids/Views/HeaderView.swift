@@ -114,14 +114,17 @@ private struct TabsRow: View {
     let highlightTint: Color
     let onTap: (FeedTab) -> Void
     @Namespace private var ns
+    @State private var tabFrames: [Int: CGRect] = [:]
 
     var body: some View {
         // GlassEffectContainer lets the active tab pill morph through
-        // glass between tabs — same Liquid Glass union that Apple uses
-        // on the iOS 26 Camera mode picker.
+        // glass between tabs — same Liquid Glass union Apple uses on
+        // the iOS 26 Camera mode picker. Tab widths captured via
+        // PreferenceKey so a single drag gesture across the row can
+        // pick the tab under the finger and animate the pill there.
         GlassEffectContainer(spacing: 2) {
             HStack(spacing: 2) {
-                ForEach(FeedTab.allCases) { tab in
+                ForEach(Array(FeedTab.allCases.enumerated()), id: \.1) { idx, tab in
                     let active = activeTab == tab
                     Text(tab.label)
                         .font(Font.app(fontSize, weight: .semibold))
@@ -129,18 +132,37 @@ private struct TabsRow: View {
                         .padding(.vertical, 10)
                         .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
                         .contentShape(Capsule())
-                        // Glass under the active label tracks touch
-                        // for the iOS 26 magnifier effect. Buttons
-                        // were eating the drag — onTapGesture only
-                        // fires on tap-up so the glass still gets
-                        // raw touch events.
+                        .background(GeometryReader { proxy in
+                            Color.clear.preference(key: TabFrameKey.self,
+                                                   value: [idx: proxy.frame(in: .named("tabsRow"))])
+                        })
                         .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
                         .onTapGesture { onTap(tab) }
                 }
             }
             .fixedSize()
         }
+        .coordinateSpace(name: "tabsRow")
+        .onPreferenceChange(TabFrameKey.self) { tabFrames = $0 }
+        .gesture(
+            DragGesture(minimumDistance: 8, coordinateSpace: .named("tabsRow"))
+                .onChanged { v in
+                    let all = FeedTab.allCases
+                    if let hit = tabFrames.first(where: { _, f in f.contains(v.location) })?.key,
+                       hit < all.count {
+                        let tab = all[hit]
+                        if tab != activeTab { onTap(tab) }
+                    }
+                }
+        )
         .animation(.spring(response: 0.32, dampingFraction: 0.85), value: activeTab)
+    }
+}
+
+private struct TabFrameKey: PreferenceKey {
+    static var defaultValue: [Int: CGRect] = [:]
+    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
     }
 }
 
