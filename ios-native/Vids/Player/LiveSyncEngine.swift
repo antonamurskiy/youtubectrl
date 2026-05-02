@@ -21,7 +21,11 @@ final class LiveSyncEngine {
     // and outlier 3600s, occasional small seeks are fine.
     let seekThresholdSec: Double = 0.5
     let seekCooldownSec: Double = 2.5
-    let smoothingWindow: Int = 5
+    // 10-sample window absorbs per-tick mpv-buffer jitter that
+    // otherwise made smoothed drift wobble +/- 15ms each second.
+    // React used 5 because their decode pipeline is smoother; we
+    // need more averaging on AVPlayer.
+    let smoothingWindow: Int = 10
     let stableVarianceMs: Double = 80
     // Bumped 10 → 3600 — initial drift can legitimately be 20-60s
     // when phone first joins (AVPlayer's HLS live-edge buffer vs
