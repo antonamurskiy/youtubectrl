@@ -43,6 +43,7 @@ final class LiveSyncEngine {
     private(set) var rawDriftMs: Double = 0
     private(set) var lastSeekAt: Date? = nil
     private var settledTickCount: Int = 0
+    private var seekCount: Int = 0
     private(set) var calibPending: Bool = false
     private var samples: [Double] = []
     private var postSeekSamples: [Double] = []
@@ -129,9 +130,14 @@ final class LiveSyncEngine {
             smoothedDriftMs = samples.reduce(0, +) / Double(samples.count)
         }
 
+        // First 3 seeks get a tighter 1s cooldown — bias-learning loop
+        // converges faster when initial corrections fire close together.
+        // After that, 2.5s prevents bouncing inside AVPlayer jitter floor.
+        // (Match PhonePlayer.jsx exactly.)
+        let cooldownSec: Double = seekCount < 3 ? 1.0 : seekCooldownSec
         let cooldownOk: Bool = {
             guard let last = lastSeekAt else { return true }
-            return Date().timeIntervalSince(last) >= seekCooldownSec
+            return Date().timeIntervalSince(last) >= cooldownSec
         }()
 
         // Calibrate from post-seek samples once stable. After
@@ -148,36 +154,40 @@ final class LiveSyncEngine {
         }
         let isSettled = settledTickCount >= settledSamplesNeeded
 
-        // Calibrate using the main 5-sample EMA (smoothedDriftMs),
-        // matching React's PhonePlayer.jsx:
-        //   seekBiasRef += round(smoothedDrift * 1000 * 0.7)
-        // The previous Swift port used a separate postSeekSamples
-        // array which has different smoothing characteristics and
-        // wasn't converging the way the React version does.
+        // Calibration check — match PhonePlayer.jsx exactly:
+        //   if calibPending && sinceLastSeek > 2s && samples >= 3
+        //   if (max - min < 0.08 && abs(smoothed) > 0.05):
+        //     bias += round(smoothed * 1000 * 0.7)
+        //     calibPending = false; calibrated = true
+        var calibrated = false
         if calibPending, let last = lastSeekAt,
            Date().timeIntervalSince(last) >= postSeekSettleSec,
            samples.count >= stableSampleCount {
-            // Use the EMA window's own variance as the stability gate.
-            let recent = Array(samples.suffix(stableSampleCount))
-            let mean = recent.reduce(0, +) / Double(recent.count)
-            let variance = recent.map { abs($0 - mean) }.max() ?? 0
-            if variance <= stableVarianceMs {
+            let smoothedSec = smoothedDriftMs / 1000
+            let minS = samples.min() ?? 0
+            let maxS = samples.max() ?? 0
+            let spread = (maxS - minS) / 1000  // seconds
+            if spread < 0.08, abs(smoothedSec) > 0.05 {
                 biasMs += (smoothedDriftMs * learningRate).rounded()
                 calibPending = false
-                if !isSettled {
-                    forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
-                }
+                calibrated = true
             }
         }
 
-        // Seek if drift exceeds threshold AND cooldown elapsed AND
-        // drift isn't an outlier (AVPlayer reports stale PDT during
-        // HLS load — drifts of -56 years are noise, not signal).
-        let shouldSeek = (abs(drift) >= seekThresholdSec)
-                         && (abs(drift) < outlierThresholdSec)
+        // shouldSeek: fire if calibration just completed (apply bias)
+        // OR if smoothed drift > 0.2s (settled-residual catcher).
+        // Use SMOOTHED drift not raw — raw bounces inside AVPlayer
+        // jitter and was causing my port to chase noise.
+        // Outlier guard: skip if smoothed > 1hr (PDT garbage).
+        let shouldSeek = (calibrated || abs(smoothedDriftMs) > 200)
+                         && abs(smoothedDriftMs) < outlierThresholdSec * 1000
                          && cooldownOk
+                         && !isSettled
+
         if shouldSeek {
-            forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+            let target = mpvPdtNow + biasMs
+            seekCount += 1
+            forceSeek(targetPdtMs: target, host: host)
         }
 
         if debugLogging, let api {
@@ -201,7 +211,10 @@ final class LiveSyncEngine {
     private func forceSeek(targetPdtMs: Double, host: AVPlayerHost) {
         lastSeekAt = Date()
         calibPending = true
-        postSeekSamples.removeAll()
+        // Clear samples on seek so post-seek measurements aren't
+        // polluted by pre-seek drift readings (PhonePlayer.jsx clears
+        // driftSamplesRef.current on every seek).
+        samples.removeAll()
         Task { @MainActor in
             _ = await host.seek(toDate: targetPdtMs)
         }
