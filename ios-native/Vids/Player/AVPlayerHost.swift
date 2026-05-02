@@ -211,13 +211,16 @@ final class AVPlayerHost: NSObject {
     }
 
     func seek(toSeconds s: Double) async {
-        // Use loose tolerance so AVPlayer can land on the nearest
-        // keyframe — strict zero tolerance fails on streams (Rumble
-        // among them) that don't support fine-grained byte-range
-        // seeking on every offset.
+        // Tight ±100ms tolerance so VOD sync seeks actually land near
+        // the requested timestamp. Earlier `.positiveInfinity` on both
+        // sides let AVPlayer pick ANY keyframe in the video — that's
+        // why VOD sync seeks felt like they jumped randomly. Allow a
+        // small window because strict zero can fail on streams that
+        // don't support fine-grained byte-range seeks (Rumble).
+        let tol = CMTime(seconds: 0.1, preferredTimescale: 600)
         await player.seek(to: CMTime(seconds: s, preferredTimescale: 600),
-                          toleranceBefore: .positiveInfinity,
-                          toleranceAfter: .positiveInfinity)
+                          toleranceBefore: tol,
+                          toleranceAfter: tol)
     }
 
     /// Frame-accurate (HLS PDT-based) seek. Used by LiveSyncEngine.

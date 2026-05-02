@@ -15,6 +15,7 @@ final class ServiceContainer {
     let ui: UIStore
     let avHost: AVPlayerHost
     let liveSync: LiveSyncEngine
+    let vodSync: VodSyncEngine
     let phoneMode: PhoneModeStore
     let keyboard: KeyboardObserver
     let fonts: FontStore
@@ -30,6 +31,7 @@ final class ServiceContainer {
         self.ui = UIStore()
         self.avHost = AVPlayerHost()
         self.liveSync = LiveSyncEngine()
+        self.vodSync = VodSyncEngine()
         self.phoneMode = PhoneModeStore()
         self.keyboard = KeyboardObserver()
         self.fonts = MainActor.assumeIsolated { FontStore() }
@@ -45,6 +47,7 @@ final class ServiceContainer {
                     self.liveSync.setServerPDT(pdt, serverTs: ts)
                     self.liveSync.updateClockOffset(self.ws.clockOffset)
                 }
+                self.vodSync.updateClockOffset(self.ws.clockOffset)
                 if let url = p.url, !url.isEmpty, url != self.playback.storyboardForUrl {
                     self.fetchStoryboard(for: url)
                 }
@@ -80,6 +83,7 @@ final class ServiceContainer {
         }
         self.liveSync.attach(host: self.avHost, clockOffset: 0)
         self.liveSync.api = self.api
+        self.vodSync.attach(host: self.avHost, playback: self.playback, clockOffset: 0, api: self.api)
     }
 
     func start() async {

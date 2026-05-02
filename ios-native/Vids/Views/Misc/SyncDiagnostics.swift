@@ -11,16 +11,22 @@ struct SyncDiagnostics: View {
     var body: some View {
         if phoneMode.mode == .sync {
             VStack(alignment: .trailing, spacing: 2) {
-                if !playback.phoneSyncOk {
-                    row("status", "no sync data")
-                    row("hint", "server PDT N/A")
+                if playback.isLive {
+                    if !playback.phoneSyncOk {
+                        row("status", "no sync data")
+                        row("hint", "server PDT N/A")
+                    } else {
+                        row("drift", driftLabel(services.liveSync.rawDriftMs))
+                        row("smooth", fmt(services.liveSync.smoothedDriftMs, suffix: "ms"))
+                        row("bias", fmt(services.liveSync.biasMs, suffix: "ms"))
+                        row("seek", lastSeekAge)
+                    }
+                    row("live", "yes")
                 } else {
-                    row("drift", driftLabel(services.liveSync.rawDriftMs))
-                    row("smooth", fmt(services.liveSync.smoothedDriftMs, suffix: "ms"))
-                    row("bias", fmt(services.liveSync.biasMs, suffix: "ms"))
-                    row("seek", lastSeekAge)
+                    row("drift", fmt(services.vodSync.driftSec * 1000, suffix: "ms"))
+                    row("seek", vodLastSeekAge)
+                    row("vod", "yes")
                 }
-                if playback.isLive { row("live", "yes") }
             }
             .font(.system(size: 10, design: .monospaced))
             .foregroundStyle(Color.appText.opacity(0.85))
@@ -52,6 +58,12 @@ struct SyncDiagnostics: View {
 
     private var lastSeekAge: String {
         guard let t = services.liveSync.lastSeekAt else { return "—" }
+        let age = Date().timeIntervalSince(t)
+        return "\(Int(age))s ago"
+    }
+
+    private var vodLastSeekAge: String {
+        guard let t = services.vodSync.lastSeekAt else { return "—" }
         let age = Date().timeIntervalSince(t)
         return "\(Int(age))s ago"
     }

@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import AVFoundation
 
 enum PhoneMode: String { case computer, sync, phoneOnly }
 
@@ -9,6 +10,40 @@ final class PhoneModeStore {
     var loading: Bool = false
     var lastUrl: String? = nil
     var lastError: String? = nil
+
+    /// Current iPhone audio output route. Tracked here so NowPlayingBar
+    /// can show the phone's output (AirPods, phone speaker, etc.) when
+    /// audio is coming out of the phone, instead of the Mac's output.
+    var phoneAudioOutput: String = ""
+    var phoneAudioPortType: String = ""
+
+    @ObservationIgnored
+    private var routeObserver: NSObjectProtocol?
+
+    init() {
+        refreshPhoneAudioRoute()
+        routeObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.refreshPhoneAudioRoute()
+        }
+    }
+
+    deinit {
+        if let routeObserver { NotificationCenter.default.removeObserver(routeObserver) }
+    }
+
+    private func refreshPhoneAudioRoute() {
+        let route = AVAudioSession.sharedInstance().currentRoute
+        guard let out = route.outputs.first else {
+            phoneAudioOutput = ""
+            phoneAudioPortType = ""
+            return
+        }
+        phoneAudioOutput = out.portName
+        phoneAudioPortType = out.portType.rawValue
+    }
 
     @MainActor
     func toggle(services: ServiceContainer) async {
@@ -31,6 +66,33 @@ final class PhoneModeStore {
 
     @MainActor
     func switchToSync(services: ServiceContainer) async {
+        // Flip the mode flag immediately so the audio-destination
+        // badge + view-mode button update on tap, not 5-10s later
+        // when /api/watch-on-phone returns. On error we revert below.
+        let prevMode = mode
+        mode = .sync
+        // Warm-path: same URL still loaded on AVPlayer from a previous
+        // sync session. Just unmute + play instead of refetching the
+        // stream URL. Lets the user toggle Phone↔PC instantly without
+        // re-spawning a download / re-resolving via yt-dlp.
+        if lastUrl != nil, lastUrl == services.playback.url,
+           services.avHost.player.currentItem != nil {
+            services.avHost.setMuted(false)
+            services.avHost.play()
+            services.avHost.enableVolumeIntercept()
+            // Re-show inline layer so video/PiP can render.
+            // (Frame gets sized correctly by PhonePlayerView on next layout.)
+            if services.playback.isLive {
+                services.liveSync.reset()
+                services.liveSync.start()
+                services.vodSync.stop()
+            } else {
+                services.liveSync.stop()
+                services.vodSync.start()
+            }
+            await applyHeadphoneRouting(services: services)
+            return
+        }
         do {
             let resp = try await services.api.watchOnPhone()
             // Prefer DASH composition when both URLs are present, else
@@ -46,10 +108,10 @@ final class PhoneModeStore {
                 services.avHost.load(url: u, position: resp.seconds ?? 0, autoplay: true, muted: true)
             } else {
                 lastError = "no streamUrl from server"
+                mode = prevMode
                 return
             }
             lastUrl = resp.streamUrl ?? resp.videoUrl
-            mode = .sync
             services.avHost.enableVolumeIntercept()
             // Now Playing on lock screen — title/channel come from the playback store
             services.avHost.setNowPlaying(
@@ -63,6 +125,10 @@ final class PhoneModeStore {
             if resp.isLive == true {
                 services.liveSync.reset()
                 services.liveSync.start()
+                services.vodSync.stop()
+            } else {
+                services.liveSync.stop()
+                services.vodSync.start()
             }
             // Headphone-side detection: in sync mode play on whichever
             // device has the headphones, mute the other. iPhone wins
@@ -70,6 +136,7 @@ final class PhoneModeStore {
             await applyHeadphoneRouting(services: services)
         } catch {
             lastError = String(describing: error)
+            mode = prevMode
         }
     }
 
@@ -140,15 +207,24 @@ final class PhoneModeStore {
 
     @MainActor
     func switchToComputer(services: ServiceContainer) async {
+        // Keep AVPlayer warm — pause + mute + hide instead of
+        // stop()/replaceCurrentItem. Re-entering sync then just
+        // unmutes + plays an already-loaded item, no yt-dlp resolve
+        // and no DASH composition rebuild. Cuts mode-switch latency
+        // from ~5-10s to <1s.
         services.liveSync.stop()
+        services.vodSync.stop()
         services.avHost.disableVolumeIntercept()
         services.avHost.stopProgressUpdates()
-        services.avHost.stop()
-        services.avHost.clearNowPlaying()
+        services.avHost.pause()
+        services.avHost.setMuted(true)
+        // Hide the inline layer so PiP can't show the (now stale)
+        // frame on top of mpv's resumed video. Stop PiP if active.
+        services.avHost.setLayerFrame(.zero, visible: false)
+        if services.avHost.pipActive { services.avHost.stopPip() }
         try? await services.api.stopPhoneStream()
         // Restore Mac mute state — sync mode may have muted it.
         try? await services.api.setMacMute(false)
-        services.avHost.setMuted(false)
         mode = .computer
     }
 

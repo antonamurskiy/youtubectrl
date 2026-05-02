@@ -209,6 +209,11 @@ app.post("/api/audio-output", async (req, res) => {
   if (!name) return res.status(400).json({ error: "Missing name" });
   try {
     await execP(`SwitchAudioSource -s "${name.replace(/"/g, '\\"')}"`);
+    // Update the cached value the WS broadcast reads, otherwise the
+    // now-playing bar shows the previous device for up to 3s until
+    // the cache TTL fires.
+    _cachedAudioOut = name;
+    _cachedAudioOutAt = Date.now();
     res.json({ ok: true });
   } catch { res.status(500).json({ error: "Switch failed" }); }
 });
@@ -1959,6 +1964,8 @@ app.post("/api/play", async (req, res) => {
         execFile("osascript", ["-e", 'tell application "System Events" to set visible of process "mpv" to true'], () => {});
         nowPlaying = url;
         addToHistory(url, reqTitle || "", reqChannel || "", reqThumb || "");
+        // Pre-resolve sync-mode stream URLs in the background.
+        if (!isLive) prewarmWatchOnPhone(url);
         // Reset position for this video to prevent stale data from corrupting resume
         const entry = historyMap.get(url);
         if (entry && resumePos <= 0) { entry.position = 0; entry.duration = 0; }
@@ -2218,6 +2225,9 @@ app.post("/api/play", async (req, res) => {
     };
     applyWindowMode();
     addToHistory(url, reqTitle || "", reqChannel || "", reqThumb || "");
+    // Pre-resolve sync-mode stream URLs in the background. Cuts the
+    // first /api/watch-on-phone tap from 5-10s (cold yt-dlp) to <1s.
+    if (!isLive) prewarmWatchOnPhone(url);
 
     // Wait for video to load, then set up progress (remove from history if failed)
     if (progressInterval) { clearInterval(progressInterval); progressInterval = null; }
@@ -3537,43 +3547,38 @@ app.get("/api/history", async (_req, res) => {
           v.savedDuration = h.duration;
         }
       }
-      // Re-sort videos that have local timestamps to top, by recency
-      // (phone-only mode saves timestamps locally but doesn't update YouTube's history)
-      const withTs = [];
-      const withoutTs = [];
-      for (const v of videos) {
-        const ts = historyMap.get(v.url)?.timestamp;
-        if (ts) { v._localTs = ts; withTs.push(v); } else { withoutTs.push(v); }
-      }
-      withTs.sort((a, b) => b._localTs - a._localTs);
-      withTs.forEach(v => delete v._localTs);
-      videos = [...withTs, ...withoutTs];
-      // Deduplicate by URL
-      const seenUrls = new Set();
-      videos = videos.filter(v => { if (seenUrls.has(v.url)) return false; seenUrls.add(v.url); return true; });
-      // Merge local-only history (Rumble, phone-only YouTube, etc) by timestamp
+      // Build a unified timeline ordered strictly by recency. Each
+      // YouTube history entry gets a synthesized timestamp from its
+      // YT-feed position (now minus N×60s where N is its index), and
+      // any locally-tracked timestamp overrides that. Local-only
+      // entries (Rumble, phone-only) merge in by their own timestamp.
+      // This avoids the previous "all local on top, all YT below"
+      // split that made things look out of order.
       const now = Date.now();
-      const ytTimestamps = videos.map((v, i) => historyMap.get(v.url)?.timestamp || (now - i * 60000));
+      // Deduplicate YT videos before timestamping.
+      const seenYtUrls = new Set();
+      videos = videos.filter(v => { if (seenYtUrls.has(v.url)) return false; seenYtUrls.add(v.url); return true; });
+      const itemsWithTs = videos.map((v, i) => {
+        const local = historyMap.get(v.url)?.timestamp;
+        return { v, ts: local || (now - i * 60000) };
+      });
+      // Local-only entries (URLs not in YT history): Rumble, phone-only.
       const allUrls = new Set(videos.map(v => v.url));
-      const nonYt = history.filter(h => !allUrls.has(h.url));
-      for (const h of nonYt) {
-        const ts = h.timestamp || 0;
-        let insertIdx = videos.length;
-        for (let i = 0; i < videos.length; i++) {
-          if (ytTimestamps[i] < ts) { insertIdx = i; break; }
-        }
+      for (const h of history) {
+        if (allUrls.has(h.url)) continue;
         const ytMatch = h.url.match(/v=([\w-]+)/);
-        videos.splice(insertIdx, 0, {
+        const v = {
           id: ytMatch ? ytMatch[1] : h.url,
           title: h.title || h.url,
           thumbnail: h.thumbnail || (ytMatch ? `https://i.ytimg.com/vi/${ytMatch[1]}/hqdefault.jpg` : ""),
           duration: "", channel: h.channel || "", views: 0, url: h.url,
           savedPosition: h.position || 0, savedDuration: h.duration || 0,
           platform: h.url.includes("rumble.com") ? "rumble" : undefined,
-        });
-        ytTimestamps.splice(insertIdx, 0, ts);
+        };
+        itemsWithTs.push({ v, ts: h.timestamp || 0 });
       }
-      return res.json(videos);
+      itemsWithTs.sort((a, b) => b.ts - a.ts);
+      return res.json(itemsWithTs.map(x => x.v));
     }
   } catch (err) {
     console.error("YouTube history API failed:", err.message);
@@ -3642,6 +3647,39 @@ let _cachedAudioOutAt = 0;
 /// peripheral — null when output is built-in / wired. Refreshed
 /// alongside _cachedAudioOut in isProtectedAudioOutput().
 let _cachedAudioBattery = null;
+async function refreshAudioOutCache() {
+  try {
+    _cachedAudioOut = (await execP("SwitchAudioSource -c -t output")).stdout.trim();
+    _cachedAudioOutAt = Date.now();
+    _cachedAudioBattery = null;
+    try {
+      const want = (_cachedAudioOut || "").toLowerCase();
+      if (!want.includes("macbook") && !want.includes("lg ") && !want.includes("display")) {
+        const [{ stdout }, batteryMap] = await Promise.all([
+          execP("blueutil --paired --format json", {
+            env: { ...process.env, BLUEUTIL_USE_SYSTEM_PROFILER: "1" }
+          }),
+          getBluetoothBatteryMap(),
+        ]);
+        const devices = JSON.parse(stdout);
+        const match = devices.find(d => {
+          const n = (d.name || "").toLowerCase();
+          return n && (want.includes(n) || n.includes(want));
+        });
+        const bat = match ? batteryMap[(match.address || "").toLowerCase()] : null;
+        if (bat?.battery != null) _cachedAudioBattery = bat.battery;
+      }
+    } catch {}
+  } catch {}
+}
+// Keep _cachedAudioOut fresh so the WS playback broadcast always
+// includes the current Mac audio output device. Without this, the
+// cache only updated when the volume-button intercept fired or a
+// user-driven switch hit /api/audio-output, leaving the iOS now
+// playing bar showing a generic speaker on fresh server boots.
+refreshAudioOutCache();
+setInterval(refreshAudioOutCache, 5000);
+
 async function isProtectedAudioOutput() {
   try {
     const now = Date.now();
@@ -3903,7 +3941,21 @@ app.post("/api/watch-on-phone", async (req, res) => {
       mpvCommand(["get_property", "duration"]).catch(() => null),
       mpvCommand(["get_property", "stream-path"]).catch(() => null),
     ]);
-    const seconds = Math.floor(posR?.data || 0);
+    // mpv's time-pos races with /api/play's resume seek (which runs
+    // in a background IIFE after loadfile). When iOS calls watch-on-
+    // phone right after a history-tap, time-pos may still be 0 even
+    // though we're about to seek mpv to the saved position. Prefer
+    // historyMap's saved position when mpv reports something earlier
+    // than it.
+    const mpvSec = posR?.data || 0;
+    const histEntry = historyMap.get(nowPlaying);
+    const histPos = histEntry?.position || 0;
+    const histDur = histEntry?.duration || 0;
+    const useHist = histPos > 0 && histDur > 0
+                    && histPos < histDur * 0.95
+                    && histPos < histDur - 10
+                    && mpvSec < histPos - 5;
+    const seconds = Math.floor(useHist ? histPos : mpvSec);
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
@@ -3960,28 +4012,10 @@ app.post("/api/watch-on-phone", async (req, res) => {
       });
     }
 
-    // Cached yt-dlp resolution. Stays valid for ~5 min server-side.
-    const cached = _watchOnPhoneCache.get(nowPlaying);
-    let urls;
-    if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) {
-      urls = cached.urls;
-    } else {
-      const { stdout } = await execFileP(
-        "yt-dlp",
-        ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", nowPlaying],
-        { timeout: 15000 }
-      );
-      urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
-      // Cache isLive=false alongside URLs — the format-string we used
-      // to resolve only matches non-live videos, so a successful
-      // resolution proves it's VOD. This skips the 5-8s `--print
-      // is_live` probe on next sync re-engage.
-      _watchOnPhoneCache.set(nowPlaying, { urls, at: Date.now(), isLive: false });
-      if (_watchOnPhoneCache.size > 50) {
-        const oldest = _watchOnPhoneCache.keys().next().value;
-        _watchOnPhoneCache.delete(oldest);
-      }
-    }
+    // Cached yt-dlp resolution + in-flight dedupe. When /api/play
+    // kicked off a prewarm a few seconds ago, this awaits that same
+    // promise instead of firing a second yt-dlp.
+    const urls = (await resolveWatchOnPhone(nowPlaying)) || [];
     // Use the duration we already read in parallel above; fall back
     // to history when mpv is between sources.
     const durationSec = durR?.data || historyMap.get(nowPlaying)?.duration || 0;
@@ -4397,6 +4431,67 @@ const _storyboardCache = new Map(); // videoId -> { url, cols, rows, interval } 
 // at 50 entries with a 5-min TTL. Cleared in /api/play below to avoid
 // serving stale URLs across a video change.
 const _watchOnPhoneCache = new Map();
+// Disk-backed mirror so server restarts don't force a fresh yt-dlp
+// resolve for every video the user has played recently. ~50 entries
+// at most so the file stays small.
+const _watchOnPhoneCacheFile = path.join(__dirname, ".watch-on-phone-cache.json");
+function _saveWatchOnPhoneCache() {
+  try {
+    const entries = Array.from(_watchOnPhoneCache.entries()).slice(-50);
+    fs.writeFileSync(_watchOnPhoneCacheFile, JSON.stringify(entries));
+  } catch {}
+}
+try {
+  if (fs.existsSync(_watchOnPhoneCacheFile)) {
+    const raw = JSON.parse(fs.readFileSync(_watchOnPhoneCacheFile, "utf-8"));
+    const now = Date.now();
+    for (const [k, v] of raw) {
+      if (v?.at && (now - v.at) < 6 * 60 * 60 * 1000) _watchOnPhoneCache.set(k, v);
+    }
+  }
+} catch {}
+
+// In-flight yt-dlp resolves keyed by URL. /api/watch-on-phone awaits
+// these instead of spawning a parallel duplicate — without this, a
+// fast tap sequence (play → sync) fires two concurrent yt-dlp procs
+// and the user pays the slower of the two latencies.
+const _watchOnPhoneInflight = new Map();
+
+async function resolveWatchOnPhone(url) {
+  const cached = _watchOnPhoneCache.get(url);
+  if (cached && (Date.now() - cached.at) < 5 * 60 * 1000) return cached.urls;
+  if (_watchOnPhoneInflight.has(url)) return _watchOnPhoneInflight.get(url);
+  const promise = (async () => {
+    try {
+      const { stdout } = await execFileP(
+        "yt-dlp",
+        ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", url],
+        { timeout: 15000 }
+      );
+      const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
+      if (urls.length) {
+        _watchOnPhoneCache.set(url, { urls, at: Date.now(), isLive: false });
+        if (_watchOnPhoneCache.size > 50) {
+          const oldest = _watchOnPhoneCache.keys().next().value;
+          _watchOnPhoneCache.delete(oldest);
+        }
+        _saveWatchOnPhoneCache();
+      }
+      return urls;
+    } finally {
+      _watchOnPhoneInflight.delete(url);
+    }
+  })();
+  _watchOnPhoneInflight.set(url, promise);
+  return promise;
+}
+
+// Pre-resolve a VOD's stream URLs in the background so the next
+// /api/watch-on-phone tap is sub-second instead of 5-10s.
+async function prewarmWatchOnPhone(url) {
+  if (!url) return;
+  await resolveWatchOnPhone(url).catch(() => {});
+}
 const STORYBOARD_CACHE_MAX = 50;
 app.get("/api/storyboard", async (req, res) => {
   const { videoId } = req.query;

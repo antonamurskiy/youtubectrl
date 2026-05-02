@@ -16,3 +16,4 @@ bin/audio-mute
 .apns-tokens.json
 .apns-key.p8
 .tmux-colors.json
+.watch-on-phone-cache.json

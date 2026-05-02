@@ -237,25 +237,103 @@ struct NowPlayingBar: View {
 
     private var audioButton: some View {
         Button(action: { ui.audioSheetOpen = true }) {
-            HStack(spacing: 3) {
-                Image(systemName: audioOutputSymbol)
-                    .font(Font.app(14))
-                    .foregroundStyle(Color.appText.opacity(0.65))
+            HStack(spacing: 4) {
+                if !audioOutputShortName.isEmpty {
+                    Text(audioOutputShortName)
+                        .font(Font.app(10, weight: .medium))
+                        .foregroundStyle(Color.appText.opacity(0.55))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 110, alignment: .trailing)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let pct = playback.audioBattery {
                     Text("\(pct)")
                         .font(Font.app(9, weight: .semibold, design: .monospaced))
                         .foregroundStyle(audioBatteryColor(pct))
+                }
+                // Stack: device icon + tiny destination badge so it's
+                // clear whether the AirPods/headphones are paired to
+                // the Mac or the iPhone.
+                ZStack(alignment: .bottomTrailing) {
+                    Image(systemName: audioOutputSymbol)
+                        .font(Font.app(14))
+                        .foregroundStyle(Color.appText.opacity(0.65))
+                    Image(systemName: audioDestinationSymbol)
+                        .font(Font.app(7, weight: .heavy))
+                        .foregroundStyle(Color.appText.opacity(0.85))
+                        .padding(2)
+                        .background(Color(hex: "#282828"))
+                        .clipShape(Circle())
+                        .offset(x: 4, y: 3)
                 }
             }
         }
         .buttonStyle(.plain)
     }
 
+    /// Whose audio device is being SHOWN — must match the source the
+    /// label/icon resolved from. Only phoneOnly mode reads from the
+    /// iPhone's own AVAudioSession route; sync + computer both show
+    /// the Mac's output, so the badge has to be laptop in both.
+    private var audioDestinationSymbol: String {
+        phoneMode.mode == .phoneOnly ? "iphone" : "laptopcomputer"
+    }
+
+    /// Source name for the audio button. In sync/phoneOnly modes the
+    /// audio is coming out of the iPhone — show the iPhone's current
+    /// route. In computer mode, show the Mac's output.
+    /// Where audio is actually coming out:
+    ///   - phoneOnly: iPhone's AVPlayer plays → use the iPhone's route
+    ///   - computer / sync: mpv on the Mac plays (sync mutes one side
+    ///     based on which has headphones, but the Mac is still the
+    ///     authoritative source for the audio device label) → use the
+    ///     Mac's output device.
+    private var audioOutputName: String {
+        if phoneMode.mode == .phoneOnly { return phoneMode.phoneAudioOutput }
+        return playback.audioOutput
+    }
+
+    /// Compact label for the bar — strip "<name>'s" possessive prefix
+    /// and trailing "Speakers"/"Headphones" so the label fits beside
+    /// the icon. Full name still shows in the audio sheet.
+    private var audioOutputShortName: String {
+        var n = audioOutputName
+        if let r = n.range(of: #"^[A-Za-z]+(?:'|\u{2019})s\s+"#, options: .regularExpression) {
+            n.removeSubrange(r)
+        }
+        if let r = n.range(of: #"\s+(Speakers|Headphones)$"#, options: .regularExpression) {
+            n.removeSubrange(r)
+        }
+        return n.trimmingCharacters(in: .whitespaces)
+    }
+
     /// Map the active audio output device name to an SF Symbol —
     /// covers AirPods family, headphones, HomePod, AirPlay, built-in
     /// speaker, and external display speakers.
     private var audioOutputSymbol: String {
-        let n = playback.audioOutput.lowercased()
+        // Phone-side modes: prefer the route's portType for an exact
+        // mapping (Receiver = phone speaker, BuiltInSpeaker = phone
+        // speaker, etc) before falling back to name-substring matching.
+        if phoneMode.mode == .phoneOnly {
+            switch phoneMode.phoneAudioPortType {
+            case "Receiver": return "iphone"
+            case "BuiltInSpeaker": return "iphone"
+            case "Headphones": return "headphones"
+            case "BluetoothA2DPOutput", "BluetoothHFP", "BluetoothLE":
+                let n = phoneMode.phoneAudioOutput.lowercased()
+                if n.contains("airpods max") { return "airpodsmax" }
+                if n.contains("airpods pro") { return "airpodspro" }
+                if n.contains("airpods")     { return "airpods" }
+                if n.contains("beats")       { return "beats.headphones" }
+                return "headphones"
+            case "AirPlay": return "airplayaudio"
+            case "HDMI": return "tv"
+            case "USBAudio": return "headphones"
+            default: break
+            }
+        }
+        let n = audioOutputName.lowercased()
         if n.contains("airpods max") { return "airpodsmax" }
         if n.contains("airpods pro") { return "airpodspro" }
         if n.contains("airpods")     { return "airpods" }

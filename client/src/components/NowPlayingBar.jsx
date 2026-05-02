@@ -176,8 +176,24 @@ function AudioOutputButton() {
         setTimeout(refreshOutputs, 2000)
       }).catch(() => addToast('Failed'))
   }
+  // Compact label for the bar — strip "Anton's", trailing "Speakers",
+  // collapse whitespace, hard-cap width. Full name is in aria-label
+  // and the popover.
+  const shortName = (current || '')
+    .replace(/^[A-Za-z]+'s\s+/i, '')
+    .replace(/\s+(Speakers|Headphones)$/i, '')
+    .trim()
   return (
     <>
+      {shortName && (
+        <span style={{
+          fontSize: 'var(--font-sm)', color: 'var(--text-dim)',
+          marginRight: 4, whiteSpace: 'nowrap', maxWidth: 110,
+          overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {shortName}
+        </span>
+      )}
       {batText && (
         <span style={{ fontSize: 'var(--font-sm)', color: batColor, marginRight: -4, whiteSpace: 'nowrap' }}>
           {batText}

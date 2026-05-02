@@ -257,6 +257,114 @@ widget too). For plugins, register in `MainViewController`'s
 `capacitorDidLoad()` and add `_ = MyPlugin.self` anchor in
 `AppDelegate`.
 
+### Native iOS app (`ios-native/Vids`) — separate target
+
+The Capacitor shell at `ios-app/` is the dual-client web wrapper. The
+PURE-NATIVE iOS app lives at `ios-native/Vids` (SwiftUI + `@Observable`
+stores, no WebView). Same backend, different UI runtime. See the
+`Dual clients kept` memory note — both stay.
+
+#### VodSyncEngine
+
+Sibling to `LiveSyncEngine`. Lives at `ios-native/Vids/Player/VodSyncEngine.swift`.
+Started by `PhoneModeStore.switchToSync` when `resp.isLive == false`,
+stopped on `switchToComputer` and on the live branch.
+
+Algorithm (matches PhonePlayer.jsx VOD sync loop):
+- 1Hz tick. `mpvPos = playback.interpolatedPosition(now: clockOffset:)`.
+  `phonePos = host.currentTimeSeconds`. `drift = mpvPos - phonePos`.
+- Hard-seek to `mpvPos + biasSec` when `|drift| > 0.2s` AND cooldown OK
+  AND not settled. Settled = `|drift| < 0.15s` for 4 consecutive ticks
+  (then freeze seeks — stops periodic micro-skip at steady state).
+- Self-calibrating bias: `biasSec` starts at 0.5, updated by
+  `drift × 0.7` each post-seek measurement (taken ≥2s after seek so
+  AVPlayer has settled). Converges to AVPlayer's actual seek-settle
+  latency in 2-3 cycles. Clamped to [-2, +5] seconds.
+- Mirrors mpv pause/resume on AVPlayer (`pb.paused` → `host.pause/play`).
+- 1.5s post-`start()` settle skip — early `currentTime` reads come back
+  as 0 and would trigger phantom big-drift seeks back to start.
+- Skips entirely when `pb.isLive` or `pb.duration <= 0` or paused.
+
+State (strong refs to `host` / `playback` / `api`): `@Observable` types
+under Swift 5.9 macros are unreliable as `weak` — the optional weak var
+read as nil even with the underlying object alive. Engine lives for app
+lifetime via ServiceContainer so retain cycles aren't a concern.
+
+Diagnostic overlay: `SyncDiagnostics` shows `drift / seek / vod` for
+VOD sessions and `drift / smooth / bias / seek / live` for live. Visible
+only when `phoneMode.mode == .sync`.
+
+Debug logging: every tick POSTs to `/api/client-log` (gated on
+`debugLogging` const, default true). `tail -f /tmp/ytctl-client.log |
+grep vodsync` shows live drift/bias/willSeek/calibrated state.
+
+#### AVPlayer seek tolerance — read this
+
+`AVPlayerHost.seek(toSeconds:)` MUST use a small tolerance, not
+`.positiveInfinity`. With `±∞` tolerance AVPlayer lands on whatever
+keyframe is "convenient" — anywhere in the video, often far from the
+target. The bias-learning loop measures noise instead of latency and
+never converges; user sees "seeks to wrong direction / random jumps".
+
+Use `CMTime(seconds: 0.1, preferredTimescale: 600)` for both
+`toleranceBefore` and `toleranceAfter`. Strict zero can fail on streams
+without fine-grained byte-range seeks (Rumble), but ±100ms is safe and
+keeps VOD sync convergent.
+
+LiveSyncEngine seeks via `AVPlayerItem.seek(to: Date)`, which is
+PDT-frame-accurate by construction (HLS `#EXT-X-PROGRAM-DATE-TIME`
+tags) — no tolerance issue there.
+
+#### History tab refresh on play
+
+`FeedStore` caches each tab's videos and only reloads on `tab.activate`
+or pull-to-refresh. Without an explicit invalidation, a just-played
+video doesn't move to the top of History until the user re-opens the
+tab. Hook in `RootView.onChange(of: playback.url)`:
+```
+Task { await feed.load(tab: .history, api: services.api) }
+```
+runs alongside `phoneMode.reloadForCurrentVideo` on every URL change.
+
+Server-side `/api/history` builds a unified-recency timeline: each
+YouTube history entry gets a synthesized timestamp from its YT-feed
+position (`now - i*60s`), overridden by `historyMap[url].timestamp`
+when present. Local-only entries (Rumble, phone-only) merge in by
+their own timestamps. Single sort, no "local-on-top + everything else
+below" split.
+
+#### Adding a new Swift file to the native target
+
+Use the `xcodeproj` Ruby gem
+(`gem install --user-install xcodeproj`) to add the file reference
++ build phase entry in `ios-native/Vids.xcodeproj/project.pbxproj`.
+Manually-created Swift files in the filesystem do not auto-add to
+the Xcode target — they compile only after the pbxproj edit. Pattern:
+```ruby
+require 'xcodeproj'
+proj = Xcodeproj::Project.open('ios-native/Vids.xcodeproj')
+target = proj.targets.find { |t| t.name == 'Vids' }
+group = proj.main_group.find_subpath('Vids/Player', false)
+ref = group.new_reference('NewFile.swift')
+target.add_file_references([ref])
+proj.save
+```
+
+#### iOS native app build/install/launch
+
+```bash
+DEVICE=00008150-001241D11EF2401C
+xcodebuild -project ios-native/Vids.xcodeproj -scheme Vids -configuration Debug \
+  -destination "id=$DEVICE" -allowProvisioningUpdates build
+APP=/Users/antonamurskiy/Library/Developer/Xcode/DerivedData/Vids-dpaerczlwtmtjjabkzienyhhksqi/Build/Products/Debug-iphoneos/Vids.app
+xcrun devicectl device install app --device "$DEVICE" "$APP"
+xcrun devicectl device process launch --device "$DEVICE" com.antonamurskiy.vids
+```
+DerivedData path is stable per project. SourceKit reliably emits
+`Cannot find type X in scope` warnings for cross-file types in this
+project — those are indexer noise and don't reflect build state.
+Trust `BUILD SUCCEEDED` from xcodebuild.
+
 ### Server lifecycle & macOS permissions
 
 The server uses `blueutil` (Bluetooth) and `osascript` (Accessibility /
@@ -548,6 +656,66 @@ For `isLive: true` (or `post_live`):
 - **Live stream server-side detection**: if frontend doesn't send `isLive` flag, server checks via `yt-dlp --print is_live`
 - Phone player positioned below Dynamic Island (`env(safe-area-inset-top)`)
 - iOS lock screen media controls via Media Session API (`useMediaSession` hook) — silent audio loop (`public/silent.m4a`), checks mpv pause state before toggling to prevent double-toggle.
+
+#### Watch-on-phone latency mitigations (server-side)
+
+`/api/watch-on-phone`'s yt-dlp `--get-url` resolve is the dominant cost (~3-8s cold). Three layers fight it:
+
+1. **Disk-backed cache** at `.watch-on-phone-cache.json` (gitignored). The
+   in-memory `_watchOnPhoneCache` Map persists to disk on every write,
+   loaded on boot, 6h TTL. Without this, every server restart wiped the
+   cache and the next sync tap paid the full yt-dlp cost again.
+2. **In-flight dedupe** — `resolveWatchOnPhone(url)` keys in-progress
+   resolves by URL. A play→sync sequence kicks off a prewarm on /api/play,
+   then the watch-on-phone tap awaits that same promise instead of firing
+   a parallel duplicate yt-dlp.
+3. **Prewarm on /api/play** — for VODs, /api/play kicks off
+   `prewarmWatchOnPhone(url)` in the background after `addToHistory`. By
+   the time the user taps sync, the resolve is usually done.
+
+#### Resume race in /api/watch-on-phone (read this)
+
+`/api/play` for a VOD spawns mpv (or loadfiles into existing mpv) and
+issues the resume seek inside a background IIFE — mpv's `time-pos` is
+0 for ~500ms-2s after the call returns. iOS's `.onChange(of: playback.url)`
+in RootView fires `phoneMode.reloadForCurrentVideo` immediately on the
+WS broadcast, which calls `/api/watch-on-phone` while mpv is still at 0.
+That used to make the AVPlayer load at 0 instead of the saved position.
+
+Fix: `/api/watch-on-phone` checks `historyMap.get(url).position` and
+prefers it over mpv's `time-pos` when:
+```
+histPos > 0 && histDur > 0
+  && histPos < histDur * 0.95
+  && histPos < histDur - 10
+  && mpvSec < histPos - 5     // mpv hasn't seeked yet
+```
+The `mpvSec < histPos - 5` guard means we only override mpv when it's
+clearly behind the saved position — never overrides a legitimate live
+mpv position that happens to be lower than the saved one.
+
+#### Audio device label + destination badge in NowPlayingBar
+
+The audio button in `NowPlayingBar.swift` shows `[short device name]
+[battery%] [device icon] + tiny destination badge`. Source rules:
+
+- `phoneMode.mode == .phoneOnly` → reads from `phoneMode.phoneAudioOutput`
+  / `phoneAudioPortType` (the iPhone's AVAudioSession route, refreshed on
+  `AVAudioSession.routeChangeNotification`). Badge: `iphone`.
+- `.computer` and `.sync` → reads from `playback.audioOutput` (the Mac's
+  `SwitchAudioSource -c`). Badge: `laptopcomputer`.
+
+Critical: **the badge MUST match whose output the label is sourced from.**
+An earlier version showed `iphone` in sync mode while the label was
+the Mac's AirPods name → user saw "AirPods on iPhone" when AirPods were
+actually on the Mac.
+
+Mac-side `_cachedAudioOut` requires a periodic refresh — it's only
+auto-populated by the volume-button intercept's `isProtectedAudioOutput()`
+gate, which only fires on actual button presses. Without a refresher
+the WS broadcast sent `audioOutput: null` until the first volume press.
+Fix: `refreshAudioOutCache()` runs on boot + every 5s + inline on every
+`/api/audio-output` POST.
 
 ### Live Sync Architecture (READ THIS BEFORE TOUCHING LIVE SYNC)
 

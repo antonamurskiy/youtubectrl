@@ -344,6 +344,10 @@ struct RootView: View {
             // the AVPlayer with the new URL — otherwise PiP keeps showing
             // the previous content's last frame.
             Task { await phoneMode.reloadForCurrentVideo(services: services) }
+            // Refresh history so the just-played video moves to the top.
+            // The feed is cached per-tab; without this it would still show
+            // the order from the last time the user opened the History tab.
+            Task { await feed.load(tab: .history, api: services.api) }
         }
         .task { theme.setTabTint(for: feed.activeTab) }
     }

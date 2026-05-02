@@ -44,6 +44,7 @@
 		B286EBE1F4C705F0CCA021AF /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865103F6DE2AF3C66792596A /* Skeleton.swift */; };
 		B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */; };
 		B41C2EC4A91F9FA1A1F3E9F2 /* ClaudeQuickReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */; };
+		B98F89D0EAD16E1B574D9254 /* VodSyncEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6CDB7CD36EB586715CB7925 /* VodSyncEngine.swift */; };
 		BBF6D487F7176B512230EC73 /* TerminalStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 346B82D17260E7978B885929 /* TerminalStore.swift */; };
 		C277191434F21FEEE7B87B05 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C1FBE05CCBF27CF3B24D26B /* Haptics.swift */; };
 		C3B59EFA6E8035C00EB557DA /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 65572894BBBB3AB5F3216CEA /* AppDelegate.swift */; };
@@ -92,6 +93,7 @@
 		98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeQuickReply.swift; sourceTree = "<group>"; };
 		9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlaybackStore.swift; sourceTree = "<group>"; };
 		9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ToastHUD.swift; sourceTree = "<group>"; };
+		A6CDB7CD36EB586715CB7925 /* VodSyncEngine.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = VodSyncEngine.swift; sourceTree = "<group>"; };
 		AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalView.swift; sourceTree = "<group>"; };
 		BA16E099AF62AF37E5C3C310 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		C01B92142190D3825B2F82AE /* FeedListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedListView.swift; sourceTree = "<group>"; };
@@ -240,6 +242,7 @@
 			children = (
 				DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */,
 				55F9F28A732C88F4A3A6BCD0 /* LiveSyncEngine.swift */,
+				A6CDB7CD36EB586715CB7925 /* VodSyncEngine.swift */,
 			);
 			path = Player;
 			sourceTree = "<group>";
@@ -435,6 +438,7 @@
 				239458F878EE4972285AFC1C /* TmuxTabStrip.swift in Sources */,
 				9D204D82A64B5115FEE0C322 /* TmuxStripWindowHost.swift in Sources */,
 				9F5DF1C34C6C547DAC0916D4 /* SyncDiagnostics.swift in Sources */,
+				B98F89D0EAD16E1B574D9254 /* VodSyncEngine.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
