@@ -35,12 +35,15 @@ final class PhoneModeStore {
             let resp = try await services.api.watchOnPhone()
             // Prefer DASH composition when both URLs are present, else
             // single streamUrl (HLS for live, MP4 for VOD).
+            // Load muted=true so the iPhone speaker never fires
+            // even briefly while applyHeadphoneRouting is in flight.
+            // Routing then unmutes if the phone has headphones.
             if let v = resp.videoUrl, let a = resp.audioUrl,
                let vu = URL(string: v), let au = URL(string: a) {
                 try await services.avHost.loadDASH(videoURL: vu, audioURL: au, durationHint: resp.durationSec ?? 0,
-                                                    position: resp.seconds ?? 0, autoplay: true, muted: false)
+                                                    position: resp.seconds ?? 0, autoplay: true, muted: true)
             } else if let s = resp.streamUrl, let u = URL(string: s) {
-                services.avHost.load(url: u, position: resp.seconds ?? 0, autoplay: true, muted: false)
+                services.avHost.load(url: u, position: resp.seconds ?? 0, autoplay: true, muted: true)
             } else {
                 lastError = "no streamUrl from server"
                 return
@@ -149,30 +152,21 @@ final class PhoneModeStore {
         mode = .computer
     }
 
-    /// In sync mode, route audio to whichever side has headphones
-    /// connected and mute the other so the user doesn't get double
-    /// audio. iPhone wins ties (its AVPlayer is the rendering surface).
+    /// In sync mode, route audio to one side only. Mac is the
+    /// default playback device. Phone takes over only when phone
+    /// itself has headphones attached (BT A2DP/HFP, wired, USB).
+    /// This avoids the "iPhone speaker doubles Mac audio" failure
+    /// when AirPods/Blackshark are on the Mac and iPhone has nothing.
     @MainActor
     func applyHeadphoneRouting(services: ServiceContainer) async {
         let phoneHasPhones = services.avHost.hasHeadphonesAttached
-        let macInfo = try? await services.api.macAudioInfo()
-        let macHasPhones = macInfo?.isHeadphones ?? false
+        let phoneTakesOver = phoneHasPhones
 
-        // Decision matrix:
-        //   phone-only  → unmute phone, mute Mac
-        //   mac-only    → mute phone, unmute Mac
-        //   both        → unmute phone (iPhone wins), mute Mac
-        //   neither     → unmute both (use whichever's louder)
-        let phoneActive = phoneHasPhones || (!phoneHasPhones && !macHasPhones)
-        let macActive = macHasPhones && !phoneHasPhones
-
-        services.avHost.setMuted(!phoneActive)
-        try? await services.api.setMacMute(!macActive)
+        services.avHost.setMuted(!phoneTakesOver)
+        try? await services.api.setMacMute(phoneTakesOver)
 
         await services.ui.toast(
-            phoneActive && !macActive ? "Audio: phone (\(phoneHasPhones ? "headphones" : "speaker"))"
-            : macActive ? "Audio: Mac (\(macInfo?.current ?? "headphones"))"
-            : "Audio: phone + Mac"
+            phoneTakesOver ? "Audio: phone (headphones)" : "Audio: Mac"
         )
     }
 }
