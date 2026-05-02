@@ -16,24 +16,9 @@ struct ScrubPreviewOverlay: View {
     let barHeight: CGFloat
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            // Debug breadcrumb so we can tell which link is broken.
-            // Always visible while scrubbing: state truthiness, percent,
-            // bar height. If this doesn't show at all, scrub.active
-            // isn't being mutated. If it shows with barH=0, the
-            // height preference isn't reaching us.
-            if scrub.active {
-                Text("active=\(scrub.active) pct=\(String(format: "%.2f", scrub.pct)) barH=\(Int(barHeight)) hasImg=\(scrub.image != nil ? "Y" : "N")")
-                    .font(.caption2.monospaced())
-                    .padding(6)
-                    .background(.red)
-                    .foregroundStyle(.white)
-                    .position(x: 200, y: 80)
-            }
-            if scrub.active && barHeight > 0 {
-                content(scrub: scrub)
-                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
-            }
+        if scrub.active && barHeight > 0 {
+            content(scrub: scrub)
+                .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .bottom)))
         }
     }
 
