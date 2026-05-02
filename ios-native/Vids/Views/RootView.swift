@@ -170,17 +170,21 @@ struct RootView: View {
                 // the gray gap above the FeedListView. Extends from
                 // screen top down to the safe-area edge — header pill
                 // sits below.
+                // Solid color gradient (NO .thinMaterial, NO glass) —
+                // any blur/material modifier above scrolling content
+                // applies iOS 26's lensing curve which distorts the
+                // cells passing underneath.
                 GeometryReader { proxy in
-                    Rectangle()
-                        .fill(.thinMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 60)
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .clear],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .ignoresSafeArea(.container, edges: .top)
+                    LinearGradient(
+                        colors: [
+                            theme.resolvedSurface,
+                            theme.resolvedSurface.opacity(0.92),
+                            Color.clear,
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: proxy.safeAreaInsets.top + 50)
+                    .ignoresSafeArea(.container, edges: .top)
                 }
                 .allowsHitTesting(false)
                 .zIndex(17)
