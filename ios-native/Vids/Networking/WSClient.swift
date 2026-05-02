@@ -7,26 +7,17 @@ enum WSMessage {
     case claude(ClaudePayload)
 }
 
-@Observable
 final class WSClient {
     var host: String
-    @ObservationIgnored private var task: URLSessionWebSocketTask?
-    @ObservationIgnored private var session: URLSession
-    @ObservationIgnored private var reconnectAttempts = 0
-    @ObservationIgnored private var pingState: [Double] = []
-    @ObservationIgnored private var pendingPing: Double?
-    @ObservationIgnored private(set) var clockOffset: Double = 0
-    /// Public connection state — debug overlay reads this. Updated
-    /// from the receive/connect/failure paths.
-    var connected: Bool = false
-    var lastMessageAt: Date? = nil
-    var messagesReceived: Int = 0
-    var lastError: String? = nil
-    var typeCounts: [String: Int] = [:]
-    var lastDecodeFailType: String? = nil
+    private var task: URLSessionWebSocketTask?
+    private var session: URLSession
+    private var reconnectAttempts = 0
+    private var pingState: [Double] = []
+    private var pendingPing: Double?
+    private(set) var clockOffset: Double = 0
 
-    @ObservationIgnored var onMessage: ((WSMessage) -> Void)?
-    @ObservationIgnored var onConnected: ((Bool) -> Void)?
+    var onMessage: ((WSMessage) -> Void)?
+    var onConnected: ((Bool) -> Void)?
 
     init(host: String) {
         self.host = host
@@ -49,14 +40,9 @@ final class WSClient {
         if parts.count > 1, let port = Int(parts[1]) { c.port = port }
         c.path = "/ws/sync"
         c.queryItems = [URLQueryItem(name: "proto", value: "2")]
-        guard let url = c.url else {
-            self.lastError = "bad url"
-            return
-        }
-        NSLog("[WSClient] connecting to %@", url.absoluteString)
+        guard let url = c.url else { return }
         task = session.webSocketTask(with: url)
         task?.resume()
-        connected = true
         onConnected?(true)
         receiveLoop()
         sendPing()
@@ -67,14 +53,9 @@ final class WSClient {
             guard let self else { return }
             switch result {
             case .success(let msg):
-                self.messagesReceived += 1
-                self.lastMessageAt = Date()
                 self.handle(msg)
                 self.receiveLoop()
-            case .failure(let err):
-                NSLog("[WSClient] receive failure: %@", String(describing: err))
-                self.lastError = String(describing: err)
-                self.connected = false
+            case .failure:
                 self.onConnected?(false)
                 self.task = nil
                 let attempt = min(self.reconnectAttempts, 6)
@@ -88,19 +69,11 @@ final class WSClient {
     private func handle(_ msg: URLSessionWebSocketTask.Message) {
         guard case .string(let text) = msg, let data = text.data(using: .utf8) else { return }
         guard let any = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = any["type"] as? String else {
-            typeCounts["<unknown>", default: 0] += 1
-            return
-        }
-        typeCounts[type, default: 0] += 1
+              let type = any["type"] as? String else { return }
         switch type {
         case "playback":
-            do {
-                let payload = try JSONDecoder().decode(PlaybackPayload.self, from: data)
+            if let payload = try? JSONDecoder().decode(PlaybackPayload.self, from: data) {
                 onMessage?(.playback(payload))
-            } catch {
-                lastDecodeFailType = "playback: \(error)"
-                NSLog("[WSClient] playback decode FAILED: %@", String(describing: error))
             }
         case "tmux":
             let windows = (try? JSONDecoder().decode([String: [TmuxWindow]].self, from: payloadData(any: any, key: "tmuxWindows"))) ?? [:]
