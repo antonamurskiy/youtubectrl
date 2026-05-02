@@ -103,9 +103,12 @@ struct HeaderView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                // Pin Picker height directly — clearing UISegmentedControl's
+                // backgroundImage erased its intrinsic content size,
+                // so SwiftUI expanded it to fill the screen.
+                .frame(height: 32)
                 .padding(.horizontal, 6)
-                .padding(.vertical, 6)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, minHeight: Self.pillHeight, maxHeight: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
