@@ -232,7 +232,14 @@ struct SecretMenu: View {
         cardSection("Mac") {
             Toggle("Keep awake", isOn: Binding(
                 get: { playback.macStatus.keepAwake ?? false },
-                set: { v in Task { try? await services.api.keepAwake(v) } }
+                set: { v in
+                    // Optimistic local update so the Toggle commits
+                    // immediately — server's macStatus broadcast lags
+                    // by up to 10s and the binding would otherwise
+                    // snap back to the stale `false`.
+                    playback.macStatus.keepAwake = v
+                    Task { try? await services.api.keepAwake(v) }
+                }
             ))
             actionRow("Lock Mac", icon: "lock") {
                 Task { try? await services.api.lockMac(); await ui.toast("Mac locked") }
