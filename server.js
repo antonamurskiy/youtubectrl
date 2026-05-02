@@ -4920,14 +4920,26 @@ app.get("/api/findmy-friend", async (req, res) => {
     // (where FM lives). In stealth mode FM is parked on a non-visible
     // aerospace workspace; capture by CGWindowID instead.
     async function snapFindMy() {
-      if (findmyStealth) {
-        const wid = await findmyWindowId();
-        if (wid) {
-          await execFileP("screencapture", ["-l", String(wid), "-x", FINDMY_OCR_PNG]);
+      // Try ladder of capture strategies until one works:
+      //  1. stealth + window-id (off-screen workspace 1)
+      //  2. window-id (always works if the window is on-screen)
+      //  3. display 2 (LG UltraFine when connected)
+      //  4. display 1 (fallback for laptop-only mode — the user
+      //     unplugged the LG, so display 2 doesn't exist)
+      const wid = await findmyWindowId();
+      const attempts = [];
+      if (findmyStealth && wid) attempts.push(["-l", String(wid)]);
+      if (wid) attempts.push(["-l", String(wid)]);
+      attempts.push(["-D", "2"]);
+      attempts.push(["-D", "1"]);
+      let lastErr = null;
+      for (const args of attempts) {
+        try {
+          await execFileP("screencapture", [...args, "-x", FINDMY_OCR_PNG]);
           return;
-        }
+        } catch (e) { lastErr = e; }
       }
-      await execFileP("screencapture", ["-D", "2", "-x", FINDMY_OCR_PNG]);
+      throw lastErr || new Error("screencapture: no working capture method");
     }
     await snapFindMy();
     // Find My auto-centers on the selected friend when the app
