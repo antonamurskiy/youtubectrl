@@ -94,12 +94,12 @@ final class FontStore {
         if entry.postScript == "<system>" {
             return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
         }
-        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) {
-            return Self.withCascade(f)
-        }
-        if let f = UIFont(name: entry.postScript, size: s) {
-            return Self.withCascade(f)
-        }
+        // No cascade list — CoreText's implicit cascade falls through
+        // to Apple Symbols for missing glyphs (e.g. Braille, which
+        // JBM and Menlo both lack). Setting an explicit .cascadeList
+        // BLOCKED that fallthrough and broke the Claude Code spinner.
+        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) { return f }
+        if let f = UIFont(name: entry.postScript, size: s) { return f }
         // Try matching by family name as a last resort — bundled fonts
         // sometimes load under their family rather than PostScript name
         // depending on Info.plist / iOS font registration timing.
@@ -130,24 +130,6 @@ final class FontStore {
            UIFont(name: resolved, size: 12) != nil { return resolved }
         if UIFont(name: entry.postScript, size: 12) != nil { return entry.postScript }
         return nil
-    }
-
-    /// Wrap the primary font in a CTFontDescriptor cascade list so
-    /// glyphs missing from the chosen font (e.g. JetBrains Mono lacks
-    /// dense-Braille blocks U+2838, 287F-28FF used by Claude Code's
-    /// spinner) fall back to Menlo (full Braille coverage) and
-    /// Apple Color Emoji. Without this, missing glyphs render as
-    /// the default `.notdef` box / underscore.
-    private static func withCascade(_ primary: UIFont) -> UIFont {
-        let cascade: [UIFontDescriptor] = [
-            UIFontDescriptor(name: "Menlo-Regular", size: primary.pointSize),
-            UIFontDescriptor(name: "AppleColorEmoji", size: primary.pointSize),
-        ]
-        let attrs: [UIFontDescriptor.AttributeName: Any] = [
-            .cascadeList: cascade
-        ]
-        let desc = primary.fontDescriptor.addingAttributes(attrs)
-        return UIFont(descriptor: desc, size: primary.pointSize)
     }
 
     func ensureRegistered(label: String) {
