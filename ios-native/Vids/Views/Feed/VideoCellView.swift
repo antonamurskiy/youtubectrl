@@ -18,7 +18,16 @@ struct VideoCellView: View {
                 .aspectRatio(16.0/9.0, contentMode: .fit)
                 .overlay {
                     if let img = thumbnail {
-                        Image(uiImage: img).resizable().scaledToFill()
+                        Image(uiImage: img)
+                            .resizable()
+                            .scaledToFill()
+                            // Identity per video so SwiftUI doesn't
+                            // cross-fade / scale-interpolate between
+                            // recycled cells when one image swaps to
+                            // another's. .id() forces a fresh view
+                            // identity per content.
+                            .id(video.videoId ?? video.url ?? "")
+                            .animation(nil, value: img)
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
