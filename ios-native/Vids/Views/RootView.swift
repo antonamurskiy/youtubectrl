@@ -156,16 +156,12 @@ struct RootView: View {
             // rest of the screen and would intercept touches meant
             // for NPBar / FAB stack underneath.
             if !terminal.open {
-                HStack {
-                    Spacer(minLength: 0)
-                    HeaderView(searchFocused: $searchFocused)
-                        .fixedSize()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .allowsHitTesting(true) // pill content captures hits;
-                                        // empty area passes through
-                                        // (no painted bg outside pill)
-                .zIndex(18)
+                // Header pills span the screen so the search pill can
+                // claim leftover width — pill content captures hits;
+                // empty area between pills passes through to NPBar.
+                HeaderView(searchFocused: $searchFocused)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .zIndex(18)
             }
 
             ToastHUD().zIndex(30)

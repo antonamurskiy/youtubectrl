@@ -49,7 +49,10 @@ struct HeaderView: View {
                             searchTask?.cancel()
                             Task { await feed.search(searchText, api: services.api) }
                         }
-                        .frame(width: 50, alignment: .leading)
+                        // Expand to fill all remaining width — header
+                        // is right-aligned in RootView, so the search
+                        // pill stretches leftward to claim free space.
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 .padding(.horizontal, 12)
                 .frame(height: Self.pillHeight)

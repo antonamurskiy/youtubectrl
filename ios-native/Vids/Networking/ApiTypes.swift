@@ -111,11 +111,11 @@ struct HomeResponse: Codable {
 }
 
 struct MacStatus: Codable, Hashable {
-    let locked: Bool?
-    let screenOff: Bool?
-    let ethernet: Bool?
-    let keepAwake: Bool?
-    let frontApp: String?
+    var locked: Bool?
+    var screenOff: Bool?
+    var ethernet: Bool?
+    var keepAwake: Bool?
+    var frontApp: String?
 }
 
 struct TmuxWindow: Codable, Hashable, Identifiable {
