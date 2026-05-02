@@ -12,6 +12,7 @@
 		10F3E3D1F18ABC690EBF3566 /* PhonePlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */; };
 		1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA16E099AF62AF37E5C3C310 /* WSClient.swift */; };
 		1A266128F298A244BC9919D9 /* ToastHUD.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4D6B80CCBF4ECAC8D21483 /* ToastHUD.swift */; };
+		20679D20FB8C8A779EC62D9F /* MainTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42457BC72FA994917802D752 /* MainTabView.swift */; };
 		22A39A9D83262B14E9665774 /* FontStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2465BFECA4E139AC71688AF1 /* FontStore.swift */; };
 		27C22C170DC85EDD9335EB39 /* ApiClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1B72A86BF45FA07DD14101 /* ApiClient.swift */; };
 		285D684AC6072105BA50CB06 /* JetBrainsMono-Regular.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 948AB43F3DC1CDD41CD48DAB /* JetBrainsMono-Regular.ttf */; };
@@ -22,6 +23,7 @@
 		464D5B4427C251EDAD0D2E3B /* FABStack.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8FA7931C65256F257CD6A648 /* FABStack.swift */; };
 		4CE0E213E8A41ED4612F1E47 /* ServiceContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = E521EA57B7C296650D408D49 /* ServiceContainer.swift */; };
 		4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 667FED20226B2EBA1AAF4E7D /* VideoCellView.swift */; };
+		4F3BBD7873E99C1B5015A883 /* StatusDotsPill.swift in Sources */ = {isa = PBXBuildFile; fileRef = 126969031AF278AB92B32736 /* StatusDotsPill.swift */; };
 		4F878C4C0E6835D2C3E4C48C /* PasteSuppressor.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7D4EF291A224A59ACF98FA3 /* PasteSuppressor.swift */; };
 		568654DF62B029B6DBEC956A /* SecretMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */; };
 		5BBB5AF2256E6123B332D6AA /* QualityMenu.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52D4C7D4575FAF706DB5953D /* QualityMenu.swift */; };
@@ -55,6 +57,7 @@
 
 /* Begin PBXFileReference section */
 		0025D39A35FBBB1596DF4EDD /* SecretMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SecretMenu.swift; sourceTree = "<group>"; };
+		126969031AF278AB92B32736 /* StatusDotsPill.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = StatusDotsPill.swift; sourceTree = "<group>"; };
 		16F186D91A0FA0BC0F7248BD /* PhonePlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhonePlayerView.swift; sourceTree = "<group>"; };
 		1826C0CDA846857C5E5194A0 /* NowPlayingBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NowPlayingBar.swift; sourceTree = "<group>"; };
 		2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TmuxRenamePopover.swift; sourceTree = "<group>"; };
@@ -63,6 +66,7 @@
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
 		33FABF28AB81A46AF9E93598 /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
+		42457BC72FA994917802D752 /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
 		4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardObserver.swift; sourceTree = "<group>"; };
 		4F91E9E068675B931E6A9A39 /* ScrubPreviewOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubPreviewOverlay.swift; sourceTree = "<group>"; };
@@ -294,6 +298,8 @@
 				33C1257F7A2BF6C25B449983 /* NowPlaying */,
 				E7C921C4C2D7051F75874DD6 /* SecretMenu */,
 				1878D6997F9B5A3F03FD3DF7 /* Terminal */,
+				42457BC72FA994917802D752 /* MainTabView.swift */,
+				126969031AF278AB92B32736 /* StatusDotsPill.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -415,6 +421,8 @@
 				4D03BE86FAC150C412ECC29B /* VideoCellView.swift in Sources */,
 				0AFD226C3495A4B16FACED63 /* VidsApp.swift in Sources */,
 				1280F13A5FF78F2912FD5960 /* WSClient.swift in Sources */,
+				20679D20FB8C8A779EC62D9F /* MainTabView.swift in Sources */,
+				4F3BBD7873E99C1B5015A883 /* StatusDotsPill.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

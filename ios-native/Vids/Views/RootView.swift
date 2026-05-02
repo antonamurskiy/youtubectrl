@@ -17,7 +17,6 @@ struct RootView: View {
     @Environment(PhoneModeStore.self) private var phoneMode
     @Environment(FontStore.self) private var fonts
 
-    @State private var searchFocused = false
     @State private var npBarHeight: CGFloat = 0
     @State private var npBarFrame: CGRect = .zero
     @Environment(\.horizontalSizeClass) private var hSize
@@ -56,18 +55,16 @@ struct RootView: View {
 
             // iPad / landscape regular: feed and terminal side-by-side
             // (50/50 split). iPhone compact: cross-fade as before.
+            // Feed area is now MainTabView — iOS 26 TabView with the
+            // OS-owned Liquid Glass tab bar + lift-out lens. Search
+            // is a Tab(role: .search) → detached circle. NowPlayingBar
+            // lives inside .tabViewBottomAccessory.
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen)
                 ? 175
                 : 0
-            // Keep TerminalView ALWAYS mounted — opening / closing only
-            // toggles opacity + hit testing. Conditional mounting tore
-            // down the PTY + SwiftTerm view + WS connection on close,
-            // producing a visible blink when reopening (cold xterm
-            // re-init, scroll-to-bottom, font reload). Persistent mount
-            // keeps the session warm.
             if hSize == .regular {
                 HStack(spacing: 0) {
-                    feedView
+                    MainTabView()
                         .frame(maxWidth: .infinity)
                     TerminalView(bottomInset: bottomInset)
                         .frame(maxWidth: .infinity)
@@ -75,7 +72,7 @@ struct RootView: View {
                         .allowsHitTesting(terminal.open)
                 }
             } else {
-                feedView
+                MainTabView()
                     .opacity(terminal.open ? 0 : 1)
                     .allowsHitTesting(!terminal.open)
                 TerminalView(bottomInset: bottomInset)
@@ -117,30 +114,8 @@ struct RootView: View {
                 .zIndex(19)
             }
 
-            // Now-playing bar — hidden when terminal+keyboard. On
-            // regular size class (iPad / landscape iPhone Pro Max),
-            // cap its width so it doesn't span the whole screen.
-            if playback.playing && !(terminal.open && terminal.keyboardOpen) {
-                NowPlayingBar()
-                    .frame(maxWidth: hSize == .regular ? 600 : .infinity)
-                    .frame(maxWidth: .infinity)
-                    // iOS 17.5+ .onGeometryChange — works where the
-                    // .background(GeometryReader) trick reported 0
-                    // on iOS 26 under .ignoresSafeArea.
-                    .onGeometryChange(for: CGFloat.self) { proxy in
-                        proxy.size.height
-                    } action: { newValue in
-                        npBarHeight = newValue
-                    }
-                    .ignoresSafeArea(.container, edges: .bottom)
-                    .ignoresSafeArea(.keyboard, edges: .bottom)
-                    // Plain opacity fade — the move(.bottom) transition
-                    // started from wherever the keyboard had pushed
-                    // the safe area, then snapped to the real bottom
-                    // once the keyboard finished dismissing.
-                    .transition(.opacity)
-                    .zIndex(10)
-            }
+            // NowPlayingBar lives inside MainTabView's
+            // .tabViewBottomAccessory — see MainTabView.swift.
 
             // FAB stack (terminal toggle + refresh). Bottom padding tracks
             // whether NP bar is mounted + whether keyboard is up.
@@ -160,44 +135,14 @@ struct RootView: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
                 .zIndex(20)
 
-            // Floating top nav pill — right-aligned over the feed,
-            // hidden when terminal is open. Pinned to top via frame
-            // alignment, NOT a VStack with Spacer — Spacer fills the
-            // rest of the screen and would intercept touches meant
-            // for NPBar / FAB stack underneath.
+            // Floating top-right status pill — replaces the old
+            // HeaderView's status-dots cluster. Search + tabs moved
+            // to the bottom TabView (MainTabView).
             if !terminal.open {
-                // Glass strip filling just the top safe area to cover
-                // the gray gap above the FeedListView. Extends from
-                // screen top down to the safe-area edge — header pill
-                // sits below.
-                GeometryReader { proxy in
-                    // Glass blur strip masked by a smooth top→bottom
-                    // fade so cells scrolling under the Dynamic
-                    // Island blur in without a hard horizontal edge.
-                    Rectangle()
-                        .fill(.regularMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 110)
-                        .mask(
-                            // Hold full-opacity blur for the top
-                            // 35% (covers Dynamic Island + header
-                            // pill area), then fade to clear so the
-                            // bottom edge stays smooth.
-                            LinearGradient(
-                                stops: [
-                                    .init(color: .black, location: 0),
-                                    .init(color: .black, location: 0.35),
-                                    .init(color: .clear, location: 1),
-                                ],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .ignoresSafeArea(.container, edges: .top)
-                }
-                .allowsHitTesting(false)
-                .zIndex(17)
-
-                HeaderView(searchFocused: $searchFocused)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                StatusDotsPill()
+                    .padding(.trailing, 16)
+                    .padding(.top, 8)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .zIndex(18)
             }
 
@@ -330,63 +275,5 @@ struct RootView: View {
         return playback.playing ? 210 : 32
     }
 
-    private func cycleFeedTab(by delta: Int) {
-        let all = FeedTab.allCases
-        guard let i = all.firstIndex(of: feed.activeTab) else { return }
-        let next = all[(i + delta + all.count) % all.count]
-        feed.activeTab = next
-        Task { await feed.load(tab: next, api: services.api) }
-    }
-
-    private var feedView: some View {
-        VStack(spacing: 0) {
-            if let ch = feed.channelQuery {
-                HStack(spacing: 8) {
-                    Image(systemName: "person.crop.rectangle")
-                    Text("Viewing: \(ch)")
-                        .font(Font.app(13, weight: .semibold))
-                    Spacer()
-                    Button(action: {
-                        feed.clearChannel()
-                        Task { await feed.load(tab: feed.activeTab, api: services.api) }
-                    }) {
-                        Image(systemName: "xmark")
-                    }
-                    .buttonStyle(.plain)
-                }
-                .foregroundStyle(Color.appText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color.appText.opacity(0.06))
-            }
-            ZStack(alignment: .top) {
-                FeedListView(onSwipe: cycleFeedTab(by:))
-                    .ignoresSafeArea(.container, edges: [.top, .bottom])
-                    // SwiftUI iOS 26 modifier — propagates down to
-                    // the inner UIScrollView and disables the
-                    // scroll-edge media lensing that's been scaling
-                    // thumbnails as they cross the safe-area band.
-                    // .topEdgeEffect.isHidden alone wasn't enough.
-                    .scrollEdgeEffectStyle(nil, for: .top)
-                if feed.currentVideos.isEmpty {
-                    if let err = feed.lastError {
-                        Text(err)
-                            .font(Font.app(12))
-                            .foregroundStyle(Color.appText.opacity(0.6))
-                            .multilineTextAlignment(.center)
-                            .lineLimit(6)
-                            .padding(20)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .padding(.top, 40)
-                    } else {
-                        FeedSkeleton()
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        // Swipe is now wired via UIKit gesture on the FeedListView's
-        // UICollectionView (FeedListView.onSwipe) — SwiftUI's DragGesture
-        // didn't coexist well with the inner scroll view's pans.
-    }
+    // feedView + cycleFeedTab removed — feed lives in MainTabView.
 }
