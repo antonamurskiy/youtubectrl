@@ -87,6 +87,15 @@ final class PhoneModeStore {
             // Volume buttons must NOT drive the Mac in phone-only —
             // they should change AirPods/headphones volume natively.
             services.avHost.disableVolumeIntercept()
+            // Phone-only state isn't reflected in the server playback
+            // broadcast, so the scrubber would read playback.duration=0
+            // and seek to the start every time. Seed the store with
+            // the Rumble/YouTube duration we got from /api/phone-only.
+            services.playback.playing = true
+            services.playback.url = url
+            services.playback.duration = resp.durationSec ?? 0
+            services.playback.isLive = resp.isLive ?? false
+            services.playback.player = "phone"
             // No live sync in phone-only mode (mpv is paused/hidden, AVPlayer is authoritative).
         } catch {
             lastError = "phone-only: \(error)"
