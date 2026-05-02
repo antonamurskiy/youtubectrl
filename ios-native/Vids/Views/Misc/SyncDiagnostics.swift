@@ -11,7 +11,7 @@ struct SyncDiagnostics: View {
     var body: some View {
         if phoneMode.mode == .sync {
             VStack(alignment: .trailing, spacing: 2) {
-                row("drift", fmt(services.liveSync.rawDriftMs, suffix: "ms"))
+                row("drift", driftLabel(services.liveSync.rawDriftMs))
                 row("smooth", fmt(services.liveSync.smoothedDriftMs, suffix: "ms"))
                 row("bias", fmt(services.liveSync.biasMs, suffix: "ms"))
                 row("seek", lastSeekAge)
@@ -36,6 +36,13 @@ struct SyncDiagnostics: View {
     private func fmt(_ ms: Double, suffix: String) -> String {
         let sign = ms >= 0 ? "+" : ""
         return "\(sign)\(Int(ms.rounded()))\(suffix)"
+    }
+
+    /// Show "—" when AVPlayer hasn't reported a valid PDT yet
+    /// (rawDrift = current-epoch minus 0 = ~56 years of nonsense).
+    private func driftLabel(_ ms: Double) -> String {
+        if abs(ms) > 1_000_000 { return "—" }
+        return fmt(ms, suffix: "ms")
     }
 
     private var lastSeekAge: String {

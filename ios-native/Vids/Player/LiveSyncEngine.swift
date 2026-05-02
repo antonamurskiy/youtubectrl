@@ -134,8 +134,12 @@ final class LiveSyncEngine {
             }
         }
 
-        // Seek if drift exceeds threshold AND cooldown elapsed (or calibrated).
-        let shouldSeek = (abs(drift) >= seekThresholdSec) && cooldownOk
+        // Seek if drift exceeds threshold AND cooldown elapsed AND
+        // drift isn't an outlier (AVPlayer reports stale PDT during
+        // HLS load — drifts of -56 years are noise, not signal).
+        let shouldSeek = (abs(drift) >= seekThresholdSec)
+                         && (abs(drift) < outlierThresholdSec)
+                         && cooldownOk
         if shouldSeek {
             forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
         }
