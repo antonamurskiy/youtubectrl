@@ -103,24 +103,25 @@ private struct FeedLineView: View {
     var body: some View {
         Text(line.text)
             .font(Font.app(12))
-            .tracking(0.3)
             .foregroundStyle(textColor)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            // iOS 26 Liquid Glass capsule — same material the
-            // header pills + FAB stack + NPBar use, so the kill
-            // feed reads as part of the same chrome instead of a
-            // flat-bordered outlier.
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            // RoundedRectangle (12pt corner) instead of Capsule —
+            // the full pill shape was reading too rounded for short
+            // notification lines and let text hug too close to the
+            // curve. Subtle rounded rect matches iOS 26 banner style.
             .glassEffect(.regular.tint(pillTint).interactive(),
-                         in: Capsule())
-            .clipShape(Capsule())
+                         in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .opacity(visible && !fading ? 1 : 0)
-            .scaleEffect(y: fading ? 0.7 : 1, anchor: .top)
             .onAppear {
                 withAnimation(.easeOut(duration: 0.2)) { visible = true }
                 let fadeStart = max(0, lifetime - 1.5)
                 DispatchQueue.main.asyncAfter(deadline: .now() + fadeStart) {
-                    withAnimation(.easeIn(duration: 1.4)) { fading = true }
+                    withAnimation(.easeIn(duration: 0.6)) { fading = true }
                 }
             }
             .transition(.opacity)
