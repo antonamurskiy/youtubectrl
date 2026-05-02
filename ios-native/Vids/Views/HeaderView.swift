@@ -26,11 +26,8 @@ struct HeaderView: View {
     var body: some View {
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
-                // Pill 1: search (with magnifier as the affordance)
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: Self.pillFont, weight: .semibold))
-                        .foregroundStyle(Color.appText.opacity(0.5))
+                // Pill 1: search
+                HStack(spacing: 0) {
                     TextField("Search", text: $searchText)
                         .textFieldStyle(.plain)
                         .submitLabel(.search)
