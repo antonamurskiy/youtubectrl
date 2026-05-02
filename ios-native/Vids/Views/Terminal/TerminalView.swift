@@ -65,31 +65,36 @@ struct TerminalView: View {
                     }
                     return SwiftUI.Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
                 }()
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    GlassEffectContainer(spacing: 6) {
-                        HStack(spacing: 6) {
-                            ForEach(terminal.windows) { w in
-                                Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
-                                    Text(w.name)
-                                        .font(Font.app(13, weight: w.active ? .heavy : .semibold))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
-                                        .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffect(.regular.tint(tint).interactive(), in: Capsule())
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.5)
-                                        .onEnded { _ in renaming = w }
-                                )
-                            }
+                // Native iOS 26 segmented Picker — same OS-owned
+                // Liquid Glass chrome + magnify-on-drag lens as the
+                // bottom feed tab bar. Long-press on the active tab
+                // opens the rename popover.
+                let activeIdx = terminal.windows.firstIndex(where: { $0.active }) ?? 0
+                Picker("Window", selection: Binding(
+                    get: { activeIdx },
+                    set: { newIdx in
+                        guard newIdx < terminal.windows.count else { return }
+                        let w = terminal.windows[newIdx]
+                        if !w.active {
+                            Task { try? await services.api.tmuxSelect(index: w.index) }
                         }
                     }
-                    .fixedSize()
+                )) {
+                    ForEach(Array(terminal.windows.enumerated()), id: \.offset) { idx, w in
+                        Text(w.name).tag(idx)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        if activeIdx < terminal.windows.count {
+                            renaming = terminal.windows[activeIdx]
+                        }
+                    }
+                )
             }
         }
         .onDisappear {
@@ -103,6 +108,9 @@ struct TerminalView: View {
         .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
+        // Don't let the soft keyboard push the tab strip down/up —
+        // its position should stay pinned to the safe-area top.
+        .ignoresSafeArea(.keyboard, edges: .all)
         // KB dismiss button moved into FABStack as a third FAB so it
         // shares the same coordinate system + spacing as the others.
         .sheet(item: Binding(
