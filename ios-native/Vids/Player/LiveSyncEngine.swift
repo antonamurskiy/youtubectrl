@@ -175,11 +175,13 @@ final class LiveSyncEngine {
         }
 
         // shouldSeek: fire if calibration just completed (apply bias)
-        // OR if smoothed drift > 0.2s (settled-residual catcher).
-        // Use SMOOTHED drift not raw — raw bounces inside AVPlayer
-        // jitter and was causing my port to chase noise.
-        // Outlier guard: skip if smoothed > 1hr (PDT garbage).
-        let shouldSeek = (calibrated || abs(smoothedDriftMs) > 200)
+        // OR if smoothed drift > 0.5s. React uses 0.2s but the
+        // server-side mpv `userPdt` jitters 200-500ms periodically
+        // (manifest refresh / cache chunk fetch) — at 0.2s, every
+        // jitter tripped a re-seek and undid the previous
+        // convergence. 0.5s tolerates the jitter while still
+        // catching real drift.
+        let shouldSeek = (calibrated || abs(smoothedDriftMs) > 500)
                          && abs(smoothedDriftMs) < outlierThresholdSec * 1000
                          && cooldownOk
                          && !isSettled
