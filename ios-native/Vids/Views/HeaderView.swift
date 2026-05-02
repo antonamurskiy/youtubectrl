@@ -54,7 +54,7 @@ struct HeaderView: View {
                         // pill stretches leftward to claim free space.
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.horizontal, 12)
+                .padding(.horizontal, 18)
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
@@ -66,7 +66,7 @@ struct HeaderView: View {
                     feed.activeTab = tab
                     Task { await feed.load(tab: tab, api: services.api) }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 12)
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
@@ -77,7 +77,7 @@ struct HeaderView: View {
                     StatusDot(on: !(playback.macStatus.locked ?? false))
                     StatusDot(on: !(playback.macStatus.screenOff ?? false))
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 18)
                 .frame(height: Self.pillHeight)
                 .contentShape(Capsule())
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
