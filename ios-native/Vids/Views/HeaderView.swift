@@ -10,6 +10,7 @@ struct HeaderView: View {
     @State private var searchTask: Task<Void, Never>? = nil
     @FocusState private var fieldFocus: Bool
     @State private var tabsStripWidth: CGFloat = 0
+    @State private var tabDragX: CGFloat? = nil
     @Namespace private var tabsGlassNamespace
 
     /// Theme-aware tint mirroring the NPBar's barTint logic.
@@ -46,55 +47,14 @@ struct HeaderView: View {
                 // glass capsule chrome.
                 searchPill
 
-                // Pill 2: Slack-style chrome (one outer capsule, no
-                // UISegmentedControl bar) + iOS 26 magnify lensing
-                // via per-tab .glassEffect(.interactive()) inside a
-                // GlassEffectContainer. The active tab's glass capsule
-                // morphs between positions on selection — and a drag
-                // gesture across the strip moves selection so the lens
-                // tracks the finger like the native Picker did.
-                GlassEffectContainer(spacing: 4) {
-                    HStack(spacing: 0) {
-                        ForEach(FeedTab.allCases) { tab in
-                            let active = feed.activeTab == tab
-                            Text(tab.label)
-                                .font(Font.app(Self.pillFont, weight: .semibold))
-                                .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.55))
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 8)
-                                .contentShape(Capsule())
-                                .background {
-                                    if active {
-                                        Capsule()
-                                            .fill(Color.white.opacity(0.22))
-                                            .glassEffect(.regular.interactive(), in: Capsule())
-                                            .glassEffectID("activeTab", in: tabsGlassNamespace)
-                                    }
-                                }
-                                .onTapGesture {
-                                    selectTab(tab)
-                                }
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .frame(maxWidth: .infinity)
-                .frame(height: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
-                .clipShape(Capsule())
-                .gesture(
-                    DragGesture(minimumDistance: 8)
-                        .onChanged { g in
-                            updateTabFromDrag(g.location.x, width: tabsStripWidth)
-                        }
-                )
-                .background(
-                    GeometryReader { geo in
-                        Color.clear
-                            .onAppear { tabsStripWidth = geo.size.width }
-                            .onChange(of: geo.size.width) { _, w in tabsStripWidth = w }
-                    }
-                )
+                // Pill 2: Slack-style — outer glass capsule, custom
+                // tab buttons, active tab gets a translucent capsule
+                // pill that slides via matchedGeometryEffect, and the
+                // tab UNDER THE FINGER scales up (1.18×) during drag.
+                // That visual scale-up IS the "magnify" Slack shows —
+                // it isn't a Liquid Glass lens, it's just the active
+                // label growing under the finger.
+                slackTabsPill
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -176,10 +136,71 @@ struct HeaderView: View {
         }
     }
 
+    /// Slack-style tabs pill: outer glass capsule, sliding active
+    /// pill underneath labels via matchedGeometryEffect, finger-under
+    /// label scales up while dragging.
+    private var slackTabsPill: some View {
+        let tabs = FeedTab.allCases
+        return GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 0) {
+                ForEach(Array(tabs.enumerated()), id: \.element) { idx, tab in
+                    let active = feed.activeTab == tab
+                    let hovered = hoveredTabIndex == idx
+                    Text(tab.label)
+                        .font(Font.app(Self.pillFont, weight: .semibold))
+                        .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.55))
+                        .scaleEffect(hovered ? 1.22 : (active ? 1.05 : 1.0))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .contentShape(Capsule())
+                        .background {
+                            if active {
+                                Capsule()
+                                    .fill(Color.white.opacity(0.22))
+                                    .matchedGeometryEffect(id: "activeTabPill", in: tabsGlassNamespace)
+                            }
+                        }
+                        .onTapGesture { selectTab(tab) }
+                }
+            }
+            .padding(.horizontal, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.pillHeight)
+        .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+        .clipShape(Capsule())
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { tabsStripWidth = geo.size.width }
+                    .onChange(of: geo.size.width) { _, w in tabsStripWidth = w }
+            }
+        )
+        .gesture(
+            DragGesture(minimumDistance: 0)
+                .onChanged { g in
+                    tabDragX = g.location.x
+                    updateTabFromDrag(g.location.x, width: tabsStripWidth)
+                }
+                .onEnded { _ in
+                    tabDragX = nil
+                }
+        )
+    }
+
+    /// Index of the tab the finger is currently over (during drag).
+    /// Returns nil when not dragging.
+    private var hoveredTabIndex: Int? {
+        guard let x = tabDragX, tabsStripWidth > 0 else { return nil }
+        let tabs = FeedTab.allCases
+        let segW = tabsStripWidth / CGFloat(tabs.count)
+        return max(0, min(tabs.count - 1, Int(x / segW)))
+    }
+
     private func selectTab(_ tab: FeedTab) {
         guard feed.activeTab != tab else { return }
         Haptics.select()
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+        withAnimation(.interactiveSpring(response: 0.28, dampingFraction: 0.78)) {
             feed.activeTab = tab
         }
         Task { await feed.load(tab: tab, api: services.api) }
