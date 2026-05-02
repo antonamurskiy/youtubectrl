@@ -181,7 +181,10 @@ final class LiveSyncEngine {
             let minS = samples.min() ?? 0
             let maxS = samples.max() ?? 0
             let spread = (maxS - minS) / 1000  // seconds
-            if spread < 0.08, abs(smoothedSec) > 0.05 {
+            // Calibration floor 50ms → 20ms so bias keeps trimming
+            // toward true zero instead of stalling at the AVPlayer
+            // audio-output residual (~30-50ms past PDT).
+            if spread < 0.08, abs(smoothedSec) > 0.02 {
                 biasMs += (smoothedDriftMs * learningRate).rounded()
                 calibPending = false
                 calibrated = true
