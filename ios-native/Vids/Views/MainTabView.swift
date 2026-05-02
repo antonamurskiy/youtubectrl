@@ -42,6 +42,10 @@ struct MainTabView: View {
         }
         .tint(Color.appText)
         .searchable(text: $searchText, prompt: "Search YouTube")
+        // Prevent the soft keyboard from shifting the bottom TabView
+        // and feed cells up. iOS would otherwise push everything to
+        // make room for the keyboard.
+        .ignoresSafeArea(.keyboard, edges: .bottom)
         .onChange(of: searchText) { _, new in
             searchTask?.cancel()
             searchTask = Task { @MainActor in
