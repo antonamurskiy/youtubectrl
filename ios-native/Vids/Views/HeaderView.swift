@@ -59,24 +59,24 @@ struct HeaderView: View {
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
-                // Pill 2: tabs — custom row with the active pill
-                // .glassEffect(.interactive()) so it tracks/morphs
-                // under drag with the iOS 26 magnifier feel, while
-                // glassEffectID animates the pill between tabs.
-                TabsRow(activeTab: feed.activeTab,
-                        fontSize: Self.pillFont,
-                        highlightTint: theme.resolved ?? Color.appText) { tab in
-                    Haptics.select()
-                    feed.activeTab = tab
-                    Task { await feed.load(tab: tab, api: services.api) }
+                // Pill 2: native segmented Picker. iOS 26 auto-applies
+                // Liquid Glass + drag-to-switch + magnify-under-finger
+                // lensing on segmented controls (WWDC25 session 323) —
+                // there's no public API to recreate that lensing on a
+                // custom view, so this is the canonical path.
+                Picker("Tab", selection: Binding(
+                    get: { feed.activeTab },
+                    set: { newTab in
+                        Haptics.select()
+                        feed.activeTab = newTab
+                        Task { await feed.load(tab: newTab, api: services.api) }
+                    }
+                )) {
+                    ForEach(FeedTab.allCases) { tab in
+                        Text(tab.label).tag(tab)
+                    }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                // Outer pill is non-interactive — only the active
-                // inner tab is .interactive() so its magnifier touch
-                // tracking isn't fighting an outer glass tracker.
-                .glassEffect(.regular.tint(pillTint), in: Capsule())
-                .clipShape(Capsule())
+                .pickerStyle(.segmented)
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -108,89 +108,10 @@ struct HeaderView: View {
     }
 }
 
-private struct TabsRow: View {
-    let activeTab: FeedTab
-    let fontSize: CGFloat
-    let highlightTint: Color
-    let onTap: (FeedTab) -> Void
-    @Namespace private var ns
-    @State private var tabFrames: [Int: CGRect] = [:]
-
-    var body: some View {
-        // GlassEffectContainer lets the active tab pill morph through
-        // glass between tabs — same Liquid Glass union Apple uses on
-        // the iOS 26 Camera mode picker. Tab widths captured via
-        // PreferenceKey so a single drag gesture across the row can
-        // pick the tab under the finger and animate the pill there.
-        GlassEffectContainer(spacing: 2) {
-            HStack(spacing: 2) {
-                ForEach(Array(FeedTab.allCases.enumerated()), id: \.1) { idx, tab in
-                    let active = activeTab == tab
-                    Text(tab.label)
-                        .font(Font.app(fontSize, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 10)
-                        .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
-                        .contentShape(Capsule())
-                        .background(GeometryReader { proxy in
-                            Color.clear.preference(key: TabFrameKey.self,
-                                                   value: [idx: proxy.frame(in: .named("tabsRow"))])
-                        })
-                        .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
-                        .onTapGesture { onTap(tab) }
-                }
-            }
-            .fixedSize()
-        }
-        .coordinateSpace(name: "tabsRow")
-        .onPreferenceChange(TabFrameKey.self) { tabFrames = $0 }
-        // simultaneousGesture fires alongside the per-tab tap gesture
-        // so a single tap still picks a tab. minimumDistance=0 means
-        // the drag starts on touch-down, giving smooth tracking from
-        // the very first finger-down — closest we can get to iOS's
-        // built-in segmented control drag-to-switch behavior.
-        .simultaneousGesture(
-            DragGesture(minimumDistance: 0, coordinateSpace: .named("tabsRow"))
-                .onChanged { v in
-                    let all = FeedTab.allCases
-                    if let hit = tabFrames.first(where: { _, f in f.contains(v.location) })?.key,
-                       hit < all.count {
-                        let tab = all[hit]
-                        if tab != activeTab { onTap(tab) }
-                    }
-                }
-        )
-        .animation(.spring(response: 0.32, dampingFraction: 0.85), value: activeTab)
-    }
-}
-
-private struct TabFrameKey: PreferenceKey {
-    static var defaultValue: [Int: CGRect] = [:]
-    static func reduce(value: inout [Int: CGRect], nextValue: () -> [Int: CGRect]) {
-        value.merge(nextValue(), uniquingKeysWith: { _, new in new })
-    }
-}
-
-/// Apply the Liquid Glass pill only to the active tab — `glassEffectID`
-/// lets the pill morph between tabs as the active one changes.
-private struct ActiveTabGlass: ViewModifier {
-    let active: Bool
-    let tint: Color
-    let ns: Namespace.ID
-    let id: String
-    func body(content: Content) -> some View {
-        if active {
-            content
-                // Active tab pill picks up the theme tint (tmux pane
-                // color or per-tab tint) instead of a fixed cream wash.
-                .glassEffect(.regular.tint(tint.opacity(0.45)).interactive(),
-                             in: Capsule())
-                .glassEffectID(id, in: ns)
-        } else {
-            content
-        }
-    }
-}
+// TabsRow + helpers removed — using native Picker(.segmented) which
+// gets iOS 26 Liquid Glass + drag-to-switch + magnify-under-finger
+// for free. There's no public API to recreate the camera-style
+// lensing on a custom view (per WWDC25 session 323).
 
 private struct StatusDot: View {
     let on: Bool
