@@ -5965,9 +5965,15 @@ async function refreshTmuxWindows() {
     // Tab-separated so window names containing ':' don't break parsing.
     // Includes pane_current_path so default-named windows can be
     // auto-renamed to the first 3 letters of their git project basename.
-    const { stdout } = await execFileP("tmux", ["list-windows", "-t", "0", "-F", "#{window_index}\t#{window_name}\t#{window_active}\t#{pane_current_path}"], { timeout: 2000 });
+    // Pipe-separated — modern tmux (3.5+) outputs `\t` in -F as the
+    // literal two-char sequence "\t" rather than a tab byte, which
+    // broke the prior tab-split parse and produced rows with index=NaN
+    // → null on the wire → iOS PlaybackPayload decode failed entirely.
+    // Window names can't contain '|' (tmux disallows it), so this is
+    // collision-free.
+    const { stdout } = await execFileP("tmux", ["list-windows", "-t", "0", "-F", "#{window_index}|#{window_name}|#{window_active}|#{pane_current_path}"], { timeout: 2000 });
     const rows = stdout.trim().split("\n").map(line => {
-      const [index, name, active, cwd] = line.split("\t");
+      const [index, name, active, cwd] = line.split("|");
       return { index: +index, name, active: active === "1", cwd: cwd || "" };
     });
     // Auto-name any window whose tmux name still looks default
