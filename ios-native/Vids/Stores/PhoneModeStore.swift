@@ -84,6 +84,9 @@ final class PhoneModeStore {
                 return
             }
             mode = .phoneOnly
+            // Volume buttons must NOT drive the Mac in phone-only —
+            // they should change AirPods/headphones volume natively.
+            services.avHost.disableVolumeIntercept()
             // No live sync in phone-only mode (mpv is paused/hidden, AVPlayer is authoritative).
         } catch {
             lastError = "phone-only: \(error)"

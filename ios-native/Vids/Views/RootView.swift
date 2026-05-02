@@ -259,10 +259,24 @@ struct RootView: View {
             }
         }
         .onChange(of: playback.playing) { _, new in
-            // Hardware volume buttons drive the Mac whenever something
-            // is playing on it, regardless of phone mode (matches React).
-            if new { services.avHost.enableVolumeIntercept() }
-            else { services.avHost.disableVolumeIntercept() }
+            // Mac-side hardware volume control is only useful when the
+            // Mac is actually the audible source. In phone-only the
+            // user expects AirPods volume buttons to work natively, so
+            // skip the intercept.
+            if new && phoneMode.mode != .phoneOnly {
+                services.avHost.enableVolumeIntercept()
+            } else {
+                services.avHost.disableVolumeIntercept()
+            }
+        }
+        .onChange(of: phoneMode.mode) { _, new in
+            // Re-evaluate intercept when mode flips between phone-only
+            // and the others (the playing flag may not change).
+            if playback.playing && new != .phoneOnly {
+                services.avHost.enableVolumeIntercept()
+            } else {
+                services.avHost.disableVolumeIntercept()
+            }
         }
         .onChange(of: playback.url) { _, _ in
             // When mpv switches videos while sync mode is active, reload
