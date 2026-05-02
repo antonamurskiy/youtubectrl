@@ -35,8 +35,8 @@ struct FABStack: View {
         // GlassEffectContainer lets the two FABs share a single Liquid
         // Glass field — they refract together, like Apple's Camera /
         // Photos floating controls on iOS 26.
-        GlassEffectContainer(spacing: 12) {
-            VStack(spacing: 12) {
+        GlassEffectContainer(spacing: 8) {
+            VStack(spacing: 8) {
                 // Keyboard dismiss FAB — only when soft keyboard is up
                 // and terminal is open. Lives in the same stack as
                 // the others so it inherits the 12pt VStack spacing
