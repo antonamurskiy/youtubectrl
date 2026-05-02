@@ -170,23 +170,11 @@ struct RootView: View {
                 // the gray gap above the FeedListView. Extends from
                 // screen top down to the safe-area edge — header pill
                 // sits below.
-                GeometryReader { proxy in
-                    // Glass blur strip masked by a smooth top→bottom
-                    // fade so cells scrolling under the Dynamic
-                    // Island blur in without a hard horizontal edge.
-                    Rectangle()
-                        .fill(.thinMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 60)
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .clear],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .ignoresSafeArea(.container, edges: .top)
-                }
-                .allowsHitTesting(false)
-                .zIndex(17)
+                // Glass strip removed — the .thinMaterial blur sits
+                // OVER the scroll content and was visually lensing
+                // (zooming) thumbnails as they scrolled into the
+                // safe-area band. Without it, cells render 1:1.
+                EmptyView().zIndex(17)
 
                 HeaderView(searchFocused: $searchFocused)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
