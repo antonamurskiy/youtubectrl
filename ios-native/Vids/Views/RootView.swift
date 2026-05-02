@@ -178,14 +178,13 @@ struct RootView: View {
                     // hitting a hard horizontal line.
                     Rectangle()
                         .fill(.thinMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 12)
+                        // Strip extends well past the safe area so the
+                        // gradient has room to fade smoothly all the
+                        // way out — no hard edge anywhere.
+                        .frame(height: proxy.safeAreaInsets.top + 60)
                         .mask(
                             LinearGradient(
-                                stops: [
-                                    .init(color: .black, location: 0),
-                                    .init(color: .black, location: 0.7),
-                                    .init(color: .clear, location: 1),
-                                ],
+                                colors: [.black, .clear],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
