@@ -164,6 +164,14 @@ final class AVPlayerHost: NSObject {
         containerView.isHidden = true
     }
 
+    /// Current item's known duration in seconds, or 0 if not yet
+    /// resolved. AVPlayer takes a moment after load() before this
+    /// returns a real value.
+    var currentItemDurationSeconds: Double {
+        guard let d = player.currentItem?.duration, d.isNumeric else { return 0 }
+        return d.seconds
+    }
+
     func seek(toSeconds s: Double) async {
         // Use loose tolerance so AVPlayer can land on the nearest
         // keyframe — strict zero tolerance fails on streams (Rumble

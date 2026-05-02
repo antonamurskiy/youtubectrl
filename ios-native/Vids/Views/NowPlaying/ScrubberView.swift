@@ -13,14 +13,18 @@ struct ScrubberView: UIViewRepresentable {
         let v = ScrubberUIView()
         v.onSeek = { [weak services] pct in
             guard let services else { return }
-            let target = pct * (Double(playback.duration > 0 ? playback.duration : 0))
-            // In phone-only mode the AVPlayer IS the source of truth
-            // (mpv is muted/hidden) — seek it directly. In sync mode
-            // mpv is the source and the phone resyncs from there. In
-            // computer mode just seek mpv.
             if services.phoneMode.mode == .phoneOnly {
-                Task { await services.avHost.seek(toSeconds: target) }
+                // Use AVPlayer's actual asset duration — playback.duration
+                // can be 0 if the server's response didn't carry one
+                // (Rumble sometimes), and pct * 0 always lands at zero.
+                Task {
+                    let assetDur = services.avHost.currentItemDurationSeconds
+                    let dur = assetDur > 0 ? assetDur : playback.duration
+                    guard dur > 0 else { return }
+                    await services.avHost.seek(toSeconds: pct * dur)
+                }
             } else {
+                let target = pct * (playback.duration > 0 ? playback.duration : 0)
                 Task { try? await services.api.seek(target) }
             }
         }
