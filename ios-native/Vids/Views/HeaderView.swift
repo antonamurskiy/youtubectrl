@@ -26,70 +26,28 @@ struct HeaderView: View {
 
     init(searchFocused: Binding<Bool>) {
         self._searchFocused = searchFocused
+        // Match the segmented Picker's title font to the other pills.
+        // DON'T touch backgroundImage / selectedSegmentTintColor —
+        // those carry iOS 26's Liquid Glass chrome and the magnify
+        // lensing on the selected pill. Overriding them kills both.
         let font = UIFont.systemFont(ofSize: Self.pillFont, weight: .semibold)
         let segApp = UISegmentedControl.appearance()
-        segApp.setTitleTextAttributes(
-            [.font: font, .foregroundColor: UIColor.systemGray], for: .normal
-        )
-        segApp.setTitleTextAttributes(
-            [.font: font, .foregroundColor: UIColor.white], for: .selected
-        )
-        // .backgroundColor alone leaves UISegmentedControl's native
-        // background IMAGE drawing the dark bar behind all segments
-        // (the "second container" inside our glass capsule). Replace
-        // both the bar background AND the dividers with empty UIImage
-        // so only the selected-segment pill shows.
-        let empty = UIImage()
-        segApp.setBackgroundImage(empty, for: .normal, barMetrics: .default)
-        segApp.setBackgroundImage(empty, for: .selected, barMetrics: .default)
-        segApp.setBackgroundImage(empty, for: .highlighted, barMetrics: .default)
-        segApp.setDividerImage(empty,
-                               forLeftSegmentState: .normal,
-                               rightSegmentState: .normal,
-                               barMetrics: .default)
-        segApp.backgroundColor = .clear
-        segApp.selectedSegmentTintColor = UIColor.white.withAlphaComponent(0.18)
+        segApp.setTitleTextAttributes([.font: font], for: .normal)
+        segApp.setTitleTextAttributes([.font: font], for: .selected)
     }
 
     var body: some View {
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
-                // Pill 1: search
-                HStack(spacing: 0) {
-                    TextField("Search", text: $searchText)
-                        .textFieldStyle(.plain)
-                        .submitLabel(.search)
-                        .font(Font.app(Self.pillFont))
-                        .foregroundStyle(Color.appText)
-                        .tint(.white)
-                        .focused($fieldFocus)
-                        .contentShape(Rectangle())
-                        .onTapGesture { fieldFocus = true }
-                        .onChange(of: searchText) { _, new in
-                            searchTask?.cancel()
-                            searchTask = Task { @MainActor in
-                                try? await Task.sleep(nanoseconds: 350_000_000)
-                                guard !Task.isCancelled else { return }
-                                await feed.search(new, api: services.api)
-                            }
-                        }
-                        .onSubmit {
-                            searchTask?.cancel()
-                            Task { await feed.search(searchText, api: services.api) }
-                        }
-                        // Smallest pill — let the tabs Picker claim
-                        // the leftover width since they need room
-                        // for all the labels.
-                        .frame(width: 60, alignment: .leading)
-                }
-                .padding(.horizontal, 18)
-                .frame(height: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
-                .clipShape(Capsule())
+                // Pill 1: collapsed magnifier circle until tapped.
+                // When expanded, becomes a TextField inside the same
+                // glass capsule chrome.
+                searchPill
 
-                // Pill 2: native segmented Picker wrapped in the
-                // same glass capsule chrome as pill 1 (search) and
-                // pill 3 (dots).
+                // Pill 2: native segmented Picker — keeps iOS 26
+                // Liquid Glass + drag-to-switch + magnify lensing
+                // intact (don't wrap in another glass capsule, that
+                // produces the "double container" look).
                 Picker("Tab", selection: Binding(
                     get: { feed.activeTab },
                     set: { newTab in
@@ -103,14 +61,9 @@ struct HeaderView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                // Pin Picker height directly — clearing UISegmentedControl's
-                // backgroundImage erased its intrinsic content size,
-                // so SwiftUI expanded it to fill the screen.
-                .frame(height: 32)
-                .padding(.horizontal, 6)
-                .frame(maxWidth: .infinity, minHeight: Self.pillHeight, maxHeight: Self.pillHeight)
-                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
-                .clipShape(Capsule())
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.pillHeight)
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -132,6 +85,64 @@ struct HeaderView: View {
         }
         .padding(.horizontal, 8)
         .padding(.top, 4)
+    }
+
+    @ViewBuilder
+    private var searchPill: some View {
+        if fieldFocus || !searchText.isEmpty {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: Self.pillFont, weight: .semibold))
+                    .foregroundStyle(Color.appText.opacity(0.55))
+                TextField("Search", text: $searchText)
+                    .textFieldStyle(.plain)
+                    .submitLabel(.search)
+                    .font(Font.app(Self.pillFont))
+                    .foregroundStyle(Color.appText)
+                    .tint(.white)
+                    .focused($fieldFocus)
+                    .onChange(of: searchText) { _, new in
+                        searchTask?.cancel()
+                        searchTask = Task { @MainActor in
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            guard !Task.isCancelled else { return }
+                            await feed.search(new, api: services.api)
+                        }
+                    }
+                    .onSubmit {
+                        searchTask?.cancel()
+                        Task { await feed.search(searchText, api: services.api) }
+                    }
+                    .frame(minWidth: 80, alignment: .leading)
+                if !searchText.isEmpty {
+                    Button {
+                        searchText = ""
+                        fieldFocus = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(Color.appText.opacity(0.4))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 14)
+            .frame(height: Self.pillHeight)
+            .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+            .clipShape(Capsule())
+        } else {
+            Button {
+                fieldFocus = true
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: Self.pillFont + 2, weight: .semibold))
+                    .foregroundStyle(Color.appText)
+                    .frame(width: Self.pillHeight, height: Self.pillHeight)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular.tint(pillTint).interactive(), in: Circle())
+            .clipShape(Circle())
+        }
     }
 
     private func home() {
