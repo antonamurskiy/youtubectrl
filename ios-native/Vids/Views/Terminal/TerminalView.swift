@@ -56,36 +56,36 @@ struct TerminalView: View {
             }
 
             if terminal.windows.count > 1 {
-                // Right-aligned floating glass tab strip — sized to its
-                // content, hugging the trailing edge of the screen.
+                // Each tmux tab is its own glass pill, grouped by
+                // GlassEffectContainer so they morph as a unit. Tint
+                // mirrors the active theme (NPBar formula).
+                let tint: Color = {
+                    if let r = theme.resolved {
+                        return r.darken(0.55).opacity(0.7)
+                    }
+                    return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
+                }()
                 HStack(spacing: 0) {
                     Spacer(minLength: 0)
-                    HStack(spacing: 4) {
-                        ForEach(terminal.windows) { w in
-                            Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
-                                Text(w.name)
-                                    .font(Font.app(13, weight: w.active ? .heavy : .semibold))
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(tabBg(w))
-                                    .clipShape(Capsule())
-                                    .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
+                    GlassEffectContainer(spacing: 6) {
+                        HStack(spacing: 6) {
+                            ForEach(terminal.windows) { w in
+                                Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
+                                    Text(w.name)
+                                        .font(Font.app(13, weight: w.active ? .heavy : .semibold))
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 7)
+                                        .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
+                                }
+                                .buttonStyle(.plain)
+                                .glassEffect(.regular.tint(tint).interactive(), in: Capsule())
+                                .simultaneousGesture(
+                                    LongPressGesture(minimumDuration: 0.5)
+                                        .onEnded { _ in renaming = w }
+                                )
                             }
-                            .buttonStyle(.plain)
-                            .simultaneousGesture(
-                                LongPressGesture(minimumDuration: 0.5)
-                                    .onEnded { _ in renaming = w }
-                            )
                         }
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .glassEffect(
-                        .regular
-                            .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                            .interactive(),
-                        in: Capsule()
-                    )
                     .fixedSize()
                 }
                 .padding(.horizontal, 8)

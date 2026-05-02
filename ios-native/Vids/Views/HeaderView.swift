@@ -10,71 +10,80 @@ struct HeaderView: View {
     @State private var searchTask: Task<Void, Never>? = nil
     @FocusState private var fieldFocus: Bool
 
+    /// Theme-aware tint mirroring the NPBar's barTint logic.
+    private var pillTint: Color {
+        if let r = theme.resolved {
+            return r.darken(0.55).opacity(0.7)
+        }
+        return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
+    }
+
     var body: some View {
-        // Floating Liquid Glass nav pill over the feed content. Same
-        // material the FAB stack and now-playing bar use, so the
-        // chrome cohere into one glass system.
-        HStack(spacing: 6) {
-            Button(action: home) {
-                Image(systemName: "play.fill")
-                    .font(Font.app(13, weight: .bold))
-                    .foregroundStyle(Color.appText.opacity(0.85))
-                    .frame(width: 24, height: 24)
-            }
-
-            TextField("Search", text: $searchText)
-                .textFieldStyle(.plain)
-                .submitLabel(.search)
-                .foregroundStyle(Color.appText)
-                .tint(.white)
-                .focused($fieldFocus)
-                .contentShape(Rectangle())
-                .onTapGesture { fieldFocus = true }
-                .onChange(of: searchText) { _, new in
-                    searchTask?.cancel()
-                    searchTask = Task { @MainActor in
-                        try? await Task.sleep(nanoseconds: 350_000_000)
-                        guard !Task.isCancelled else { return }
-                        await feed.search(new, api: services.api)
+        // Three Liquid Glass pills grouped by GlassEffectContainer so
+        // they morph as one system — like Apple Music's iOS 26 nav.
+        GlassEffectContainer(spacing: 6) {
+            HStack(spacing: 6) {
+                // Pill 1: home + search
+                HStack(spacing: 6) {
+                    Button(action: home) {
+                        Image(systemName: "play.fill")
+                            .font(Font.app(13, weight: .bold))
+                            .foregroundStyle(Color.appText.opacity(0.85))
+                            .frame(width: 22, height: 22)
                     }
+                    TextField("Search", text: $searchText)
+                        .textFieldStyle(.plain)
+                        .submitLabel(.search)
+                        .foregroundStyle(Color.appText)
+                        .tint(.white)
+                        .focused($fieldFocus)
+                        .contentShape(Rectangle())
+                        .onTapGesture { fieldFocus = true }
+                        .onChange(of: searchText) { _, new in
+                            searchTask?.cancel()
+                            searchTask = Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 350_000_000)
+                                guard !Task.isCancelled else { return }
+                                await feed.search(new, api: services.api)
+                            }
+                        }
+                        .onSubmit {
+                            searchTask?.cancel()
+                            Task { await feed.search(searchText, api: services.api) }
+                        }
+                        .frame(width: 110, alignment: .leading)
                 }
-                .onSubmit {
-                    searchTask?.cancel()
-                    Task { await feed.search(searchText, api: services.api) }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+
+                // Pill 2: tabs
+                TabsRow(activeTab: feed.activeTab) { tab in
+                    Haptics.select()
+                    feed.activeTab = tab
+                    Task { await feed.load(tab: tab, api: services.api) }
                 }
-                // Capped width so the pill hugs to the right side
-                // instead of stretching the whole bar across.
-                .frame(width: 120, alignment: .leading)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
-            // Inline tabs — pill smoothly slides via matchedGeometryEffect.
-            TabsRow(activeTab: feed.activeTab) { tab in
-                Haptics.select()
-                feed.activeTab = tab
-                Task { await feed.load(tab: tab, api: services.api) }
-            }
-
-            HStack(spacing: 3) {
-                StatusDot(on: true)
-                StatusDot(on: playback.macStatus.ethernet ?? false)
-                StatusDot(on: !(playback.macStatus.locked ?? false))
-                StatusDot(on: !(playback.macStatus.screenOff ?? false))
-            }
-            .contentShape(Rectangle())
-            .padding(.horizontal, 4)
-            .onLongPressGesture(minimumDuration: 0.5) {
-                Haptics.success()
-                services.ui.secretMenuOpen = true
+                // Pill 3: status dots → secret menu
+                HStack(spacing: 4) {
+                    StatusDot(on: true)
+                    StatusDot(on: playback.macStatus.ethernet ?? false)
+                    StatusDot(on: !(playback.macStatus.locked ?? false))
+                    StatusDot(on: !(playback.macStatus.screenOff ?? false))
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .contentShape(Capsule())
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .onLongPressGesture(minimumDuration: 0.5) {
+                    Haptics.success()
+                    services.ui.secretMenuOpen = true
+                }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .glassEffect(
-            .regular
-                .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                .interactive(),
-            in: Capsule()
-        )
         .padding(.horizontal, 8)
         .padding(.top, 4)
     }
