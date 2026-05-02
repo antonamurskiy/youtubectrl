@@ -55,8 +55,10 @@ struct HeaderView: View {
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
-                // Pill 2: tabs
-                TabsRow(activeTab: feed.activeTab, fontSize: Self.pillFont) { tab in
+                // Pill 2: tabs — active highlight follows the theme.
+                TabsRow(activeTab: feed.activeTab,
+                        fontSize: Self.pillFont,
+                        highlightTint: theme.resolved ?? Color.appText) { tab in
                     Haptics.select()
                     feed.activeTab = tab
                     Task { await feed.load(tab: tab, api: services.api) }
@@ -97,6 +99,7 @@ struct HeaderView: View {
 private struct TabsRow: View {
     let activeTab: FeedTab
     let fontSize: CGFloat
+    let highlightTint: Color
     let onTap: (FeedTab) -> Void
     @Namespace private var ns
 
@@ -116,7 +119,7 @@ private struct TabsRow: View {
                             .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
                     }
                     .buttonStyle(.plain)
-                    .modifier(ActiveTabGlass(active: active, ns: ns, id: tab.label))
+                    .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
                 }
             }
             .fixedSize()
@@ -129,12 +132,15 @@ private struct TabsRow: View {
 /// lets the pill morph between tabs as the active one changes.
 private struct ActiveTabGlass: ViewModifier {
     let active: Bool
+    let tint: Color
     let ns: Namespace.ID
     let id: String
     func body(content: Content) -> some View {
         if active {
             content
-                .glassEffect(.regular.tint(Color.appText.opacity(0.18)).interactive(),
+                // Active tab pill picks up the theme tint (tmux pane
+                // color or per-tab tint) instead of a fixed cream wash.
+                .glassEffect(.regular.tint(tint.opacity(0.45)).interactive(),
                              in: Capsule())
                 .glassEffectID(id, in: ns)
         } else {
