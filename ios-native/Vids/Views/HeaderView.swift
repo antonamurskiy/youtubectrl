@@ -26,20 +26,29 @@ struct HeaderView: View {
 
     init(searchFocused: Binding<Bool>) {
         self._searchFocused = searchFocused
-        // Match the segmented Picker's font to the rest of the pills
-        // and clear its native dark-grey backdrop so the outer glass
-        // capsule shows through (was rendering as "another bg
-        // inside the capsule").
         let font = UIFont.systemFont(ofSize: Self.pillFont, weight: .semibold)
-        UISegmentedControl.appearance().setTitleTextAttributes(
+        let segApp = UISegmentedControl.appearance()
+        segApp.setTitleTextAttributes(
             [.font: font, .foregroundColor: UIColor.systemGray], for: .normal
         )
-        UISegmentedControl.appearance().setTitleTextAttributes(
+        segApp.setTitleTextAttributes(
             [.font: font, .foregroundColor: UIColor.white], for: .selected
         )
-        UISegmentedControl.appearance().backgroundColor = .clear
-        UISegmentedControl.appearance().selectedSegmentTintColor =
-            UIColor.white.withAlphaComponent(0.18)
+        // .backgroundColor alone leaves UISegmentedControl's native
+        // background IMAGE drawing the dark bar behind all segments
+        // (the "second container" inside our glass capsule). Replace
+        // both the bar background AND the dividers with empty UIImage
+        // so only the selected-segment pill shows.
+        let empty = UIImage()
+        segApp.setBackgroundImage(empty, for: .normal, barMetrics: .default)
+        segApp.setBackgroundImage(empty, for: .selected, barMetrics: .default)
+        segApp.setBackgroundImage(empty, for: .highlighted, barMetrics: .default)
+        segApp.setDividerImage(empty,
+                               forLeftSegmentState: .normal,
+                               rightSegmentState: .normal,
+                               barMetrics: .default)
+        segApp.backgroundColor = .clear
+        segApp.selectedSegmentTintColor = UIColor.white.withAlphaComponent(0.18)
     }
 
     var body: some View {
