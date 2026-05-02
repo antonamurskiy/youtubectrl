@@ -171,24 +171,21 @@ struct RootView: View {
                 // screen top down to the safe-area edge — header pill
                 // sits below.
                 GeometryReader { proxy in
-                    // Glass strip masked by a vertical gradient —
-                    // opaque at the screen top, fading to clear right
-                    // before the safe-area edge so cells scrolling
-                    // underneath blur smoothly into view instead of
-                    // hitting a hard horizontal line.
-                    Rectangle()
-                        .fill(.thinMaterial)
-                        // Strip extends well past the safe area so the
-                        // gradient has room to fade smoothly all the
-                        // way out — no hard edge anywhere.
-                        .frame(height: proxy.safeAreaInsets.top + 60)
-                        .mask(
-                            LinearGradient(
-                                colors: [.black, .clear],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
-                        .ignoresSafeArea(.container, edges: .top)
+                    // Solid dark gradient (matches app bg) instead of
+                    // .thinMaterial — the live blur was re-rasterizing
+                    // every frame as cells scrolled behind, making the
+                    // top row visibly tweak. Solid color is static, no
+                    // flicker, still soft fade.
+                    LinearGradient(
+                        colors: [
+                            theme.resolvedSurface,
+                            theme.resolvedSurface.opacity(0.85),
+                            Color.clear,
+                        ],
+                        startPoint: .top, endPoint: .bottom
+                    )
+                    .frame(height: proxy.safeAreaInsets.top + 50)
+                    .ignoresSafeArea(.container, edges: .top)
                 }
                 .allowsHitTesting(false)
                 .zIndex(17)
