@@ -29,14 +29,19 @@ struct HeaderView: View {
 
     init(searchFocused: Binding<Bool>) {
         self._searchFocused = searchFocused
-        // Match the segmented Picker's title font to the other pills.
-        // DON'T touch backgroundImage / selectedSegmentTintColor —
-        // those carry iOS 26's Liquid Glass chrome and the magnify
-        // lensing on the selected pill. Overriding them kills both.
+        // Title font.
         let font = UIFont.systemFont(ofSize: Self.pillFont, weight: .semibold)
         let segApp = UISegmentedControl.appearance()
         segApp.setTitleTextAttributes([.font: font], for: .normal)
         segApp.setTitleTextAttributes([.font: font], for: .selected)
+        // Hide the white "track" backing that spans all segments so
+        // our outer .glassEffect capsule shows through. NOTE: we don't
+        // touch backgroundImage — that nukes the magnify lens (the
+        // lens is an overlay on the chrome layer). Setting
+        // backgroundColor + selectedSegmentTintColor to clear hides
+        // the visible track without touching the lens subview.
+        segApp.backgroundColor = .clear
+        segApp.selectedSegmentTintColor = .clear
     }
 
     var body: some View {
@@ -65,8 +70,17 @@ struct HeaderView: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.pillHeight)
+                // Outer tinted glass capsule matches search + dots pills.
+                // UISC's own track is cleared via appearance() so the
+                // glass capsule is the only visible chrome. The magnify
+                // lens still renders — it lives in a private subview
+                // separate from backgroundColor/selectedSegmentTintColor.
+                .glassEffect(.regular.tint(pillTint), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
