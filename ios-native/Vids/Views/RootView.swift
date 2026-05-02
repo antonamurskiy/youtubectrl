@@ -59,8 +59,11 @@ struct RootView: View {
             // OS-owned Liquid Glass tab bar + lift-out lens. Search
             // is a Tab(role: .search) → detached circle. NowPlayingBar
             // lives inside .tabViewBottomAccessory.
+            // NPBar is taller now (4 rows + scrubber + paddings). The
+            // old 175 was too low → tmux content rendered behind the
+            // bar's top edge, garbling the visible PTY rows.
             let bottomInset: CGFloat = (playback.playing && !terminal.keyboardOpen)
-                ? 175
+                ? 240
                 : 0
             if hSize == .regular {
                 HStack(spacing: 0) {
@@ -132,6 +135,10 @@ struct RootView: View {
                     // terminal pane. Drop the offset when terminal is
                     // open so NPBar sits flush at the bottom.
                     .padding(.bottom, terminal.open ? 0 : 56)
+                    // .container so the bar can sit in the safe-area
+                    // band — without this, SwiftUI shrinks the VStack
+                    // and clips the scrubber + title rows out of view.
+                    .ignoresSafeArea(.container, edges: .bottom)
                     .ignoresSafeArea(.keyboard, edges: .bottom)
                     .transition(.opacity)
                     .zIndex(10)

@@ -14,6 +14,7 @@ struct SecretMenu: View {
     @State private var syncOffsetMs: Double = 0
     @State private var stealth: Bool = false
     @State private var friend: ApiClient.FindMyFriend? = nil
+    @State private var refreshingFriend: Bool = false
 
     var body: some View {
         // iOS 26 Liquid Glass spacing — measured against stock Settings
@@ -141,10 +142,16 @@ struct SecretMenu: View {
                     }
                 }
             ))
-            actionRow("Refresh location", icon: "arrow.clockwise") {
+            actionRow(refreshingFriend ? "Refreshing…" : "Refresh location",
+                      icon: "arrow.clockwise") {
+                guard !refreshingFriend else { return }
+                refreshingFriend = true
                 Task {
+                    await ui.toast("Refreshing FindMy…")
                     try? await services.api.refreshFindMy()
                     await refreshFriend(force: true)
+                    refreshingFriend = false
+                    await ui.toast("FindMy updated")
                 }
             }
         }
