@@ -185,16 +185,14 @@ final class LiveSyncEngine {
         }
 
         // shouldSeek: fire if calibration just completed (apply bias)
-        // OR if smoothed drift > 0.5s. React uses 0.2s but the
-        // server-side mpv `userPdt` jitters 200-500ms periodically
-        // (manifest refresh / cache chunk fetch) — at 0.2s, every
-        // jitter tripped a re-seek and undid the previous
-        // convergence. 0.5s tolerates the jitter while still
-        // catching real drift.
-        let shouldSeek = (calibrated || abs(smoothedDriftMs) > 500)
+        // OR smoothed drift > 0.2s — matches React's PhonePlayer.jsx.
+        // Without continuous re-seeks, mpv vs AVPlayer clock skew
+        // (~2ms/s) accumulates linearly. Periodic small seeks keep
+        // drift bounded. The smoothed (5-sample EMA) absorbs server-
+        // side userPdt jitter so brief 300-500ms blips don't trip.
+        let shouldSeek = (calibrated || abs(smoothedDriftMs) > 200)
                          && abs(smoothedDriftMs) < outlierThresholdSec * 1000
                          && cooldownOk
-                         && !isSettled
 
         if shouldSeek {
             let target = mpvPdtNow + biasMs
