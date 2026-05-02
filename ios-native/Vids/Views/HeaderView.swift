@@ -49,10 +49,10 @@ struct HeaderView: View {
                             searchTask?.cancel()
                             Task { await feed.search(searchText, api: services.api) }
                         }
-                        // Expand to fill all remaining width — header
-                        // is right-aligned in RootView, so the search
-                        // pill stretches leftward to claim free space.
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        // Smallest pill — let the tabs Picker claim
+                        // the leftover width since they need room
+                        // for all the labels.
+                        .frame(width: 60, alignment: .leading)
                 }
                 .padding(.horizontal, 18)
                 .padding(.vertical, 12)
@@ -77,6 +77,7 @@ struct HeaderView: View {
                 .pickerStyle(.segmented)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 6)
+                .frame(maxWidth: .infinity)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
