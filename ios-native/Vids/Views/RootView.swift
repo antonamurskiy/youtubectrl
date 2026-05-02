@@ -150,6 +150,16 @@ struct RootView: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
                 .zIndex(20)
 
+            // Floating top nav pill — over the feed, hidden when
+             // terminal is open (terminal has its own tmux tabs strip).
+            if !terminal.open {
+                VStack(spacing: 0) {
+                    HeaderView(searchFocused: $searchFocused)
+                    Spacer()
+                }
+                .zIndex(18)
+            }
+
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
@@ -280,7 +290,6 @@ struct RootView: View {
 
     private var feedView: some View {
         VStack(spacing: 0) {
-            HeaderView(searchFocused: $searchFocused)
             if let ch = feed.channelQuery {
                 HStack(spacing: 8) {
                     Image(systemName: "person.crop.rectangle")

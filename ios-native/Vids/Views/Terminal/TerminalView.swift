@@ -56,38 +56,38 @@ struct TerminalView: View {
             }
 
             if terminal.windows.count > 1 {
-                GeometryReader { geo in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            Spacer(minLength: 0)
-                            ForEach(terminal.windows) { w in
-                                Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
-                                    Text(w.name)
-                                        .font(Font.app(13, weight: w.active ? .heavy : .semibold))
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 6)
-                                        .background(tabBg(w))
-                                        .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
-                                        .overlay(alignment: .bottom) {
-                                            Rectangle()
-                                                .fill(w.active ? Color(hex: "#ebdbb2") : Color.clear)
-                                                .frame(height: 2)
-                                        }
-                                }
-                                .buttonStyle(.plain)
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.5)
-                                        .onEnded { _ in renaming = w }
-                                )
+                // Floating glass tab strip — same Liquid Glass capsule
+                // the main nav uses, sitting over the terminal output.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(terminal.windows) { w in
+                            Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
+                                Text(w.name)
+                                    .font(Font.app(13, weight: w.active ? .heavy : .semibold))
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(tabBg(w))
+                                    .clipShape(Capsule())
+                                    .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
                             }
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5)
+                                    .onEnded { _ in renaming = w }
+                            )
                         }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 6)
-                        .frame(minWidth: geo.size.width, alignment: .trailing)
                     }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
                 }
-                .frame(height: 38)
-                .background(theme.resolvedSurface.opacity(0.7))
+                .glassEffect(
+                    .regular
+                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                        .interactive(),
+                    in: Capsule()
+                )
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
             }
         }
         .onDisappear {

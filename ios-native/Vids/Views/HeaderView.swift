@@ -11,7 +11,9 @@ struct HeaderView: View {
     @FocusState private var fieldFocus: Bool
 
     var body: some View {
-        // Single row: home / search / tabs / status dots — matches React.
+        // Floating Liquid Glass nav pill over the feed content. Same
+        // material the FAB stack and now-playing bar use, so the
+        // chrome cohere into one glass system.
         HStack(spacing: 6) {
             Button(action: home) {
                 Image(systemName: "play.fill")
@@ -63,8 +65,16 @@ struct HeaderView: View {
                 services.ui.secretMenuOpen = true
             }
         }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .glassEffect(
+            .regular
+                .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                .interactive(),
+            in: Capsule()
+        )
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
+        .padding(.top, 4)
     }
 
     private func home() {
