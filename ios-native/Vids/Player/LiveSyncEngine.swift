@@ -13,12 +13,14 @@ import Observation
 final class LiveSyncEngine {
     // Tunables
     let learningRate: Double = 0.7
-    // Bumped 0.5 → 1.5s and 2.5 → 5s — was triggering visible AVPlayer
-    // skips on tiny drifts that the user perceived as the player
-    // jumping around. Slower correction = smoother watch experience;
-    // long-running drift still gets caught.
-    let seekThresholdSec: Double = 1.5
-    let seekCooldownSec: Double = 5.0
+    // 0.5s threshold + 2.5s cooldown — micro-corrects the natural
+    // decoder-clock drift between mpv and phone (±50-100ms over time
+    // if uncorrected). The earlier bump to 1.5s left drift uncorrected
+    // and the user perceived ±70ms wobble. Combined with the
+    // phoneSyncOk gate (server only broadcasts absoluteMs when valid)
+    // and outlier 3600s, occasional small seeks are fine.
+    let seekThresholdSec: Double = 0.5
+    let seekCooldownSec: Double = 2.5
     let smoothingWindow: Int = 5
     let stableVarianceMs: Double = 80
     // Bumped 10 → 3600 — initial drift can legitimately be 20-60s
