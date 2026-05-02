@@ -29,6 +29,7 @@ final class FeedStore {
     var currentVideos: [Video] { videosByTab[activeTab] ?? [] }
     func videosForTab(_ tab: FeedTab) -> [Video] { videosByTab[tab] ?? [] }
     var currentShorts: [Short] { shortsByTab[activeTab] ?? [] }
+    func shortsForTab(_ tab: FeedTab) -> [Short] { shortsByTab[tab] ?? [] }
 
     func loadInitial(api: ApiClient) async {
         for tab in [FeedTab.rec] {

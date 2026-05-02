@@ -8,7 +8,14 @@ import UIKit
 struct FeedListView: UIViewRepresentable {
     @Environment(FeedStore.self) private var feed
     @Environment(ServiceContainer.self) private var services
+    /// Optional explicit tab to render. When nil, falls back to
+    /// feed.activeTab (legacy behavior). MainTabView passes the
+    /// per-Tab value so each TabView page renders its own data —
+    /// otherwise every Tab reads activeTab and shows the same feed.
+    var tab: FeedTab? = nil
     let onSwipe: (Int) -> Void
+
+    private var renderTab: FeedTab { tab ?? feed.activeTab }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(feed: feed, services: services, onSwipe: onSwipe)
@@ -88,8 +95,11 @@ struct FeedListView: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: UICollectionView, context: Context) {
-        let videos = feed.currentVideos
-        let shorts = feed.currentShorts
+        let videos = feed.videosForTab(renderTab)
+        let shorts = feed.shortsForTab(renderTab)
+        // Keep the coordinator's load/append handlers pointing at the
+        // tab THIS view is rendering rather than feed.activeTab.
+        context.coordinator.activeTabOverride = tab
         let tick = feed.refreshTick
         context.coordinator.refresh(uiView, videos: videos, shorts: shorts)
         // Scroll to top whenever the refresh FAB has bumped the tick.
@@ -108,6 +118,11 @@ struct FeedListView: UIViewRepresentable {
         private var dataSource: UICollectionViewDiffableDataSource<Section, Item>!
         private var swipeStart: CGPoint?
         var lastRefreshTick: Int = 0
+        /// Overrides feed.activeTab for load/append/refresh calls so
+        /// each FeedListView instance hits its own tab's API. Set by
+        /// updateUIView; nil means use activeTab.
+        var activeTabOverride: FeedTab? = nil
+        private var effectiveTab: FeedTab { activeTabOverride ?? feed.activeTab }
         /// True while a horizontal swipe is in progress / just ended.
         /// Cell taps fire didSelectItemAt; we ignore them when this
         /// is true so swipes don't trigger accidental video plays.
@@ -331,9 +346,9 @@ struct FeedListView: UIViewRepresentable {
             // Infinite scroll: load next page when prefetch reaches the
             // last 5 cells in the videos section.
             if let last = indexPaths.map(\.item).max() {
-                let videos = feed.currentVideos
+                let videos = feed.videosForTab(effectiveTab)
                 if last >= videos.count - 5 {
-                    let tab = feed.activeTab
+                    let tab = effectiveTab
                     Task { @MainActor in await feed.load(tab: tab, api: services.api, append: true) }
                 }
             }
@@ -341,7 +356,7 @@ struct FeedListView: UIViewRepresentable {
 
         @objc func onRefresh(_ control: UIRefreshControl) {
             UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-            let tab = feed.activeTab
+            let tab = effectiveTab
             Task { @MainActor in
                 await feed.load(tab: tab, api: services.api, append: false)
                 control.endRefreshing()

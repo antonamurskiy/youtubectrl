@@ -218,7 +218,7 @@ struct TmuxBroadcast: Codable {
 }
 
 enum FeedTab: String, CaseIterable, Identifiable {
-    case rec, live, subs, ru, history
+    case rec, live, subs, history, ru
     var id: String { rawValue }
     var label: String {
         switch self {
