@@ -6415,7 +6415,17 @@ wssTerm.on("connection", (ws) => {
     cols: 54,
     rows: 25,
     cwd: process.env.HOME,
-    env: { ...process.env, TERM: "xterm-256color" },
+    env: {
+      // Force UTF-8 locale — without this, Claude Code detects a
+      // non-UTF-8 terminal and downgrades unicode glyphs (e.g. the
+      // ✽ spinner) to ASCII fallback (`_`). When the server runs
+      // under launchd, process.env has no LANG/LC_* by default.
+      ...process.env,
+      TERM: "xterm-256color",
+      LANG: "en_US.UTF-8",
+      LC_ALL: "en_US.UTF-8",
+      LC_CTYPE: "en_US.UTF-8",
+    },
   });
   // Hide tmux status bar for web session, restore on disconnect
   setTimeout(() => { try { execSync("tmux set status off", { stdio: "ignore" }); } catch {} }, 500);
