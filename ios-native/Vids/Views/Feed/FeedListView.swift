@@ -59,6 +59,7 @@ struct FeedListView: UIViewRepresentable {
         // deceleration curve cells experience at the safe-area
         // boundary. Hide it on every edge that touches a safe area.
         cv.topEdgeEffect.isHidden = true
+        cv.insetsLayoutMarginsFromSafeArea = false
         cv.bottomEdgeEffect.isHidden = true
         cv.topEdgeEffect.style = .hard
         cv.bottomEdgeEffect.style = .hard
@@ -186,6 +187,16 @@ struct FeedListView: UIViewRepresentable {
             let svcs = self.services
             let videoReg = UICollectionView.CellRegistration<UICollectionViewCell, Video> { cell, _, video in
                 UIView.performWithoutAnimation {
+                    // Stop UIHostingConfiguration's hosted SwiftUI
+                    // root from inheriting the cv's safe-area inset
+                    // (cv extends into top safe area). Without these,
+                    // each cell's SwiftUI content reserves extra
+                    // drawable space for the inherited inset and
+                    // visually intrudes into the previous cell as
+                    // both transit the Dynamic Island band.
+                    cell.contentView.insetsLayoutMarginsFromSafeArea = false
+                    cell.insetsLayoutMarginsFromSafeArea = false
+                    cell.contentView.clipsToBounds = true
                     cell.contentConfiguration = UIHostingConfiguration {
                         VideoCellView(video: video)
                             .environment(svcs)
@@ -193,16 +204,13 @@ struct FeedListView: UIViewRepresentable {
                             .environment(svcs.ui)
                             .environment(svcs.playback)
                             .font(Font.app(svcs.fonts.size))
+                            // Load-bearing for iOS 26: tells the
+                            // SwiftUI root inside the host to ignore
+                            // any inherited safe-area, killing the
+                            // overlap-into-prev-cell behavior.
+                            .ignoresSafeArea()
                     }
                     .margins(.all, 0)
-                    // Default UIHostingConfiguration reports the
-                    // SwiftUI content's intrinsic size to the
-                    // collection layout. When it's smaller than the
-                    // cell's absolute frame (e.g., title hasn't
-                    // measured yet), the host shrinks then animates
-                    // back to the cell frame — that's the "zoom in".
-                    // .never tells the cell to ignore intrinsic size
-                    // and just fill the layout-defined frame.
                     .minSize(width: 0, height: 0)
                     cell.backgroundConfiguration = .clear()
                     cell.layer.removeAllAnimations()
@@ -210,11 +218,15 @@ struct FeedListView: UIViewRepresentable {
             }
             let shortReg = UICollectionView.CellRegistration<UICollectionViewCell, Short> { cell, _, short in
                 UIView.performWithoutAnimation {
+                    cell.contentView.insetsLayoutMarginsFromSafeArea = false
+                    cell.insetsLayoutMarginsFromSafeArea = false
+                    cell.contentView.clipsToBounds = true
                     cell.contentConfiguration = UIHostingConfiguration {
                         ShortCellView(short: short)
                             .environment(svcs)
                             .environment(svcs.fonts)
                             .font(Font.app(svcs.fonts.size))
+                            .ignoresSafeArea()
                     }
                     .margins(.all, 0)
                     cell.backgroundConfiguration = .clear()
