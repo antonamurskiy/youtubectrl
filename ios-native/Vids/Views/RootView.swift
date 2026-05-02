@@ -175,14 +175,19 @@ struct RootView: View {
                     // fade so cells scrolling under the Dynamic
                     // Island blur in without a hard horizontal edge.
                     Rectangle()
-                        .fill(.thinMaterial)
-                        // Extends well past the safe area + the 36pt
-                        // header pill so the gradient mask has room
-                        // to fade smoothly to clear below the pill.
+                        .fill(.regularMaterial)
                         .frame(height: proxy.safeAreaInsets.top + 220)
                         .mask(
+                            // Hold full-opacity blur for the top
+                            // 35% (covers Dynamic Island + header
+                            // pill area), then fade to clear so the
+                            // bottom edge stays smooth.
                             LinearGradient(
-                                colors: [.black, .clear],
+                                stops: [
+                                    .init(color: .black, location: 0),
+                                    .init(color: .black, location: 0.35),
+                                    .init(color: .clear, location: 1),
+                                ],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
