@@ -26,13 +26,11 @@ struct HeaderView: View {
     var body: some View {
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
-                // Pill 1: home + search
-                HStack(spacing: 8) {
-                    Button(action: home) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: Self.pillFont, weight: .bold))
-                            .foregroundStyle(Color.appText.opacity(0.85))
-                    }
+                // Pill 1: search (with magnifier as the affordance)
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: Self.pillFont, weight: .semibold))
+                        .foregroundStyle(Color.appText.opacity(0.5))
                     TextField("Search", text: $searchText)
                         .textFieldStyle(.plain)
                         .submitLabel(.search)
@@ -54,9 +52,9 @@ struct HeaderView: View {
                             searchTask?.cancel()
                             Task { await feed.search(searchText, api: services.api) }
                         }
-                        .frame(width: 70, alignment: .leading)
+                        .frame(width: 50, alignment: .leading)
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
