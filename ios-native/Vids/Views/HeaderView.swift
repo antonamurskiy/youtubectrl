@@ -59,11 +59,9 @@ struct HeaderView: View {
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
-                // Pill 2: native segmented Picker. iOS 26 auto-applies
-                // Liquid Glass + drag-to-switch + magnify-under-finger
-                // lensing on segmented controls (WWDC25 session 323) —
-                // there's no public API to recreate that lensing on a
-                // custom view, so this is the canonical path.
+                // Pill 2: native segmented Picker wrapped in the
+                // same glass capsule chrome as pill 1 (search) and
+                // pill 3 (dots).
                 Picker("Tab", selection: Binding(
                     get: { feed.activeTab },
                     set: { newTab in
@@ -77,6 +75,10 @@ struct HeaderView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 6)
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
