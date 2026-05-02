@@ -201,7 +201,7 @@ struct RootView: View {
             set: { ui.secretMenuOpen = $0 }
         )) {
             SecretMenu()
-                .presentationDetents([.medium, .fraction(0.95)])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 // Dim backdrop behind the glass cards — without it the
                 // cards float over the bright feed with nothing for the
@@ -233,7 +233,7 @@ struct RootView: View {
             set: { ui.audioSheetOpen = $0 }
         )) {
             AudioOutputSheet()
-                .presentationDetents([.medium, .fraction(0.95)])
+                .presentationDetents([.medium, .large])
                 .presentationDragIndicator(.visible)
                 .presentationBackground(.thinMaterial)
         }
