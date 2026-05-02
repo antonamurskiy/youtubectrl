@@ -171,21 +171,19 @@ struct RootView: View {
                 // screen top down to the safe-area edge — header pill
                 // sits below.
                 GeometryReader { proxy in
-                    // Solid dark gradient (matches app bg) instead of
-                    // .thinMaterial — the live blur was re-rasterizing
-                    // every frame as cells scrolled behind, making the
-                    // top row visibly tweak. Solid color is static, no
-                    // flicker, still soft fade.
-                    LinearGradient(
-                        colors: [
-                            theme.resolvedSurface,
-                            theme.resolvedSurface.opacity(0.85),
-                            Color.clear,
-                        ],
-                        startPoint: .top, endPoint: .bottom
-                    )
-                    .frame(height: proxy.safeAreaInsets.top + 50)
-                    .ignoresSafeArea(.container, edges: .top)
+                    // Glass blur strip masked by a smooth top→bottom
+                    // fade so cells scrolling under the Dynamic
+                    // Island blur in without a hard horizontal edge.
+                    Rectangle()
+                        .fill(.thinMaterial)
+                        .frame(height: proxy.safeAreaInsets.top + 60)
+                        .mask(
+                            LinearGradient(
+                                colors: [.black, .clear],
+                                startPoint: .top, endPoint: .bottom
+                            )
+                        )
+                        .ignoresSafeArea(.container, edges: .top)
                 }
                 .allowsHitTesting(false)
                 .zIndex(17)
