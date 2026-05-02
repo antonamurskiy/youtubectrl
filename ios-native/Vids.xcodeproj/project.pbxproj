@@ -35,6 +35,7 @@
 		97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */; };
 		9F4003B6DE9EF1A22E8F1C9E /* AudioOutputSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680E1B2FD41746EA8CD4E5D4 /* AudioOutputSheet.swift */; };
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
+		B12D8C50F808793B28FECC15 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33FABF28AB81A46AF9E93598 /* GlassCard.swift */; };
 		B286EBE1F4C705F0CCA021AF /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865103F6DE2AF3C66792596A /* Skeleton.swift */; };
 		B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */; };
 		B41C2EC4A91F9FA1A1F3E9F2 /* ClaudeQuickReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */; };
@@ -60,6 +61,7 @@
 		2465BFECA4E139AC71688AF1 /* FontStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FontStore.swift; sourceTree = "<group>"; };
 		2C1FBE05CCBF27CF3B24D26B /* Haptics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Haptics.swift; sourceTree = "<group>"; };
 		2E7A60F533EA88740A8701DF /* ScrubberView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubberView.swift; sourceTree = "<group>"; };
+		33FABF28AB81A46AF9E93598 /* GlassCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassCard.swift; sourceTree = "<group>"; };
 		346B82D17260E7978B885929 /* TerminalStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalStore.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
 		4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardObserver.swift; sourceTree = "<group>"; };
@@ -177,6 +179,14 @@
 			path = Vids;
 			sourceTree = "<group>";
 		};
+		873E06CEDE075D18863D4AD5 /* Common */ = {
+			isa = PBXGroup;
+			children = (
+				33FABF28AB81A46AF9E93598 /* GlassCard.swift */,
+			);
+			path = Common;
+			sourceTree = "<group>";
+		};
 		8F7A6D83E010966BAB3D1A1D /* Networking */ = {
 			isa = PBXGroup;
 			children = (
@@ -278,6 +288,7 @@
 				8FA7931C65256F257CD6A648 /* FABStack.swift */,
 				47049B680884787ECFCBCA84 /* HeaderView.swift */,
 				DBBC8B0D72054C178C9628EA /* RootView.swift */,
+				873E06CEDE075D18863D4AD5 /* Common */,
 				148E8EBEC62C4A3930398261 /* Feed */,
 				BFEE1F56F52D6C68567DCFAA /* Misc */,
 				33C1257F7A2BF6C25B449983 /* NowPlaying */,
@@ -373,6 +384,7 @@
 				92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */,
 				C9B831134DBCA1824847B40E /* FeedStore.swift in Sources */,
 				22A39A9D83262B14E9665774 /* FontStore.swift in Sources */,
+				B12D8C50F808793B28FECC15 /* GlassCard.swift in Sources */,
 				C277191434F21FEEE7B87B05 /* Haptics.swift in Sources */,
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
 				97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */,

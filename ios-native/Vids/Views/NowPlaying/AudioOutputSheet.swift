@@ -15,55 +15,51 @@ struct AudioOutputSheet: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 14) {
-                glassCard {
-                    cardSection(nil) {
-                        volumeRow
-                    }
-                }
-                glassCard {
-                    cardSection("Output") {
-                        if outputs.isEmpty {
-                            Text("loading…").foregroundStyle(.secondary)
-                        } else {
-                            ForEach(outputs) { o in
-                                outputRow(name: o.name,
-                                          active: o.active,
-                                          color: Color(hex: "#8ec07c")) {
-                                    Task {
-                                        try? await services.api.setAudioOutput(o.name)
-                                        await loadOutputs()
-                                    }
+                CardSection(nil) { volumeRow }
+                    .glassCard()
+
+                CardSection("Output") {
+                    if outputs.isEmpty {
+                        Text("loading…").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(outputs) { o in
+                            outputRow(name: o.name,
+                                      active: o.active,
+                                      color: Color(hex: "#8ec07c")) {
+                                Task {
+                                    try? await services.api.setAudioOutput(o.name)
+                                    await loadOutputs()
                                 }
                             }
                         }
                     }
                 }
-                glassCard {
-                    cardSection("Bluetooth") {
-                        if btDevices.isEmpty {
-                            Text("no devices").foregroundStyle(.secondary)
-                        } else {
-                            ForEach(btDevices) { d in
-                                outputRow(name: d.name ?? d.address,
-                                          active: d.connected == true,
-                                          color: Color(hex: "#6c99bb")) {
-                                    Task {
-                                        if d.connected == true { try? await services.api.bluetoothDisconnect(d.address) }
-                                        else { try? await services.api.bluetoothConnect(d.address) }
-                                        btDevices = (try? await services.api.bluetoothDevices()) ?? []
-                                    }
+                .glassCard()
+
+                CardSection("Bluetooth") {
+                    if btDevices.isEmpty {
+                        Text("no devices").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(btDevices) { d in
+                            outputRow(name: d.name ?? d.address,
+                                      active: d.connected == true,
+                                      color: Color(hex: "#6c99bb")) {
+                                Task {
+                                    if d.connected == true { try? await services.api.bluetoothDisconnect(d.address) }
+                                    else { try? await services.api.bluetoothConnect(d.address) }
+                                    btDevices = (try? await services.api.bluetoothDevices()) ?? []
                                 }
                             }
                         }
                     }
                 }
+                .glassCard()
             }
             .padding(.horizontal, 20)
             .padding(.top, 28)
             .padding(.bottom, 28)
         }
         .scrollContentBackground(.hidden)
-        .tint(Color(hex: "#8ec07c"))
         .task {
             await loadOutputs()
             await loadVolume()
@@ -71,52 +67,7 @@ struct AudioOutputSheet: View {
         }
     }
 
-    // MARK: card chrome (matches SecretMenu)
-
-    @ViewBuilder
-    private func glassCard<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) { content() }
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .glassEffect(.regular.tint(.black.opacity(0.10)),
-                         in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
-    }
-
-    @ViewBuilder
-    private func cardSection<Content: View>(_ header: String? = nil,
-                                            @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let header {
-                Text(header)
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 12)
-            }
-            _VariadicView.Tree(SeparatedRows()) { content() }
-        }
-    }
-
-    private struct SeparatedRows: _VariadicView_MultiViewRoot {
-        @ViewBuilder
-        func body(children: _VariadicView.Children) -> some View {
-            let last = children.last?.id
-            ForEach(children) { child in
-                child.padding(.vertical, 12)
-                if child.id != last {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.10))
-                        .frame(height: 0.5)
-                }
-            }
-        }
-    }
+    // card chrome (glassCard, CardSection) is shared via Views/Common/GlassCard.swift
 
     // MARK: rows
 

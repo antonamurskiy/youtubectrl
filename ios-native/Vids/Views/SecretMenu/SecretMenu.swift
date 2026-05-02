@@ -22,14 +22,14 @@ struct SecretMenu: View {
         ScrollView {
             GlassEffectContainer(spacing: 14) {
                 VStack(spacing: 14) {
-                    glassCard(volumeSection)
-                    glassCard(findMySection)
-                    glassCard(syncOffsetSection)
-                    glassCard(macSection)
-                    glassCard(audioOutputSection)
-                    glassCard(bluetoothSection)
-                    glassCard(fontSection)
-                    glassCard(brightnessSection)
+                    volumeSection.glassCard()
+                    findMySection.glassCard()
+                    syncOffsetSection.glassCard()
+                    macSection.glassCard()
+                    audioOutputSection.glassCard()
+                    bluetoothSection.glassCard()
+                    fontSection.glassCard()
+                    brightnessSection.glassCard()
                 }
                 .padding(.horizontal, 20)
                 // Clearance for the sheet's drag indicator handle —
@@ -51,64 +51,8 @@ struct SecretMenu: View {
         }
     }
 
-    // MARK: glass card wrapper (iOS 26 Liquid Glass)
-
-    @ViewBuilder
-    private func glassCard<Content: View>(_ content: Content) -> some View {
-        content
-            .padding(.horizontal, 18)
-            .padding(.top, 18)
-            .padding(.bottom, 16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // Black-tinted glass instead of white — pale-but-not-white
-            // surface that fades into the dim sheet bg.
-            .glassEffect(.regular.tint(.black.opacity(0.10)),
-                         in: RoundedRectangle(cornerRadius: 26, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.5)
-            )
-            .shadow(color: .black.opacity(0.4), radius: 18, y: 8)
-    }
-
-    /// Section with a stronger header (subheadline.bold), rows separated
-    /// by hairlines for the iOS Settings-style structure.
-    @ViewBuilder
-    private func cardSection<Content: View>(_ header: String? = nil,
-                                            @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let header {
-                Text(header)
-                    // Softer header: footnote.semibold secondary instead
-                    // of subheadline.bold primary — reads as a label,
-                    // not a billboard, which is what was making the
-                    // sections feel harsh.
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 12)
-            }
-            _VariadicView.Tree(SeparatedRows()) {
-                content()
-            }
-        }
-    }
-
-    /// Rows separated by a flat hairline.
-    private struct SeparatedRows: _VariadicView_MultiViewRoot {
-        @ViewBuilder
-        func body(children: _VariadicView.Children) -> some View {
-            let last = children.last?.id
-            ForEach(children) { child in
-                child
-                    .padding(.vertical, 12)
-                if child.id != last {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.10))
-                        .frame(height: 0.5)
-                }
-            }
-        }
-    }
+    // glass card chrome moved to Views/Common/GlassCard.swift —
+    // shared by AudioOutputSheet so the two sheets stay identical.
 
     // MARK: status
 
@@ -137,7 +81,7 @@ struct SecretMenu: View {
     // MARK: volume
 
     private var volumeSection: some View {
-        cardSection("Volume") {
+        CardSection("Volume") {
             HStack {
                 Button {
                     muted.toggle()
@@ -161,7 +105,7 @@ struct SecretMenu: View {
     // MARK: find my
 
     private var findMySection: some View {
-        cardSection("Find My — Maria") {
+        CardSection("Find My — Maria") {
             HStack(alignment: .top) {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.secondary)
@@ -198,7 +142,7 @@ struct SecretMenu: View {
     // MARK: sync offset
 
     private var syncOffsetSection: some View {
-        cardSection("Live sync offset") {
+        CardSection("Live sync offset") {
             // Single composed child → no divider between the readout
             // and the slider (they're one control, not two rows).
             VStack(alignment: .leading, spacing: 6) {
@@ -222,7 +166,7 @@ struct SecretMenu: View {
     // MARK: mac
 
     private var macSection: some View {
-        cardSection("Mac") {
+        CardSection("Mac") {
             Toggle("Keep awake", isOn: Binding(
                 get: { playback.macStatus.keepAwake ?? false },
                 set: { v in
@@ -270,7 +214,7 @@ struct SecretMenu: View {
     // MARK: audio output
 
     private var audioOutputSection: some View {
-        cardSection("Audio output") {
+        CardSection("Audio output") {
             if outputs.isEmpty {
                 Text("loading…").foregroundStyle(.secondary)
             } else {
@@ -306,7 +250,7 @@ struct SecretMenu: View {
     // MARK: bluetooth
 
     private var bluetoothSection: some View {
-        cardSection("Bluetooth") {
+        CardSection("Bluetooth") {
             ForEach(btDevices) { d in
                 selectRow(label: d.name ?? d.address, selected: d.connected == true) {
                     Task {
@@ -332,7 +276,7 @@ struct SecretMenu: View {
     // MARK: font
 
     private var fontSection: some View {
-        cardSection("Font") {
+        CardSection("Font") {
             ForEach(FontStore.entries, id: \.label) { entry in
                 selectRow(label: entry.label, selected: services.fonts.label == entry.label) {
                     services.fonts.setLabel(entry.label)
@@ -359,7 +303,7 @@ struct SecretMenu: View {
     // MARK: brightness
 
     private var brightnessSection: some View {
-        cardSection("Brightness") {
+        CardSection("Brightness") {
             HStack {
                 Image(systemName: "sun.min").foregroundStyle(.secondary)
                 Slider(value: Binding(
