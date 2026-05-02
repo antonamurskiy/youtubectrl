@@ -59,24 +59,21 @@ struct HeaderView: View {
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
-                // Pill 2: tabs — native segmented Picker. iOS handles
-                // the tap targets, sliding selector pill, and tint
-                // automatically. Wrapped in the same glass capsule
-                // chrome as the other pills.
-                Picker("Tab", selection: Binding(
-                    get: { feed.activeTab },
-                    set: { newTab in
-                        Haptics.select()
-                        feed.activeTab = newTab
-                        Task { await feed.load(tab: newTab, api: services.api) }
-                    }
-                )) {
-                    ForEach(FeedTab.allCases) { tab in
-                        Text(tab.label).tag(tab)
-                    }
+                // Pill 2: tabs — custom row with the active pill
+                // .glassEffect(.interactive()) so it tracks/morphs
+                // under drag with the iOS 26 magnifier feel, while
+                // glassEffectID animates the pill between tabs.
+                TabsRow(activeTab: feed.activeTab,
+                        fontSize: Self.pillFont,
+                        highlightTint: theme.resolved ?? Color.appText) { tab in
+                    Haptics.select()
+                    feed.activeTab = tab
+                    Task { await feed.load(tab: tab, api: services.api) }
                 }
-                .pickerStyle(.segmented)
-                .tint(theme.resolved ?? Color.appText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
