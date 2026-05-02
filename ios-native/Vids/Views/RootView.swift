@@ -163,14 +163,14 @@ struct RootView: View {
                 GeometryReader { proxy in
                     Rectangle()
                         .fill(.regularMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 60)
+                        // Just enough to cover Dynamic Island + a small
+                        // fringe; no over-extension into the feed.
+                        .frame(height: proxy.safeAreaInsets.top + 12)
                         .mask(
+                            // Pure linear top→bottom fade (no hold) so
+                            // the transition is smooth all the way.
                             LinearGradient(
-                                stops: [
-                                    .init(color: .black, location: 0),
-                                    .init(color: .black, location: 0.55),
-                                    .init(color: .clear, location: 1),
-                                ],
+                                colors: [.black, .clear],
                                 startPoint: .top, endPoint: .bottom
                             )
                         )
