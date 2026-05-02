@@ -42,7 +42,9 @@ struct HeaderView: View {
                     searchTask?.cancel()
                     Task { await feed.search(searchText, api: services.api) }
                 }
-                .frame(maxWidth: .infinity, minHeight: 26)
+                // Capped width so the pill hugs to the right side
+                // instead of stretching the whole bar across.
+                .frame(width: 120, alignment: .leading)
                 .padding(.vertical, 4)
 
             // Inline tabs — pill smoothly slides via matchedGeometryEffect.

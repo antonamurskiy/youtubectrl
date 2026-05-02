@@ -56,9 +56,10 @@ struct TerminalView: View {
             }
 
             if terminal.windows.count > 1 {
-                // Floating glass tab strip — same Liquid Glass capsule
-                // the main nav uses, sitting over the terminal output.
-                ScrollView(.horizontal, showsIndicators: false) {
+                // Right-aligned floating glass tab strip — sized to its
+                // content, hugging the trailing edge of the screen.
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
                     HStack(spacing: 4) {
                         ForEach(terminal.windows) { w in
                             Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
@@ -79,13 +80,14 @@ struct TerminalView: View {
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
+                    .glassEffect(
+                        .regular
+                            .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
+                            .interactive(),
+                        in: Capsule()
+                    )
+                    .fixedSize()
                 }
-                .glassEffect(
-                    .regular
-                        .tint(Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7))
-                        .interactive(),
-                    in: Capsule()
-                )
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
             }

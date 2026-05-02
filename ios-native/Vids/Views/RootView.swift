@@ -150,11 +150,16 @@ struct RootView: View {
                 .ignoresSafeArea(.keyboard, edges: .bottom)
                 .zIndex(20)
 
-            // Floating top nav pill — over the feed, hidden when
-             // terminal is open (terminal has its own tmux tabs strip).
+            // Floating top nav pill — right-aligned over the feed,
+            // hidden when terminal is open (terminal has its own
+            // tmux tabs strip).
             if !terminal.open {
                 VStack(spacing: 0) {
-                    HeaderView(searchFocused: $searchFocused)
+                    HStack {
+                        Spacer(minLength: 0)
+                        HeaderView(searchFocused: $searchFocused)
+                            .fixedSize()
+                    }
                     Spacer()
                 }
                 .zIndex(18)
