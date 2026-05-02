@@ -144,8 +144,13 @@ private struct TabsRow: View {
         }
         .coordinateSpace(name: "tabsRow")
         .onPreferenceChange(TabFrameKey.self) { tabFrames = $0 }
-        .gesture(
-            DragGesture(minimumDistance: 8, coordinateSpace: .named("tabsRow"))
+        // simultaneousGesture fires alongside the per-tab tap gesture
+        // so a single tap still picks a tab. minimumDistance=0 means
+        // the drag starts on touch-down, giving smooth tracking from
+        // the very first finger-down — closest we can get to iOS's
+        // built-in segmented control drag-to-switch behavior.
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .named("tabsRow"))
                 .onChanged { v in
                     let all = FeedTab.allCases
                     if let hit = tabFrames.first(where: { _, f in f.contains(v.location) })?.key,
