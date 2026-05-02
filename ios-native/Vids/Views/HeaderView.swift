@@ -18,22 +18,25 @@ struct HeaderView: View {
         return Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
     }
 
+    /// Uniform pill metrics so all three nav capsules render the same
+    /// height and content type size.
+    private static let pillHeight: CGFloat = 36
+    private static let pillFont: CGFloat = 12
+
     var body: some View {
-        // Three Liquid Glass pills grouped by GlassEffectContainer so
-        // they morph as one system — like Apple Music's iOS 26 nav.
         GlassEffectContainer(spacing: 6) {
             HStack(spacing: 6) {
                 // Pill 1: home + search
-                HStack(spacing: 6) {
+                HStack(spacing: 8) {
                     Button(action: home) {
                         Image(systemName: "play.fill")
-                            .font(Font.app(13, weight: .bold))
+                            .font(.system(size: Self.pillFont, weight: .bold))
                             .foregroundStyle(Color.appText.opacity(0.85))
-                            .frame(width: 22, height: 22)
                     }
                     TextField("Search", text: $searchText)
                         .textFieldStyle(.plain)
                         .submitLabel(.search)
+                        .font(Font.app(Self.pillFont))
                         .foregroundStyle(Color.appText)
                         .tint(.white)
                         .focused($fieldFocus)
@@ -53,18 +56,18 @@ struct HeaderView: View {
                         }
                         .frame(width: 70, alignment: .leading)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, 14)
+                .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
                 // Pill 2: tabs
-                TabsRow(activeTab: feed.activeTab) { tab in
+                TabsRow(activeTab: feed.activeTab, fontSize: Self.pillFont) { tab in
                     Haptics.select()
                     feed.activeTab = tab
                     Task { await feed.load(tab: tab, api: services.api) }
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
+                .padding(.horizontal, 6)
+                .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
 
                 // Pill 3: status dots → secret menu
@@ -74,8 +77,8 @@ struct HeaderView: View {
                     StatusDot(on: !(playback.macStatus.locked ?? false))
                     StatusDot(on: !(playback.macStatus.screenOff ?? false))
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 14)
+                .frame(height: Self.pillHeight)
                 .contentShape(Capsule())
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .onLongPressGesture(minimumDuration: 0.5) {
@@ -98,6 +101,7 @@ struct HeaderView: View {
 
 private struct TabsRow: View {
     let activeTab: FeedTab
+    let fontSize: CGFloat
     let onTap: (FeedTab) -> Void
     @Namespace private var ns
 
@@ -111,8 +115,8 @@ private struct TabsRow: View {
                     let active = activeTab == tab
                     Button(action: { onTap(tab) }) {
                         Text(tab.label)
-                            .font(Font.app(10))
-                            .padding(.horizontal, 6)
+                            .font(Font.app(fontSize, weight: .semibold))
+                            .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
                     }
