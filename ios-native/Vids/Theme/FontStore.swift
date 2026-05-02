@@ -66,33 +66,12 @@ final class FontStore {
         let savedSize = UserDefaults.standard.double(forKey: Self.sizeKey)
         self.size = savedSize > 0 ? CGFloat(savedSize) : Self.defaultSize
         Self.shared = self
-        // Explicitly register every bundled .ttf via CTFontManager —
-        // Info.plist UIAppFonts auto-registration is timing-flaky on
-        // iOS 26 (sometimes the font isn't queryable until a frame
-        // later, so the first render falls back to system mono and
-        // sticks). Manual registration is idempotent and immediate.
-        Self.registerBundledFonts()
+        // Trigger registration of the saved font on launch so it's
+        // ready before any view tries to render with it.
+        // (Bundled fonts auto-load via Info.plist UIAppFonts — explicit
+        //  CTFontManagerRegisterFontsForURL was double-registering and
+        //  putting JetBrainsMono into a stale state. Reverted.)
         ensureRegistered(label: self.label)
-    }
-
-    private static func registerBundledFonts() {
-        let bundled = entries.filter { $0.bundled && $0.postScript != "<system>" }
-        for entry in bundled {
-            let candidates = [entry.postScript, entry.label.replacingOccurrences(of: " ", with: "")]
-            var found = false
-            for cand in candidates {
-                if let url = Bundle.main.url(forResource: cand, withExtension: "ttf") {
-                    var err: Unmanaged<CFError>? = nil
-                    let ok = CTFontManagerRegisterFontsForURL(url as CFURL, .process, &err)
-                    NSLog("[FontStore] CTFontManager register %@ → %@ %@", cand, ok ? "OK" : "FAIL", err.debugDescription)
-                    found = true
-                    break
-                }
-            }
-            if !found {
-                NSLog("[FontStore] no bundled ttf found for %@ (tried %@)", entry.label, candidates.joined(separator: ", "))
-            }
-        }
     }
 
     func setLabel(_ new: String) {

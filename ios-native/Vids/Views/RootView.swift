@@ -193,29 +193,6 @@ struct RootView: View {
                     .zIndex(18)
             }
 
-            // DEBUG overlay — TEMPORARY. Shows what PlaybackStore
-            // actually thinks the title + ethernet + font are. If this
-            // shows the right values but NPBar / dots don't, the
-            // problem is render-side. If empty/stale, it's data-side.
-            VStack(alignment: .leading, spacing: 2) {
-                Text("DBG title: \(playback.title.isEmpty ? "<empty>" : playback.title)")
-                Text("DBG eth: \(String(describing: playback.macStatus.ethernet))")
-                Text("DBG font: \(fonts.label) ps=\(services.fonts.resolvedPostScript() ?? "<nil>")")
-                Text("DBG ws: connected=\(services.ws.connected) msgs=\(services.ws.messagesReceived)")
-                Text("DBG types: \(services.ws.typeCounts.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: " "))").lineLimit(2)
-                if let e = services.ws.lastError { Text("DBG err: \(e)").lineLimit(2) }
-                if let f = services.ws.lastDecodeFailType { Text("DBG fail: \(f)").lineLimit(3) }
-            }
-            .font(.system(size: 10, design: .monospaced))
-            .foregroundStyle(.yellow)
-            .padding(8)
-            .background(.black.opacity(0.6))
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .padding(.top, 50)
-            .padding(.leading, 10)
-            .allowsHitTesting(false)
-            .zIndex(99)
-
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
