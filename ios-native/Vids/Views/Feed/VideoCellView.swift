@@ -15,20 +15,19 @@ struct VideoCellView: View {
             // recursive _updateVisibleCellsNow when the size cycled
             // through children.
             Color.black.opacity(0.6)
+                // FORCE full width before aspectRatio so the Color's
+                // frame doesn't get pulled smaller by the overlay
+                // Image's intrinsic size (which varies per video —
+                // 320×180, 480×270, 640×360 — and was leaking into
+                // the parent's available space, producing different
+                // thumbnail sizes per cell).
+                .frame(maxWidth: .infinity)
                 .aspectRatio(16.0/9.0, contentMode: .fit)
                 .overlay {
                     if let img = thumbnail {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()
-                            // Flatten the thumbnail into a single
-                            // rasterized layer — title is plain Text
-                            // (unaffected by iOS 26's scroll-edge
-                            // media lensing) but the Image's CALayer
-                            // contentsRect was being scaled per-frame.
-                            // .drawingGroup() compositves it once so
-                            // the lens treats it as opaque pixels.
-                            .drawingGroup()
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
