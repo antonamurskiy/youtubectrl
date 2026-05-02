@@ -95,6 +95,8 @@ struct TerminalView: View {
                 )
                 .onAppear { applyTmuxTabTint() }
                 .onChange(of: theme.activeTmuxTint) { _, _ in applyTmuxTabTint() }
+                .onChange(of: fonts.label) { _, _ in applyTmuxTabTint() }
+                .onChange(of: fonts.size) { _, _ in applyTmuxTabTint() }
                 .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
@@ -131,26 +133,35 @@ struct TerminalView: View {
 
     /// Tint the segmented Picker's selected pill with the active tmux
     /// theme color so the strip visually tracks whichever pane the
-    /// user is on. Falls back to a neutral if no theme is set.
+    /// user is on. Falls back to a neutral if no theme is set. Also
+    /// applies the user's chosen font to the Picker title text since
+    /// UISegmentedControl uses system font by default and doesn't
+    /// inherit SwiftUI's environment font.
     private func applyTmuxTabTint() {
         let tint: UIColor = {
             if let c = theme.activeTmuxTint { return UIColor(c).withAlphaComponent(0.85) }
             return UIColor(white: 0.45, alpha: 0.7)
         }()
-        UISegmentedControl.appearance().selectedSegmentTintColor = tint
+        let app = UISegmentedControl.appearance()
+        app.selectedSegmentTintColor = tint
+        let f = fonts.font(size: 13)
+        app.setTitleTextAttributes([.font: f], for: .normal)
+        app.setTitleTextAttributes([.font: f], for: .selected)
         // Force-refresh any visible segmented controls so the new
-        // tint takes effect immediately. .appearance() only applies
-        // to newly-instantiated controls otherwise.
+        // tint + font take effect immediately. .appearance() only
+        // applies to newly-instantiated controls otherwise.
         UIApplication.shared.connectedScenes
             .compactMap { ($0 as? UIWindowScene)?.windows.first }
-            .forEach { $0.subviews.forEach { recolorSegmentedDescendants($0, tint: tint) } }
+            .forEach { $0.subviews.forEach { recolorSegmentedDescendants($0, tint: tint, font: f) } }
     }
 
-    private func recolorSegmentedDescendants(_ v: UIView, tint: UIColor) {
+    private func recolorSegmentedDescendants(_ v: UIView, tint: UIColor, font: UIFont) {
         if let seg = v as? UISegmentedControl {
             seg.selectedSegmentTintColor = tint
+            seg.setTitleTextAttributes([.font: font], for: .normal)
+            seg.setTitleTextAttributes([.font: font], for: .selected)
         }
-        for sub in v.subviews { recolorSegmentedDescendants(sub, tint: tint) }
+        for sub in v.subviews { recolorSegmentedDescendants(sub, tint: tint, font: font) }
     }
 
     /// Optimistic local active-flag flip so the terminal background
