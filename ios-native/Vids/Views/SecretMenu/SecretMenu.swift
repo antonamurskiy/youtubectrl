@@ -111,8 +111,13 @@ struct SecretMenu: View {
                 Image(systemName: "location.fill")
                     .foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    if let f = friend, let cross = f.cross, let parallel = f.parallel {
-                        Text("\(parallel) & \(cross)")
+                    if let f = friend, let cs = f.crossStreet {
+                        Text(cs)
+                        HStack(spacing: 6) {
+                            if let a = f.address { Text(a) }
+                            if let d = f.distance { Text("• \(d)") }
+                        }
+                        .font(.caption).foregroundStyle(.secondary)
                         if let t = f.timeFragment {
                             Text(t).font(.caption.monospaced()).foregroundStyle(.secondary)
                         }

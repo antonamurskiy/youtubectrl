@@ -279,8 +279,9 @@ actor ApiClient {
     func refreshCookies() async throws { try await post("/api/refresh-cookies") }
 
     struct FindMyFriend: Codable {
-        let cross: String?
-        let parallel: String?
+        let address: String?
+        let crossStreet: String?
+        let distance: String?
         let timeFragment: String?
         let cropUrl: String?
         // Error path — server returns {ok:false, reason, hint} when
