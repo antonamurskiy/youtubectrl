@@ -15,24 +15,31 @@ struct StatusDotsPill: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            StatusDot(on: true)
-            StatusDot(on: playback.macStatus.ethernet ?? false)
-            StatusDot(on: !(playback.macStatus.locked ?? false))
-            StatusDot(on: !(playback.macStatus.screenOff ?? false))
+        // Plain Button for the tap path so the gesture doesn't fight
+        // .onLongPressGesture (the previous conflict was eating taps
+        // outright). Long-press fires the same action with haptic.
+        Button {
+            services.ui.secretMenuOpen = true
+        } label: {
+            HStack(spacing: 4) {
+                StatusDot(on: true)
+                StatusDot(on: playback.macStatus.ethernet ?? false)
+                StatusDot(on: !(playback.macStatus.locked ?? false))
+                StatusDot(on: !(playback.macStatus.screenOff ?? false))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Capsule())
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .contentShape(Capsule())
-        .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+        .buttonStyle(.plain)
+        .glassEffect(.regular.tint(pillTint), in: Capsule())
         .clipShape(Capsule())
-        .onTapGesture {
-            services.ui.secretMenuOpen = true
-        }
-        .onLongPressGesture(minimumDuration: 0.5) {
-            Haptics.success()
-            services.ui.secretMenuOpen = true
-        }
+        .simultaneousGesture(
+            LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                Haptics.success()
+                services.ui.secretMenuOpen = true
+            }
+        )
     }
 }
 
