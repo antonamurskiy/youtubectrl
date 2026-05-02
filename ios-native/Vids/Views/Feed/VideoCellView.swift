@@ -14,14 +14,12 @@ struct VideoCellView: View {
             // .frame(maxWidth:.infinity) siblings. iOS 26 was hitting
             // recursive _updateVisibleCellsNow when the size cycled
             // through children.
-            // Hard-pin the thumbnail dimensions to the screen width
-            // (cell is fractionalWidth(1) with no section h-inset, so
-            // cell width == screen width). Avoids ANY size negotiation
-            // with the Image overlay's intrinsic size — every cell
-            // gets the same thumbnail box regardless of source image
-            // resolution.
-            let thumbW = UIScreen.main.bounds.width
-            let thumbH = thumbW * 9 / 16
+            // Hard-pin to integer-pixel dimensions — fractional sizes
+            // (e.g., 393 * 9/16 = 220.6875) round differently per
+            // scroll offset and produce sub-pixel jitter as cells
+            // recompose.
+            let thumbW = floor(UIScreen.main.bounds.width)
+            let thumbH = floor(thumbW * 9 / 16)
             Color.black.opacity(0.6)
                 .frame(width: thumbW, height: thumbH)
                 .overlay {

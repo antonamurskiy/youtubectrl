@@ -41,7 +41,10 @@ struct FeedListView: UIViewRepresentable {
             //   + 6pt gap + 14pt title (2 lines = 36pt) + 2pt + 16pt
             //   meta row → ~thumb + 60pt
             let w = env.container.contentSize.width
-            let cellH = (w * 9 / 16) + 60
+            // floor → integer-pixel height. Fractional cellH was
+            // rounding differently per scroll position, producing
+            // few-pixel vertical jitter.
+            let cellH = floor((w * 9 / 16) + 60)
             let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cellH)))
             let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cellH)), subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
