@@ -68,9 +68,6 @@ final class FontStore {
         Self.shared = self
         // Trigger registration of the saved font on launch so it's
         // ready before any view tries to render with it.
-        // (Bundled fonts auto-load via Info.plist UIAppFonts — explicit
-        //  CTFontManagerRegisterFontsForURL was double-registering and
-        //  putting JetBrainsMono into a stale state. Reverted.)
         ensureRegistered(label: self.label)
     }
 
@@ -94,36 +91,8 @@ final class FontStore {
         if entry.postScript == "<system>" {
             return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
         }
-        // Cascade JBM → Menlo (has ✽✱✻✼ spinner dingbats) →
-        // Apple Symbols (has ⎿ bracket + box drawing variants) →
-        // Apple Color Emoji (has misc rich symbols). Without an
-        // explicit cascade, iOS's implicit cascade for custom-
-        // registered fonts (JBM is bundled, not system) doesn't
-        // reliably fall through to the right font for these glyphs
-        // and they render as .notdef boxes.
-        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) {
-            return Self.withCascade(f)
-        }
-        if let f = UIFont(name: entry.postScript, size: s) {
-            return Self.withCascade(f)
-        }
-        // Try matching by family name as a last resort — bundled fonts
-        // sometimes load under their family rather than PostScript name
-        // depending on Info.plist / iOS font registration timing.
-        let family = entry.label.replacingOccurrences(of: " ", with: "")
-        if let f = UIFont(name: family + "-Regular", size: s) { return f }
-        if let f = UIFont(name: family, size: s) { return f }
-        // Walk family fontNames and grab the first match.
-        for fam in UIFont.familyNames where fam.replacingOccurrences(of: " ", with: "").lowercased() == family.lowercased() {
-            for n in UIFont.fontNames(forFamilyName: fam) {
-                if let f = UIFont(name: n, size: s) {
-                    NSLog("[FontStore] resolved %@ via family scan → %@", entry.label, n)
-                    resolvedNames[label] = n
-                    return f
-                }
-            }
-        }
-        NSLog("[FontStore] FAILED to resolve %@ (postScript=%@) — falling back to system mono", entry.label, entry.postScript)
+        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) { return f }
+        if let f = UIFont(name: entry.postScript, size: s) { return f }
         return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
     }
 
@@ -137,21 +106,6 @@ final class FontStore {
            UIFont(name: resolved, size: 12) != nil { return resolved }
         if UIFont(name: entry.postScript, size: 12) != nil { return entry.postScript }
         return nil
-    }
-
-    /// Wrap the primary font in a CTFontDescriptor cascade list. Order
-    /// matters: each fallback is tried in sequence for any glyph the
-    /// primary font lacks. Menlo handles the dingbat spinner (✽ ✱ ✻);
-    /// Apple Symbols handles bracket + technical chars (⎿ ⏵ ⏸); emoji
-    /// is a final catch-all for emoji content.
-    private static func withCascade(_ primary: UIFont) -> UIFont {
-        let cascade: [UIFontDescriptor] = [
-            UIFontDescriptor(name: "Menlo-Regular", size: primary.pointSize),
-            UIFontDescriptor(name: "AppleSymbols", size: primary.pointSize),
-            UIFontDescriptor(name: "AppleColorEmoji", size: primary.pointSize),
-        ]
-        let desc = primary.fontDescriptor.addingAttributes([.cascadeList: cascade])
-        return UIFont(descriptor: desc, size: primary.pointSize)
     }
 
     func ensureRegistered(label: String) {
