@@ -161,9 +161,19 @@ struct RootView: View {
             // rest of the screen and would intercept touches meant
             // for NPBar / FAB stack underneath.
             if !terminal.open {
-                // Header pills span the screen so the search pill can
-                // claim leftover width — pill content captures hits;
-                // empty area between pills passes through to NPBar.
+                // Glass strip filling just the top safe area to cover
+                // the gray gap above the FeedListView. Extends from
+                // screen top down to the safe-area edge — header pill
+                // sits below.
+                GeometryReader { proxy in
+                    Rectangle()
+                        .fill(.thinMaterial)
+                        .frame(height: proxy.safeAreaInsets.top)
+                        .ignoresSafeArea(.container, edges: .top)
+                }
+                .allowsHitTesting(false)
+                .zIndex(17)
+
                 HeaderView(searchFocused: $searchFocused)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                     .zIndex(18)
