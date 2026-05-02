@@ -1,5 +1,26 @@
 import SwiftUI
 
+/// UIImageView host — sidesteps SwiftUI Image's bounds-aware fitting
+/// which was visibly scaling thumbnails during cell movement under
+/// the iOS 26 collection-view edge animations.
+private struct ThumbView: UIViewRepresentable {
+    let image: UIImage?
+    func makeUIView(context: Context) -> UIImageView {
+        let v = UIImageView()
+        v.contentMode = .scaleAspectFill
+        v.clipsToBounds = true
+        v.layer.allowsEdgeAntialiasing = false
+        return v
+    }
+    func updateUIView(_ uiView: UIImageView, context: Context) {
+        if uiView.image !== image {
+            UIView.performWithoutAnimation {
+                uiView.image = image
+            }
+        }
+    }
+}
+
 struct VideoCellView: View {
     let video: Video
     @State private var thumbnail: UIImage? = nil
@@ -17,11 +38,13 @@ struct VideoCellView: View {
             Color.black.opacity(0.6)
                 .aspectRatio(16.0/9.0, contentMode: .fit)
                 .overlay {
-                    if let img = thumbnail {
-                        Image(uiImage: img)
-                            .resizable()
-                            .scaledToFill()
-                    }
+                    // Native UIImageView via UIViewRepresentable —
+                    // SwiftUI's Image was visibly scaling during
+                    // scroll because .scaledToFill recomputed against
+                    // the cell's animated bounds. UIImageView with
+                    // contentMode=.scaleAspectFill keeps a constant
+                    // size relative to its host frame.
+                    ThumbView(image: thumbnail)
                 }
                 .overlay(alignment: .bottomTrailing) {
                     if let dur = video.duration, !dur.isEmpty {
