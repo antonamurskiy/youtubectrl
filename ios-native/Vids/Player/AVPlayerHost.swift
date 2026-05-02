@@ -64,6 +64,12 @@ final class AVPlayerHost: NSObject {
     var onRemotePlayPause: (() -> Void)?
     var onRemoteSkip: ((Double) -> Void)?
     var onRemoteSeek: ((Double) -> Void)?
+    /// Fired the first time `player.rate` goes from 0 → non-zero
+    /// after a load. PhoneModeStore uses it to flip the server-side
+    /// phoneActive flag + hide mpv on the Mac AT THAT MOMENT, so the
+    /// Mac window stays visible during the iPhone's buffer-load
+    /// interval rather than blanking immediately on sync-tap.
+    var onPlaybackStarted: (() -> Void)?
 
     override init() {
         containerView = PlayerHostView(player: player)
@@ -93,13 +99,65 @@ final class AVPlayerHost: NSObject {
     /// ffmpeg remuxing.
     func loadDASH(videoURL: URL, audioURL: URL, durationHint: Double = 0,
                   position: Double = 0, autoplay: Bool = true, muted: Bool = false) async throws {
-        let item = try await buildCompositionItem(videoURL: videoURL, audioURL: audioURL, durationHint: durationHint)
+        let prebuilt = await MainActor.run { consumePrewarmedItem(videoURL: videoURL, audioURL: audioURL) }
+        let item: AVPlayerItem
+        if let prebuilt {
+            item = prebuilt
+        } else {
+            item = try await buildCompositionItem(videoURL: videoURL, audioURL: audioURL, durationHint: durationHint)
+        }
         // applyItem touches UIApplication.isIdleTimerDisabled which
         // requires main thread — hop explicitly because the await
         // above resumes on whatever Task executor we were on.
         await MainActor.run {
             applyItem(item, position: position, autoplay: autoplay, muted: muted)
         }
+    }
+
+    // MARK: - Prewarm
+
+    /// Pre-built composition for a (videoURL, audioURL) pair.
+    /// PhoneModeStore.prewarmForCurrentVideo populates this in the
+    /// background as soon as `playback.url` changes, so the eventual
+    /// sync tap finds an already-loaded AVPlayerItem and skips the
+    /// 1-3s of asset-track network round trips.
+    private struct PrewarmedItem {
+        let videoURL: URL
+        let audioURL: URL
+        let item: AVPlayerItem
+    }
+    private var prewarmed: PrewarmedItem?
+    private var prewarmTask: Task<Void, Never>?
+
+    func prewarm(videoURL: URL, audioURL: URL, durationHint: Double) {
+        // Skip if a prewarm for THIS pair is already done or in flight.
+        if let p = prewarmed, p.videoURL == videoURL, p.audioURL == audioURL { return }
+        prewarmTask?.cancel()
+        prewarmTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let item = try await self.buildCompositionItem(videoURL: videoURL, audioURL: audioURL, durationHint: durationHint)
+                if Task.isCancelled { return }
+                await MainActor.run {
+                    self.prewarmed = PrewarmedItem(videoURL: videoURL, audioURL: audioURL, item: item)
+                }
+            } catch {
+                // Silent — the live load() will retry on the user-tap path.
+            }
+        }
+    }
+
+    @MainActor
+    private func consumePrewarmedItem(videoURL: URL, audioURL: URL) -> AVPlayerItem? {
+        guard let p = prewarmed, p.videoURL == videoURL, p.audioURL == audioURL else { return nil }
+        prewarmed = nil
+        return p.item
+    }
+
+    func clearPrewarm() {
+        prewarmTask?.cancel()
+        prewarmTask = nil
+        prewarmed = nil
     }
 
     @MainActor
@@ -125,26 +183,38 @@ final class AVPlayerHost: NSObject {
     }
 
     private func buildCompositionItem(videoURL: URL, audioURL: URL, durationHint: Double) async throws -> AVPlayerItem {
-        let opts: [String: Any] = [AVURLAssetPreferPreciseDurationAndTimingKey: true]
-        let videoAsset = AVURLAsset(url: videoURL, options: opts)
-        let audioAsset = AVURLAsset(url: audioURL, options: opts)
+        // SPEED: do NOT request precise-duration. That flag forces
+        // AVFoundation to fetch the moov atom from the end of each
+        // googlevideo MP4 over a partial-content range request before
+        // returning anything — adds 1-3s per asset to phone-sync
+        // engagement. We have an authoritative duration from the
+        // server's `/api/watch-on-phone` (mpv's reported duration) so
+        // we skip loading durations entirely when it's provided and
+        // fall back to .load(.duration) only if not.
+        let videoAsset = AVURLAsset(url: videoURL)
+        let audioAsset = AVURLAsset(url: audioURL)
 
-        async let vd: CMTime = videoAsset.load(.duration)
-        async let ad: CMTime = audioAsset.load(.duration)
+        // Tracks DO have to be loaded — composition needs the
+        // AVAssetTrack instances. Run the two in parallel.
         async let vt = videoAsset.loadTracks(withMediaType: .video)
         async let at = audioAsset.loadTracks(withMediaType: .audio)
-        let (vDur, aDur) = try await (vd, ad)
 
-        func ok(_ t: CMTime) -> Bool {
-            t.isValid && !t.isIndefinite && t.seconds.isFinite && t.seconds > 0
-        }
-        guard ok(vDur), ok(aDur) else {
-            throw NSError(domain: "AVPlayerHost", code: -10, userInfo: [NSLocalizedDescriptionKey: "unusable duration"])
-        }
-
-        var duration = CMTimeMinimum(vDur, aDur)
+        let duration: CMTime
         if durationHint > 0 {
-            duration = CMTimeMinimum(duration, CMTime(seconds: durationHint, preferredTimescale: 600))
+            duration = CMTime(seconds: durationHint, preferredTimescale: 600)
+        } else {
+            // Fallback: server didn't tell us, ask AVFoundation.
+            // Slow path — kept for safety.
+            async let vd: CMTime = videoAsset.load(.duration)
+            async let ad: CMTime = audioAsset.load(.duration)
+            let (vDur, aDur) = try await (vd, ad)
+            func ok(_ t: CMTime) -> Bool {
+                t.isValid && !t.isIndefinite && t.seconds.isFinite && t.seconds > 0
+            }
+            guard ok(vDur), ok(aDur) else {
+                throw NSError(domain: "AVPlayerHost", code: -10, userInfo: [NSLocalizedDescriptionKey: "unusable duration"])
+            }
+            duration = CMTimeMinimum(vDur, aDur)
         }
         let range = CMTimeRange(start: .zero, duration: duration)
 
@@ -326,9 +396,19 @@ final class AVPlayerHost: NSObject {
         }
     }
 
+    private var lastObservedRate: Float = 0
     private func installRateObserver() {
         rateObserver = player.observe(\.rate, options: [.new]) { [weak self] p, _ in
-            Task { @MainActor in self?.updateNowPlayingPlaybackState() }
+            guard let self else { return }
+            let rate = p.rate
+            let prev = self.lastObservedRate
+            self.lastObservedRate = rate
+            Task { @MainActor in
+                self.updateNowPlayingPlaybackState()
+                if prev == 0, rate > 0 {
+                    self.onPlaybackStarted?()
+                }
+            }
         }
     }
 

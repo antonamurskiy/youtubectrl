@@ -82,8 +82,11 @@ final class PhoneModeStore {
             services.avHost.enableVolumeIntercept()
             // Re-show inline layer so video/PiP can render.
             // (Frame gets sized correctly by PhonePlayerView on next layout.)
+            // Same video as before — DON'T call reset()/resetForNewVideo()
+            // here, that would wipe the learned bias and the loop
+            // would have to re-converge from 0.5s on every Phone↔PC
+            // toggle. Just resume the engine.
             if services.playback.isLive {
-                services.liveSync.reset()
                 services.liveSync.start()
                 services.vodSync.stop()
             } else {
@@ -122,12 +125,18 @@ final class PhoneModeStore {
                 isLive: resp.isLive ?? false,
                 artworkURL: services.playback.thumbnail
             )
+            // Only reset learned bias when the video URL actually
+            // changed since the last sync session. Plain Phone↔PC
+            // toggles on the same video preserve the learned latency
+            // offset so drift stays converged.
+            let urlChanged = lastUrl != services.playback.url
             if resp.isLive == true {
-                services.liveSync.reset()
+                if urlChanged { services.liveSync.reset() }
                 services.liveSync.start()
                 services.vodSync.stop()
             } else {
                 services.liveSync.stop()
+                if urlChanged { services.vodSync.resetForNewVideo() }
                 services.vodSync.start()
             }
             // Headphone-side detection: in sync mode play on whichever

@@ -68,12 +68,25 @@ struct ScrubPreviewOverlay: View {
             )
             .shadow(color: .black.opacity(0.4), radius: 12, y: 4)
 
-            Text(scrub.label)
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .foregroundStyle(Color.white)
-                .glassEffect(.regular.tint(.black.opacity(0.5)), in: Capsule())
+            VStack(spacing: 4) {
+                if !scrub.chapter.isEmpty {
+                    Text(scrub.chapter)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .frame(maxWidth: tileW + 32)
+                        .glassEffect(.regular.tint(.black.opacity(0.55)), in: Capsule())
+                }
+                Text(scrub.label)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .foregroundStyle(Color.white)
+                    .glassEffect(.regular.tint(.black.opacity(0.5)), in: Capsule())
+            }
         }
         .position(x: tileX + tileW / 2, y: tileY + tileH / 2)
         .allowsHitTesting(false)

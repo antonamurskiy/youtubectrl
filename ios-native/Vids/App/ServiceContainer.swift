@@ -69,6 +69,15 @@ final class ServiceContainer {
         self.avHost.onRemoteSeek = { [weak self] sec in
             Task { try? await self?.api.seek(sec) }
         }
+        // Notify server that the phone has actually started rendering
+        // frames — that's when mpv on the Mac gets hidden. Only fire
+        // in sync mode (phone-only's mpv-handoff is handled via the
+        // /api/phone-only path). Skips when in computer mode so a
+        // warm-start AVPlayer doesn't accidentally hide mpv.
+        self.avHost.onPlaybackStarted = { [weak self] in
+            guard let self, self.phoneMode.mode == .sync else { return }
+            Task { try? await self.api.phoneReady() }
+        }
         self.avHost.onVolumeButton = { [weak self] step in
             Task { try? await self?.api.volumeBump(step) }
             // Show on-phone volume HUD too. Server is authoritative on

@@ -71,14 +71,28 @@ final class VodSyncEngine {
         startedAt = Date()
         lastSeekAt = nil
         lastMpvPaused = nil
-        // Reset learning state — last session's bias may be wrong for
-        // a new video / new AVPlayer item.
-        biasSec = 0.5
         calibPending = false
         settledTicks = 0
+        // INTENTIONALLY NOT resetting biasSec here. Toggling Phone↔PC
+        // calls stop() then start(); resetting bias would force the
+        // learning loop to re-converge from 0.5s every toggle, taking
+        // ~30s and 4-8 seeks. Bias gets reset explicitly via
+        // resetForNewVideo() when the video URL actually changes.
         ticker = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
+    }
+
+    /// Called by PhoneModeStore when the video URL changes — last
+    /// session's bias may be wrong for a new AVPlayer item with a
+    /// different keyframe layout.
+    @MainActor
+    func resetForNewVideo() {
+        biasSec = 0.5
+        calibPending = false
+        settledTicks = 0
+        lastSeekAt = nil
+        driftSec = 0
     }
 
     @MainActor

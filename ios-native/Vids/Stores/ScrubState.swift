@@ -22,4 +22,7 @@ final class ScrubState {
     /// (16:9, 4:3, vertical shorts) and a hardcoded 16:9 frame leaves
     /// letterbox bars on anything else.
     var aspect: Double = 16.0 / 9.0
+    /// Chapter title for the frame currently under the scrub thumb,
+    /// when the storyboard has chapter metadata. Empty otherwise.
+    var chapter: String = ""
 }

@@ -9,6 +9,11 @@ final class UIStore {
     var commentsOpen: Bool = false
     var qualityMenuOpen: Bool = false
     var audioSheetOpen: Bool = false
+    /// True while the StatusDotsPill is expanded into its bigger
+    /// FindMy panel. RootView reads this to render a full-screen
+    /// transparent tap-catcher behind the pill so taps outside
+    /// dismiss the panel instead of activating whatever's beneath.
+    var statusPillExpanded: Bool = false
 
     @MainActor
     func toast(_ text: String, duration: TimeInterval = 1.6) {

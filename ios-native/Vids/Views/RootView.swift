@@ -187,6 +187,21 @@ struct RootView: View {
                 .allowsHitTesting(false)
                 .zIndex(17)
 
+                // Full-screen tap catcher BEHIND the pill — only
+                // visible when expanded. Captures taps anywhere
+                // outside the pill and collapses it without firing
+                // whatever video card / control would otherwise
+                // receive the tap.
+                if services.ui.statusPillExpanded {
+                    Color.black.opacity(0.0001)
+                        .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            services.ui.statusPillExpanded = false
+                        }
+                        .zIndex(17.5)
+                        .transition(.opacity)
+                }
                 StatusDotsPill()
                     .padding(.trailing, 16)
                     .padding(.top, 8)
@@ -348,6 +363,17 @@ struct RootView: View {
             // The feed is cached per-tab; without this it would still show
             // the order from the last time the user opened the History tab.
             Task { await feed.load(tab: .history, api: services.api) }
+            // Prewarm the AVMutableComposition so an eventual sync-tap
+            // finds an already-loaded AVPlayerItem and skips the
+            // ~1-3s of moov-fetch network round trips. Server's
+            // watch-on-phone is cached → near-instant URL resolve.
+            Task {
+                services.avHost.clearPrewarm()
+                guard let resp = try? await services.api.watchOnPhone(prewarm: true),
+                      let v = resp.videoUrl, let a = resp.audioUrl,
+                      let vu = URL(string: v), let au = URL(string: a) else { return }
+                services.avHost.prewarm(videoURL: vu, audioURL: au, durationHint: resp.durationSec ?? 0)
+            }
         }
         .task { theme.setTabTint(for: feed.activeTab) }
     }

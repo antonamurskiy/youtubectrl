@@ -32,13 +32,14 @@ struct ScrubberView: UIViewRepresentable {
         // ScrubberUIView publishes drag state, RootView renders the
         // floating tile (Apple TV / AVKit pattern; no glass-clip
         // issues since the preview lives outside the bar's view tree).
-        v.onScrub = { [weak services] active, pct, image, label, aspect in
+        v.onScrub = { [weak services] active, pct, image, label, aspect, chapter in
             guard let scrub = services?.scrub else { return }
             scrub.active = active
             scrub.pct = pct
             scrub.image = image
             scrub.label = label
             scrub.aspect = aspect
+            scrub.chapter = chapter
         }
         return v
     }
@@ -67,8 +68,8 @@ final class ScrubberUIView: UIView {
     private var pageInFlight: Set<Int> = []
     var onSeek: ((Double) -> Void)?
     /// Publishes scrub state to the SwiftUI overlay (Apple TV pattern).
-    /// (active, pct, tileImage, label)
-    var onScrub: ((Bool, Double, UIImage?, String, Double) -> Void)?
+    /// (active, pct, tileImage, label, aspect, chapterTitle)
+    var onScrub: ((Bool, Double, UIImage?, String, Double, String) -> Void)?
 
     func setStoryboard(_ sb: ApiClient.Storyboard?) {
         // Reset cache when switching storyboards.
@@ -202,15 +203,22 @@ final class ScrubberUIView: UIView {
     /// hand off to the SwiftUI overlay via `onScrub`.
     private func publishScrub(active: Bool) {
         guard active else {
-            onScrub?(false, dragPct, nil, "", 16.0/9.0)
+            onScrub?(false, dragPct, nil, "", 16.0/9.0, "")
             return
         }
         guard let pb = playback, pb.duration > 0 else {
-            onScrub?(true, dragPct, nil, "", 16.0/9.0)
+            onScrub?(true, dragPct, nil, "", 16.0/9.0, "")
             return
         }
         let target = pb.duration * dragPct
         let label = pb.isLive ? "-\(formatTime(pb.duration - target))" : formatTime(target)
+        // Chapter under thumb: pick the latest chapter whose start ≤ target.
+        var chapter = ""
+        if let chs = storyboard?.chapters, !chs.isEmpty, !pb.isLive {
+            for c in chs where (c.start ?? 0) <= target {
+                if let t = c.title, !t.isEmpty { chapter = t }
+            }
+        }
         var image: UIImage? = nil
         var aspect: Double = 16.0/9.0
         if let sb = storyboard, let urlTpl = sb.url,
@@ -239,7 +247,7 @@ final class ScrubberUIView: UIView {
                 fetchPage(template: urlTpl, page: pageIndex)
             }
         }
-        onScrub?(true, dragPct, image, label, aspect)
+        onScrub?(true, dragPct, image, label, aspect, chapter)
     }
 
     private func cropTile(_ image: UIImage, col: Int, row: Int, tileW: Int, tileH: Int) -> UIImage? {

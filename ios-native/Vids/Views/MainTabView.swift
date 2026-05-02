@@ -254,6 +254,18 @@ private struct FeedTabContent: View {
     @Environment(FeedStore.self) private var feed
     @Environment(ServiceContainer.self) private var services
 
+    /// Background tint per tab. Mirrors React's TAB_TINTS map. The
+    /// global ThemeStore.resolvedSurface only paints RootView's
+    /// outer ZStack — TabView's opaque content covers it, so the
+    /// tint never reached the user's eye until we painted it inside
+    /// each tab's own body.
+    private var tabSurface: Color {
+        if let t = ThemeStore.tabTints[tab] {
+            return t.darken(0.55)
+        }
+        return Color(hex: "#282828")
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if let ch = feed.channelQuery {
@@ -296,6 +308,8 @@ private struct FeedTabContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(tabSurface.ignoresSafeArea())
+        .animation(.timingCurve(0.25, 0.1, 0.25, 1.0, duration: 0.4), value: tabSurface)
         .task(id: tab) {
             // Load this tab's own data on first appear if not already
             // loaded. Decouples per-tab loading from the activeTab

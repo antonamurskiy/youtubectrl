@@ -123,13 +123,23 @@ actor ApiClient {
         let durationSec: Double?
     }
 
-    func watchOnPhone() async throws -> WatchOnPhoneResponse {
-        var req = URLRequest(url: url("/api/watch-on-phone"))
+    /// `prewarm`: pass `true` from background URL-fetches that just
+    /// want stream URLs without engaging sync mode. Server uses it
+    /// to skip the mpv-hide watchdog so a prewarm doesn't hide mpv
+    /// 5s later when the user never actually tapped sync.
+    func watchOnPhone(prewarm: Bool = false) async throws -> WatchOnPhoneResponse {
+        var comps = URLComponents(url: url("/api/watch-on-phone"), resolvingAgainstBaseURL: false)!
+        if prewarm { comps.queryItems = [URLQueryItem(name: "prewarm", value: "1")] }
+        var req = URLRequest(url: comps.url!)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.httpBody = try JSONSerialization.data(withJSONObject: [String: Any]())
         let (data, _) = try await session.data(for: req)
         return try decoder.decode(WatchOnPhoneResponse.self, from: data)
+    }
+
+    func phoneReady() async throws {
+        try await post("/api/phone-ready")
     }
 
     func stopPhoneStream() async throws {
@@ -246,6 +256,11 @@ actor ApiClient {
     func toggleFindMy() async throws { try await post("/api/toggle-findmy") }
     func refreshFindMy() async throws { try await post("/api/refresh-findmy") }
 
+    struct FindMyStatus: Codable { let visible: Bool?; let running: Bool? }
+    func findmyStatus() async throws -> FindMyStatus {
+        try await get("/api/findmy-status")
+    }
+
     struct SyncOffset: Codable { let ms: Double? }
     func syncOffset() async throws -> Double {
         let r: SyncOffset = try await get("/api/sync-offset")
@@ -302,6 +317,9 @@ actor ApiClient {
         let distance: String?
         let timeFragment: String?
         let cropUrl: String?
+        /// Milliseconds since the last FindMy iCloud refresh. Used to
+        /// decide when to force-refresh.
+        let ageMs: Double?
         // Error path — server returns {ok:false, reason, hint} when
         // FindMy isn't running / no pin / name missing. Decode them
         // so the UI can show *why* there's no location.

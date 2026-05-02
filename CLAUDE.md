@@ -1564,6 +1564,254 @@ a recovery story in commit history (`killall "System Events"`).
 - `ROADWALK_DEBUG_MASK=path` — dump road-color mask as PNG
 - `ROADWALK_DEBUG_VISITED=path` — dump BFS visited set as PNG (green = reached, grey = road but unreachable)
 
+### Native nav, tab tinting + quick-jump menu (iOS)
+
+Bottom nav uses `TabView` with 5 `FeedTab` cases — `rec, live, subs,
+history, ru` (the order is load-bearing: history is high-traffic so
+it lives in the visible strip; ru drops into the system More
+overflow). Plus `Tab(role: .search)` as the detached search circle.
+
+**Per-tab feed rendering.** `FeedListView` accepts an explicit
+`tab: FeedTab? = nil` parameter and reads `feed.videosForTab(tab)`
+instead of `feed.currentVideos` (which reads global `activeTab`).
+`MainTabView`'s `FeedTabContent(tab:)` passes its own tab. Without
+this, every Tab subview shared one read of `activeTab` and the
+History tab would render whatever the Recommended tab last loaded
+during the milliseconds before `onChange(of: selection)` updated
+`activeTab`. `FeedListView.Coordinator.activeTabOverride` mirrors
+the same value for refresh / append / prefetch handlers.
+
+**Per-tab tinted backgrounds.** `ThemeStore.tabTints` (`.history` →
+`#1f3d24`, `.live` → `#a13a36`, `.ru` → `#4f8a5c`) maps to
+`tabSurface` painted INSIDE `FeedTabContent` via
+`.background(tabSurface.ignoresSafeArea())`, NOT on the RootView.
+RootView's `theme.resolvedSurface` paints the outer ZStack root,
+but iOS 26's TabView covers it with opaque tab content; the tint
+never reaches the user's eye unless each tab's body paints it
+itself. 400ms cubic-bezier(0.25, 0.1, 0.25, 1.0) animation matches
+the React client's tint fade.
+
+**Long-press quick-jump menu** on the tab bar via UIKit bridge.
+`TabBarMenuAttacher` (a `UIViewRepresentable` placed in the
+`.background` of `FeedTabContent`) walks up to the parent
+`UITabBarController` at `didMoveToWindow`, attaches a single
+`UIContextMenuInteraction` to the entire `UITabBar`. Long-press /
+Haptic Touch anywhere on the bar shows a `UIMenu` of every
+`FeedTab` (Rec/Live/Subs/Hist/Ru) so the user can jump from inside
+the system More overflow without drilling into the More list.
+
+Two pitfalls solved here:
+- **`Tab(...) .contextMenu { }`** doesn't propagate to the bottom-bar
+  buttons in iOS 26 (it works in sidebar mode only). UIKit bridge is
+  required.
+- **`UITabBarItem.menu` doesn't exist** — that's UIBarButtonItem.
+  Hence interaction-based approach on the UITabBar UIView.
+- **Default UIContextMenuInteraction lifts the whole UITabBar** —
+  every icon visibly jumps up when the menu appears. Suppressed by
+  implementing `previewForHighlightingMenuWithConfiguration` +
+  `previewForDismissingMenuWithConfiguration` returning a
+  `UITargetedPreview` over a 1pt clear dummy view at the touch
+  location, with `UIPreviewParameters.backgroundColor = .clear` and
+  empty `shadowPath`. Cleanup in `willEndFor` removes the dummy.
+
+### Faster sync engagement + warm Phone↔PC toggle
+
+mpv on the Mac caps at 1080p:
+`--ytdl-format=bestvideo[height<=1080]+bestaudio/best[height<=1080]/best`
+in `/api/play`'s spawn args. Without this mpv could pick 1440p / 4K
+(much higher bitrate) and the phone could never reach quality
+parity in sync mode.
+
+iOS sync engagement uses progressive **format 22** (720p H.264 +
+AAC single MP4 with audio baked in) by default. Server's yt-dlp
+format string in `resolveWatchOnPhone` is now
+`22/bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/best[ext=mp4]/bv*[height<=1080]+ba`.
+Single-URL means iOS hits `AVPlayerHost.load(url:)` (one
+`AVPlayerItem(url:)`, no composition build), avoiding ~1-3s of
+moov-fetch network round trips per asset that DASH 1080p needed.
+DASH composition path still exists as a fallback.
+
+**Disk-backed cache + in-flight dedupe** at
+`.watch-on-phone-cache.json` (gitignored). The in-memory
+`_watchOnPhoneCache` Map persists to disk on every write, loaded on
+boot, 6h TTL. `resolveWatchOnPhone(url)` keys in-progress resolves
+in `_watchOnPhoneInflight` — a play→sync sequence kicks off a
+prewarm via `prewarmWatchOnPhone(url)` on `/api/play`, and the
+later `/api/watch-on-phone` tap awaits THAT same promise instead
+of firing a duplicate yt-dlp.
+
+**Quick mode toggle.** `PhoneModeStore.switchToComputer` no longer
+calls `avHost.stop()` / `replaceCurrentItem(nil)` —
+keeps AVPlayer warm via pause + setMuted(true) +
+`setLayerFrame(.zero, visible: false)` (also stops PiP if active).
+`switchToSync` warm-path: when `lastUrl == playback.url` AND a
+`currentItem` is loaded, just `setMuted(false) + play()` — no
+`/api/watch-on-phone` round trip, no item rebuild. Toggling
+Phone↔PC on the same video is sub-second instead of 5-10s.
+
+**Optimistic mode flip.** `switchToSync` sets `mode = .sync` BEFORE
+the `await api.watchOnPhone()` call so the audio destination badge
++ view-mode icon flip on tap, not 5-10s later. Reverts to `prevMode`
+on the early-return / catch path.
+
+**iOS AVPlayer composition prewarm.** `RootView.onChange(of:
+playback.url)` fires `services.avHost.prewarm(videoURL:audioURL:)`
+in the background (after fetching URLs via
+`api.watchOnPhone(prewarm: true)`). On the rare DASH fallback path,
+this finishes the `loadTracks` round trips ahead of the user's
+sync tap. `consumePrewarmedItem(videoURL:audioURL:)` returns the
+prebuilt item from `loadDASH` if URLs match. `clearPrewarm()` on
+URL change cancels the in-flight prewarm.
+
+**Composition build optimizations** (`AVPlayerHost.buildCompositionItem`):
+- Drop `AVURLAssetPreferPreciseDurationAndTimingKey: true` — that
+  flag forced AVFoundation to fetch moov from the end of each
+  googlevideo MP4 over partial-content range request before
+  returning. Adds 1-3s per asset.
+- Skip both `.load(.duration)` calls when a `durationHint` is
+  provided (server returns mpv's reported duration). Only
+  `loadTracks` round trips remain (one per asset, parallel via
+  `async let`).
+
+### mpv-stays-visible-until-phone-ready handshake
+
+Server's `/api/watch-on-phone` does NOT hide mpv synchronously.
+Instead, hiding waits for iOS to confirm playback has actually
+started (AVPlayer's rate goes 0 → non-zero):
+
+1. iOS taps sync → `/api/watch-on-phone` returns URLs, server only
+   unmutes mpv. Mac stays visible playing.
+2. iOS loads AVPlayer item.
+3. `AVPlayerHost.installRateObserver` KVOs `player.rate`. When prev=0
+   AND new>0, fires `onPlaybackStarted`.
+4. `ServiceContainer.onPlaybackStarted` (gated on `phoneMode.mode ==
+   .sync`) POSTs `/api/phone-ready`.
+5. Server: `phoneActive = true; hideMpvWithRetry()` — mpv hides
+   only now.
+
+**Watchdog.** Server schedules `_phoneReadyWatchdog = setTimeout(...,
+5000)` on `/api/watch-on-phone`. If `/api/phone-ready` never arrives
+(network drop, phone hang, prewarm-stale-URL), mpv hides anyway
+after 5s — never strands the user with both players invisible.
+
+**`?prewarm=1` query param** on `/api/watch-on-phone` skips the
+watchdog. iOS's `RootView.onChange(of: playback.url)` prewarm fetch
+passes this so a background URL-fetch (e.g. user is in computer
+mode, just played a video → iOS prewarms AVPlayer) doesn't make mpv
+hide on its own 5s later.
+
+### Bias preservation across Phone↔PC toggles
+
+`VodSyncEngine.start()` no longer resets `biasSec` — only
+`resetForNewVideo()` does. `PhoneModeStore.switchToSync` calls
+`vodSync.resetForNewVideo()` (or `liveSync.reset()`) ONLY when
+`lastUrl != playback.url`. The warm-path on the same video just
+`vodSync.start()` / `liveSync.start()` with the bias intact. Without
+this, every toggle to Phone wiped the learned bias and the loop had
+to re-converge from 0.5s over ~30s + 4-8 seeks.
+
+### Status dots pill — expanded glass + FindMy panel
+
+`StatusDotsPill.swift` is the top-right floating glass capsule with
+4 status dots (WS, ETH, Mac unlocked, Screen on). Tap → the SAME
+glass surface morphs into a 320pt-wide rounded panel via iOS 26's
+Liquid Glass shape interpolation. Implementation:
+
+- ONE persistent view with `.glassEffect(.regular.tint(pillTint),
+  in: RoundedRectangle(cornerRadius: 26, style: .continuous))`. The
+  same shape primitive, different `.frame()` / `.padding`. SwiftUI
+  animates frame + padding + glass shape together as one transition
+  via `.spring(response: 0.42, dampingFraction: 0.84)`.
+- Inner content cross-fades via `.transition(.scale + .opacity)` on
+  collapsed / expanded subviews while the glass shell morphs in size.
+- Persistent shape (vs `if/else` between Capsule and Rect, which
+  blocked the morph because the shapes are different primitives).
+
+Expanded panel renders:
+- 4 labeled dots (`LegendRow`: WS / Ethernet / Mac unlocked / Screen on)
+- Divider
+- FindMy crop image (200pt tall, fetched from `f.cropUrl`, cached
+  in `@State` so a 30s poll doesn't re-download)
+- Cross-street, distance, last-ping fragment
+
+**FindMy polling.** `pollFindmy()` ticks every 30s while the pill is
+on screen. When server-reported `ageMs > 3 min`, kicks
+`/api/refresh-findmy` to activate FindMy on the Mac, wait 3s for
+iCloud to push fresh location, re-park + re-OCR. Without this,
+we'd re-read the same screenshot indefinitely — `timeFragment`
+would say "3 min ago" until the user opened the secret menu and
+manually refreshed.
+
+**timeFragment compaction.** Server's `compactTime` helper
+(`server.js`) shortens `"5 min. ago"` → `"5m ago"`, `"2 hours ago"` →
+`"2h ago"`, `"10 sec. ago"` → `"10s ago"`, `"Just now"` → `"now"`.
+Saves horizontal room in the collapsed pill.
+
+**Tap-outside-to-dismiss.** Expansion state lives in
+`UIStore.statusPillExpanded` (shared, observable). `RootView` renders
+a `Color.black.opacity(0.0001)` full-screen view at `zIndex 17.5`
+(below the pill at 18, above everything else) when expanded.
+Catches taps anywhere outside the pill and just sets the flag to
+false — neither the underlying video card nor anything else
+receives the tap. Pill remains on top so its own internal taps
+(collapse on tap, long-press for secret menu) still work.
+
+### Scrub preview chapter title
+
+`ScrubberView.publishScrub` now finds the latest chapter whose
+`start <= target` (from `playback.storyboard.chapters`) and pushes
+its title to `ScrubState.chapter`. `ScrubPreviewOverlay` renders
+the title in a glass capsule above the time pill while dragging,
+matching AVKit's chapter-aware scrub HUD. Empty / live / no-chapter
+case skips the capsule and shows just the time pill.
+
+`ScrubberUIView.onScrub` callback signature is now
+`(Bool, Double, UIImage?, String, Double, String)` — the trailing
+String is the chapter title. Updated callsites + `ScrubState.chapter`
+property.
+
+### History recency + per-URL refresh
+
+Server `/api/history` builds a unified-recency timeline in
+`server.js`: each YouTube history entry gets a synthesized timestamp
+from its YT-feed position (`now - i*60s`), overridden by
+`historyMap[url].timestamp` when a local-played entry exists.
+Local-only entries (Rumble, phone-only) merge in by their own
+timestamps. Single sort by descending timestamp. No "local-on-top
++ everything else below" split — the old approach surprised the
+user when a 3-day-old locally-played video appeared above
+yesterday's YT browser play.
+
+**iOS auto-refresh.** `RootView.onChange(of: playback.url)` calls
+`feed.load(tab: .history, api:)` so the History tab reflects the
+just-played video the next time the user taps the tab. Without this
+the iOS `FeedStore` cached the History tab indefinitely; it only
+reloaded on tab activation, missing intervening plays.
+
+### iOS audio device label + destination badge (NowPlayingBar)
+
+The NowPlayingBar's audio button shows `[short device name] [battery%]
+[device icon] + tiny destination badge`. Source rules:
+
+- `phoneMode.mode == .phoneOnly` → reads from
+  `phoneMode.phoneAudioOutput` / `phoneAudioPortType` (the iPhone's
+  AVAudioSession.currentRoute, refreshed on
+  `AVAudioSession.routeChangeNotification`). Badge: `iphone`.
+- `.computer` and `.sync` → reads from `playback.audioOutput` (the
+  Mac's `SwitchAudioSource -c`). Badge: `laptopcomputer`.
+
+The badge MUST match whose output the label is sourced from. An
+earlier version showed `iphone` in sync mode while the label was
+the Mac's AirPods name → user saw "AirPods on iPhone" when AirPods
+were actually on the Mac.
+
+**Mac-side `_cachedAudioOut`** requires periodic refresh —
+`refreshAudioOutCache()` runs on boot + every 5s + inline on every
+`/api/audio-output` POST (`server.js`). Was previously only populated
+by the volume-button intercept's `isProtectedAudioOutput()` gate,
+which only fires on actual button presses; the WS broadcast sent
+`audioOutput: null` until the first volume press.
+
 ## Key Files
 
 - `.env` — `YOUTUBE_API_KEY`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`
@@ -1577,4 +1825,5 @@ a recovery story in commit history (`killall "System Events"`).
 - `bin/findmy-ocr`, `bin/findmy-pin`, `bin/findmy-road-walk` — Swift binaries compiled on server boot from `scripts/*.swift`. Hot path uses ocr + pin; road-walk is dormant. See "Find My friend lookup".
 - `/tmp/ytctl-findmy.png` — most recent FindMy screenshot, source of truth for OCR + pin detection
 - `.findmy-stealth.json` — `{ on: bool }` stealth-mode persistence
+- `.watch-on-phone-cache.json` — disk-backed mirror of `_watchOnPhoneCache` (yt-dlp resolved DASH/MP4 URLs per video). 6h TTL. Survives server restarts so play→sync stays sub-second after a relaunch. Gitignored.
 - `public/silent.m4a` — truly silent 5-minute m4a for iOS Media Session (must be actual silence, not low volume — iOS drops session at volume=0)

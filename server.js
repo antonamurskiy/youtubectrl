@@ -2087,7 +2087,12 @@ app.post("/api/play", async (req, res) => {
     // mpv's built-in VO fallback chain doesn't help: gpu-next
     // "initializes" without DisplayLink, so it never fails to cascade.
     // displayUnavailable was computed at the top of this handler.
-    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`, `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
+    const mpvArgs = [`--input-ipc-server=/tmp/mpv-socket`, `--ytdl-raw-options=cookies=${COOKIES_FILE}`,
+      // Cap at 1080p so mpv matches what the phone gets in sync mode.
+      // Without this, mpv could pick 1440p / 4K (much higher bitrate)
+      // and the phone would never reach quality parity.
+      `--ytdl-format=bestvideo[height<=1080]+bestaudio/best[height<=1080]/best`,
+      `--hwdec=auto-safe`, `--keep-open`, `--demuxer-max-back-bytes=512M`, `--cache=yes`, `--demuxer-lavf-o-append=http_persistent=1`, `--demuxer-lavf-o-append=http_multiple=1`,
       // Stop mpv from resizing the window on every loadfile to match
       // the new video's intrinsic aspect — that was the visible "jump"
       // when switching videos. With --no-keepaspect-window the window
@@ -3959,14 +3964,25 @@ app.post("/api/watch-on-phone", async (req, res) => {
     const m = nowPlaying.match(/v=([\w-]+)/);
     const videoId = m ? m[1] : "";
 
-    if (activePlayer === "mpv") {
-      phoneActive = true;
-      // Multi-attempt hide via osascript. A single fire-and-forget
-      // call sometimes silently no-op'd (System Events queue contention,
-      // mpv process state mid-transition), leaving the mpv window
-      // visible behind the phone player UI.
-      hideMpvWithRetry();
+    // Don't hide mpv synchronously — wait for the iPhone AVPlayer
+    // to confirm playback has actually started via POST /api/phone-ready.
+    // Watchdog hides anyway after 5s so a phone hang/drop never
+    // strands the user with both players invisible.
+    //
+    // BUT: skip the watchdog when iOS is just prewarming its
+    // AVPlayer (?prewarm=1). Without that gate, the iOS RootView's
+    // .onChange(of: playback.url) prewarm fetch was hiding mpv on
+    // its own 5s after every video play — even when the user was
+    // in computer mode and never tapped sync.
+    if (activePlayer === "mpv" && req.query.prewarm !== "1") {
       mpvCommand(["set_property", "mute", false]).catch(() => {});
+      clearTimeout(_phoneReadyWatchdog);
+      _phoneReadyWatchdog = setTimeout(() => {
+        if (activePlayer === "mpv" && !phoneActive) {
+          phoneActive = true;
+          hideMpvWithRetry();
+        }
+      }, 5000);
     }
 
     let isLiveStream = (fmtR?.data || "").includes("hls") || !!currentLiveHlsUrl;
@@ -4360,6 +4376,22 @@ app.post("/api/save-progress", (req, res) => {
   res.json({ ok: true });
 });
 
+// Called by iOS once AVPlayer's rate has actually gone non-zero
+// (i.e. the phone is rendering frames). Only now do we hide mpv
+// on the Mac and flip phoneActive — keeps the Mac window visible
+// during the 1-3s while the iPhone is buffering, so the user
+// always has SOMETHING to watch.
+let _phoneReadyWatchdog = null;
+app.post("/api/phone-ready", async (_req, res) => {
+  clearTimeout(_phoneReadyWatchdog);
+  if (activePlayer === "mpv") {
+    phoneActive = true;
+    hideMpvWithRetry();
+    mpvCommand(["set_property", "mute", false]).catch(() => {});
+  }
+  res.json({ ok: true });
+});
+
 app.post("/api/stop-phone-stream", async (_req, res) => {
   killPhoneStream();
   phoneActive = false;
@@ -4465,7 +4497,11 @@ async function resolveWatchOnPhone(url) {
     try {
       const { stdout } = await execFileP(
         "yt-dlp",
-        ["--cookies", COOKIES_FILE, "-f", "bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/22/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", url],
+        // Prefer format 22 (720p H.264 + AAC single MP4 with audio
+        // baked in) so iOS skips the AVMutableComposition build
+        // entirely. Cuts cold sync engagement from ~5s to <1s.
+        // Falls back to DASH 1080p when 22 is unavailable.
+        ["--cookies", COOKIES_FILE, "-f", "22/bv*[height<=1080][ext=mp4][vcodec^=avc1]+ba[ext=m4a]/best[ext=mp4]/bv*[height<=1080]+ba", "--get-url", url],
         { timeout: 15000 }
       );
       const urls = stdout.trim().split("\n").filter(l => l.startsWith("http"));
@@ -5271,11 +5307,21 @@ app.get("/api/findmy-friend", async (req, res) => {
       }
     }
     const { header, pinLabel, rows, address, timeFragment, ageMs, crossStreet, distance } = pass;
+    // Compact "5 min. ago" → "5m ago", "2 hours ago" → "2h ago", etc.
+    // Saves horizontal room in the iOS status pill / collapsed badge.
+    const compactTime = (s) => {
+      if (!s) return s;
+      return s
+        .replace(/(\d+)\s*(?:hours?|hrs?|h)\.?\s*ago/i, "$1h ago")
+        .replace(/(\d+)\s*(?:minutes?|mins?|m)\.?\s*ago/i, "$1m ago")
+        .replace(/(\d+)\s*(?:seconds?|secs?|s)\.?\s*ago/i, "$1s ago")
+        .replace(/Just now/i, "now");
+    };
     const result = {
       ok: true,
       name: header.text,
       address,
-      timeFragment,
+      timeFragment: compactTime(timeFragment),
       ageMs,
       crossStreet,
       distance,
