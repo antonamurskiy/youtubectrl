@@ -21,7 +21,15 @@ struct TerminalView: View {
                 TermHost(host: services.serverHost,
                          autoFocus: terminal.wasKeyboardOpenAtClose,
                          bgColor: UIColor(theme.resolvedSurface),
-                         font: fonts.font(),
+                         // Terminal pane forced to Menlo: JetBrains Mono
+                         // ships zero Braille glyphs (verified via cmap)
+                         // and Claude Code's spinner is Braille. The
+                         // FontStore cascade list to Menlo doesn't
+                         // survive SwiftTerm's derived bold/italic via
+                         // withSymbolicTraits. Rest of the app keeps
+                         // the user's font choice via Font.app().
+                         font: UIFont(name: "Menlo-Regular", size: fonts.size)
+                                 ?? UIFont.monospacedSystemFont(ofSize: fonts.size, weight: .regular),
                          onSwipe: switchTmuxWindow(by:),
                          onMounted: { tv in
                              terminal.dismissKeyboard = { [weak tv] in
