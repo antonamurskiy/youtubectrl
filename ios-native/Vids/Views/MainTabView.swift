@@ -94,7 +94,9 @@ struct MainTabView: View {
 }
 
 /// Single feed tab body — wraps FeedListView with the channel-filter
-/// banner that used to live in RootView.feedView.
+/// banner that used to live in RootView.feedView. Triggers an
+/// on-appear load for its own tab if the bucket is empty so each tab
+/// is responsible for its own data, not blocked on activeTab races.
 private struct FeedTabContent: View {
     let tab: FeedTab
     @Environment(FeedStore.self) private var feed
@@ -142,6 +144,14 @@ private struct FeedTabContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .task(id: tab) {
+            // Load this tab's own data on first appear if not already
+            // loaded. Decouples per-tab loading from the activeTab
+            // sync race.
+            if (feed.videosForTab(tab).isEmpty) {
+                await feed.load(tab: tab, api: services.api)
+            }
+        }
     }
 }
 

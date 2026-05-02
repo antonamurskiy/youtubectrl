@@ -197,6 +197,15 @@ struct RootView: View {
             // Tmux tab strip — handled below as a top-level overlay
             // on the ZStack so the keyboard ignore actually pins it.
 
+            // Live-sync diagnostics overlay — only visible when phone
+            // is in sync mode. Top-leading so it doesn't clash with
+            // status dots top-right.
+            SyncDiagnostics()
+                .padding(.top, 50)
+                .padding(.leading, 12)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .zIndex(29)
+
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
             ClaudeFeedView().zIndex(25)
