@@ -44,32 +44,38 @@ struct HeaderView: View {
                 // glass capsule chrome.
                 searchPill
 
-                // Pill 2: native segmented Picker — keeps iOS 26
-                // Liquid Glass + drag-to-switch + magnify lensing
-                // intact (don't wrap in another glass capsule, that
-                // produces the "double container" look).
-                Picker("Tab", selection: Binding(
-                    get: { feed.activeTab },
-                    set: { newTab in
-                        Haptics.select()
-                        feed.activeTab = newTab
-                        Task { await feed.load(tab: newTab, api: services.api) }
-                    }
-                )) {
+                // Pill 2: Slack-style — glass capsule with custom
+                // tab buttons, active one gets a dim overlay pill.
+                // No UISegmentedControl (its built-in bar created
+                // the "second background spanning all tabs"); no
+                // magnify lensing either, but the visual matches
+                // the Slack screenshot exactly.
+                HStack(spacing: 0) {
                     ForEach(FeedTab.allCases) { tab in
-                        Text(tab.label).tag(tab)
+                        let active = feed.activeTab == tab
+                        Button {
+                            Haptics.select()
+                            feed.activeTab = tab
+                            Task { await feed.load(tab: tab, api: services.api) }
+                        } label: {
+                            Text(tab.label)
+                                .font(Font.app(Self.pillFont, weight: .semibold))
+                                .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.55))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 8)
+                                .background {
+                                    if active {
+                                        Capsule().fill(Color.white.opacity(0.18))
+                                    }
+                                }
+                                .contentShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
                 .padding(.horizontal, 4)
-                .padding(.vertical, 6)
                 .frame(maxWidth: .infinity)
                 .frame(height: Self.pillHeight)
-                // Same outer glass capsule as the search + dots pills.
-                // Segmented control's own iOS 26 Liquid Glass + magnifier
-                // renders inside it — the small inner-bar artifact is
-                // unavoidable since clearing it kills the magnifier.
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
