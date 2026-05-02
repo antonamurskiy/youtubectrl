@@ -94,12 +94,19 @@ final class FontStore {
         if entry.postScript == "<system>" {
             return UIFont.monospacedSystemFont(ofSize: s, weight: .regular)
         }
-        // No cascade list — CoreText's implicit cascade falls through
-        // to Apple Symbols for missing glyphs (e.g. Braille, which
-        // JBM and Menlo both lack). Setting an explicit .cascadeList
-        // BLOCKED that fallthrough and broke the Claude Code spinner.
-        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) { return f }
-        if let f = UIFont(name: entry.postScript, size: s) { return f }
+        // Cascade JBM → Menlo (has ✽✱✻✼ spinner dingbats) →
+        // Apple Symbols (has ⎿ bracket + box drawing variants) →
+        // Apple Color Emoji (has misc rich symbols). Without an
+        // explicit cascade, iOS's implicit cascade for custom-
+        // registered fonts (JBM is bundled, not system) doesn't
+        // reliably fall through to the right font for these glyphs
+        // and they render as .notdef boxes.
+        if let resolved = resolvedNames[label], let f = UIFont(name: resolved, size: s) {
+            return Self.withCascade(f)
+        }
+        if let f = UIFont(name: entry.postScript, size: s) {
+            return Self.withCascade(f)
+        }
         // Try matching by family name as a last resort — bundled fonts
         // sometimes load under their family rather than PostScript name
         // depending on Info.plist / iOS font registration timing.
@@ -130,6 +137,21 @@ final class FontStore {
            UIFont(name: resolved, size: 12) != nil { return resolved }
         if UIFont(name: entry.postScript, size: 12) != nil { return entry.postScript }
         return nil
+    }
+
+    /// Wrap the primary font in a CTFontDescriptor cascade list. Order
+    /// matters: each fallback is tried in sequence for any glyph the
+    /// primary font lacks. Menlo handles the dingbat spinner (✽ ✱ ✻);
+    /// Apple Symbols handles bracket + technical chars (⎿ ⏵ ⏸); emoji
+    /// is a final catch-all for emoji content.
+    private static func withCascade(_ primary: UIFont) -> UIFont {
+        let cascade: [UIFontDescriptor] = [
+            UIFontDescriptor(name: "Menlo-Regular", size: primary.pointSize),
+            UIFontDescriptor(name: "AppleSymbols", size: primary.pointSize),
+            UIFontDescriptor(name: "AppleColorEmoji", size: primary.pointSize),
+        ]
+        let desc = primary.fontDescriptor.addingAttributes([.cascadeList: cascade])
+        return UIFont(descriptor: desc, size: primary.pointSize)
     }
 
     func ensureRegistered(label: String) {
