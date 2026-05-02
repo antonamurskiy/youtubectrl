@@ -21,7 +21,12 @@ final class LiveSyncEngine {
     let seekCooldownSec: Double = 5.0
     let smoothingWindow: Int = 5
     let stableVarianceMs: Double = 80
-    let outlierThresholdSec: Double = 10  // drop drift > this from EMA
+    // Bumped 10 → 3600 — initial drift can legitimately be 20-60s
+    // when phone first joins (AVPlayer's HLS live-edge buffer vs
+    // mpv's streamlink buffer). Only filter true PDT-garbage values
+    // (e.g. phonePdt == 0 → year-2026 ms drift). 1-hour cap handles
+    // that without blocking the initial align seek.
+    let outlierThresholdSec: Double = 3600
     let postSeekSettleSec: Double = 2.0
     let stableSampleCount: Int = 3
 
