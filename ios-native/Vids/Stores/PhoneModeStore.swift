@@ -73,13 +73,27 @@ final class PhoneModeStore {
         defer { loading = false }
         do {
             let resp = try await services.api.phoneOnly(url: url)
+            // Try DASH composition first (1080p YouTube — separate
+            // video+audio streams). If it throws (network, parse,
+            // missing track), fall back to single-stream load with
+            // streamUrl. Rumble always lands here directly.
+            var loaded = false
             if let v = resp.videoUrl, let a = resp.audioUrl,
                let vu = URL(string: v), let au = URL(string: a) {
-                try await services.avHost.loadDASH(videoURL: vu, audioURL: au, durationHint: resp.durationSec ?? 0,
-                                                    position: 0, autoplay: true, muted: false)
-            } else if let s = resp.streamUrl, let u = URL(string: s) {
+                do {
+                    try await services.avHost.loadDASH(videoURL: vu, audioURL: au,
+                                                        durationHint: resp.durationSec ?? 0,
+                                                        position: 0, autoplay: true, muted: false)
+                    loaded = true
+                } catch {
+                    NSLog("[phone-only] DASH load failed: \(error) — falling back to streamUrl")
+                }
+            }
+            if !loaded, let s = resp.streamUrl, let u = URL(string: s) {
                 services.avHost.load(url: u, position: 0, autoplay: true, muted: false)
-            } else {
+                loaded = true
+            }
+            if !loaded {
                 lastError = "phone-only: no streamUrl"
                 await services.ui.toast("Watch-on-phone: no stream URL")
                 return
