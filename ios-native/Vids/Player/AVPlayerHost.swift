@@ -78,6 +78,10 @@ final class AVPlayerHost: NSObject {
 
     /// Single-URL path (progressive MP4 / HLS).
     func load(url: URL, position: Double = 0, autoplay: Bool = true, muted: Bool = false) {
+        // Defensive: clear stale pipActive that might be stuck true
+        // from a prior session — otherwise PhonePlayerView's mount
+        // condition `!pipActive` never lets the inline frame appear.
+        pipActive = false
         let item = AVPlayerItem(url: url)
         item.automaticallyPreservesTimeOffsetFromLive = false
         applyItem(item, position: position, autoplay: autoplay, muted: muted)
