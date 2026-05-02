@@ -21,6 +21,14 @@ struct VideoCellView: View {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()
+                            // Flatten the thumbnail into a single
+                            // rasterized layer — title is plain Text
+                            // (unaffected by iOS 26's scroll-edge
+                            // media lensing) but the Image's CALayer
+                            // contentsRect was being scaled per-frame.
+                            // .drawingGroup() compositves it once so
+                            // the lens treats it as opaque pixels.
+                            .drawingGroup()
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
