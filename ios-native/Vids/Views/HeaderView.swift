@@ -57,6 +57,7 @@ struct HeaderView: View {
                 .padding(.horizontal, 18)
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 2: tabs — active highlight follows the theme.
                 TabsRow(activeTab: feed.activeTab,
@@ -69,6 +70,7 @@ struct HeaderView: View {
                 .padding(.horizontal, 12)
                 .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
@@ -81,6 +83,7 @@ struct HeaderView: View {
                 .frame(height: Self.pillHeight)
                 .contentShape(Capsule())
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
+                .clipShape(Capsule())
                 .onLongPressGesture(minimumDuration: 0.5) {
                     Haptics.success()
                     services.ui.secretMenuOpen = true
