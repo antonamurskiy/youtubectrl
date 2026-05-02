@@ -194,18 +194,8 @@ struct RootView: View {
                     .zIndex(18)
             }
 
-            // Tmux tab strip — top-right, only when terminal is open.
-            // Sibling at RootView level (not inside TerminalView) so
-            // .ignoresSafeArea(.keyboard) actually pins it through
-            // soft-keyboard show/hide. Per-window rename target lifts
-            // up to RootView's renamingTmux state which TmuxTabStrip
-            // writes via Binding.
-            if terminal.open {
-                TmuxTabStrip(renaming: $renamingTmux)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
-                    .ignoresSafeArea(.keyboard, edges: .all)
-                    .zIndex(19)
-            }
+            // Tmux tab strip — handled below as a top-level overlay
+            // on the ZStack so the keyboard ignore actually pins it.
 
             ToastHUD().zIndex(30)
             VolumeHUD().zIndex(31)
@@ -219,6 +209,27 @@ struct RootView: View {
                 .zIndex(15)
                 .ignoresSafeArea()
 
+        }
+        // Tmux tab strip — pinned to top-right via an absolute-position
+        // overlay using GeometryReader. SwiftUI's standard alignment +
+        // .ignoresSafeArea(.keyboard) didn't pin it because the parent
+        // ZStack's layout still got the keyboard inset propagated.
+        // Position math: x = container.width - strip.width - padding;
+        // y = safeAreaInsets.top + padding. Both are screen-relative
+        // and unaffected by keyboard.
+        .overlay(alignment: .topLeading) {
+            if terminal.open {
+                GeometryReader { geo in
+                    let count = max(1, terminal.windows.count)
+                    let stripWidth = CGFloat(count) * 64
+                    TmuxTabStrip(renaming: $renamingTmux)
+                        .position(
+                            x: geo.size.width - stripWidth / 2 - 8,
+                            y: geo.safeAreaInsets.top + 22
+                        )
+                }
+                .ignoresSafeArea(.keyboard, edges: .all)
+            }
         }
         .sheet(item: Binding(
             get: { renamingTmux },
