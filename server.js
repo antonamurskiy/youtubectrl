@@ -2848,7 +2848,12 @@ function updateManifestStatsFromText(manifest) {
       durSinceLastPdt += d;
     }
   }
-  if (total > 60) lastManifestFullDuration = total;
+  // Lowered 60→5 — YouTube live streams with short DVR windows
+  // (<60s of segments) were leaving lastManifestFullDuration at 0,
+  // which gated the userPdt computation downstream and broadcast
+  // phoneSyncOk:false / absoluteMs:null forever. 5s is enough to
+  // mean "this is a real manifest" and unlocks phone sync.
+  if (total > 5) lastManifestFullDuration = total;
   if (targetDur > 0) lastManifestTargetDur = targetDur;
   if (lastPdt) {
     lastManifestEdgeEpochMs = lastPdt + durSinceLastPdt * 1000;
