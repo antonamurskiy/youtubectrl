@@ -14,20 +14,23 @@ struct VideoCellView: View {
             // .frame(maxWidth:.infinity) siblings. iOS 26 was hitting
             // recursive _updateVisibleCellsNow when the size cycled
             // through children.
+            // Hard-pin the thumbnail dimensions to the screen width
+            // (cell is fractionalWidth(1) with no section h-inset, so
+            // cell width == screen width). Avoids ANY size negotiation
+            // with the Image overlay's intrinsic size — every cell
+            // gets the same thumbnail box regardless of source image
+            // resolution.
+            let thumbW = UIScreen.main.bounds.width
+            let thumbH = thumbW * 9 / 16
             Color.black.opacity(0.6)
-                // FORCE full width before aspectRatio so the Color's
-                // frame doesn't get pulled smaller by the overlay
-                // Image's intrinsic size (which varies per video —
-                // 320×180, 480×270, 640×360 — and was leaking into
-                // the parent's available space, producing different
-                // thumbnail sizes per cell).
-                .frame(maxWidth: .infinity)
-                .aspectRatio(16.0/9.0, contentMode: .fit)
+                .frame(width: thumbW, height: thumbH)
                 .overlay {
                     if let img = thumbnail {
                         Image(uiImage: img)
                             .resizable()
                             .scaledToFill()
+                            .frame(width: thumbW, height: thumbH)
+                            .clipped()
                     }
                 }
                 .overlay(alignment: .bottomTrailing) {
