@@ -31,12 +31,18 @@ final class LiveSyncEngine {
     let outlierThresholdSec: Double = 3600
     let postSeekSettleSec: Double = 2.0
     let stableSampleCount: Int = 3
+    /// Once smoothed drift stays below this threshold for
+    /// settledSamplesNeeded ticks, freeze bias adjustments to stop
+    /// the periodic ~5s micro-skip at steady state.
+    let settledThresholdMs: Double = 50
+    let settledSamplesNeeded: Int = 5
 
     // State
     private(set) var smoothedDriftMs: Double = 0
     private(set) var biasMs: Double = 0
     private(set) var rawDriftMs: Double = 0
     private(set) var lastSeekAt: Date? = nil
+    private var settledTickCount: Int = 0
     private(set) var calibPending: Bool = false
     private var samples: [Double] = []
     private var postSeekSamples: [Double] = []
@@ -128,7 +134,20 @@ final class LiveSyncEngine {
             return Date().timeIntervalSince(last) >= seekCooldownSec
         }()
 
-        // Calibrate from post-seek samples once stable.
+        // Calibrate from post-seek samples once stable. After
+        // |smoothed drift| has stayed below settledThresholdMs for
+        // settledSamplesNeeded consecutive ticks, FREEZE the bias —
+        // stop forcing follow-up seeks. The audible "micro-skip every
+        // ~5s at steady state" was the calibration loop forever
+        // re-seeking by ±5ms; once we're settled, that's noise we
+        // should stop chasing.
+        if abs(smoothedDriftMs) < settledThresholdMs {
+            settledTickCount += 1
+        } else {
+            settledTickCount = 0
+        }
+        let isSettled = settledTickCount >= settledSamplesNeeded
+
         if calibPending, let last = lastSeekAt, Date().timeIntervalSince(last) >= postSeekSettleSec {
             postSeekSamples.append(drift * 1000)
             let recent = Array(postSeekSamples.suffix(stableSampleCount))
@@ -139,10 +158,12 @@ final class LiveSyncEngine {
                     biasMs += (mean * learningRate).rounded()
                     calibPending = false
                     postSeekSamples.removeAll()
-                    // Force a follow-up seek to apply the new bias —
-                    // without this, drift drops below threshold and
-                    // the loop stalls before converging.
-                    forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+                    // Apply the new bias only if not yet settled.
+                    // Once settled, freezing bias prevents the
+                    // periodic micro-skip the user reported.
+                    if !isSettled {
+                        forceSeek(targetPdtMs: mpvPdtNow + biasMs, host: host)
+                    }
                 }
             }
         }
