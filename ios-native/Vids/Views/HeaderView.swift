@@ -47,14 +47,26 @@ struct HeaderView: View {
                 // glass capsule chrome.
                 searchPill
 
-                // Pill 2: Slack-style — outer glass capsule, custom
-                // tab buttons, active tab gets a translucent capsule
-                // pill that slides via matchedGeometryEffect, and the
-                // tab UNDER THE FINGER scales up (1.18×) during drag.
-                // That visual scale-up IS the "magnify" Slack shows —
-                // it isn't a Liquid Glass lens, it's just the active
-                // label growing under the finger.
-                slackTabsPill
+                // Pill 2: native UISegmentedControl via Picker(.segmented).
+                // The iOS 26 Liquid Glass magnify-under-finger lens is
+                // PRIVATE API exclusive to UITabBar + UISegmentedControl
+                // (confirmed via Apple docs + WWDC25 + FabBar reverse-
+                // engineering). Custom .glassEffect cannot replicate it.
+                // We don't wrap in another .glassEffect capsule — that
+                // creates a "double container" artifact and clips the
+                // lift-out behavior. Picker's own chrome IS the lens.
+                Picker("Tab", selection: Binding(
+                    get: { feed.activeTab },
+                    set: { newTab in selectTab(newTab) }
+                )) {
+                    ForEach(FeedTab.allCases) { tab in
+                        Text(tab.label).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+                .frame(height: Self.pillHeight)
 
                 // Pill 3: status dots → secret menu
                 HStack(spacing: 4) {
