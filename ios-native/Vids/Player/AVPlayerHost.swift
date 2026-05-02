@@ -234,6 +234,26 @@ final class AVPlayerHost: NSObject {
         player.rate = Float(rate)
     }
 
+    func setMuted(_ m: Bool) {
+        player.isMuted = m
+        isMuted = m
+        player.volume = m ? 0 : 1
+    }
+
+    /// True when the iPhone's current audio output route includes
+    /// a headphone-class device (BT A2DP/HFP, wired headphones).
+    /// Used by sync-mode to decide which side gets unmuted.
+    var hasHeadphonesAttached: Bool {
+        let outputs = AVAudioSession.sharedInstance().currentRoute.outputs
+        return outputs.contains { o in
+            o.portType == .bluetoothA2DP
+                || o.portType == .bluetoothHFP
+                || o.portType == .bluetoothLE
+                || o.portType == .headphones
+                || o.portType == .usbAudio
+        }
+    }
+
     // MARK: - Live state
 
     struct LiveState {

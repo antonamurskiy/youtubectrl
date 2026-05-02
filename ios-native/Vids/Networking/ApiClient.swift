@@ -38,6 +38,17 @@ actor ApiClient {
         try await post("/api/client-log", body: payload)
     }
 
+    // Mac mute control + audio-route classification for sync-mode
+    // headphone-side detection.
+    func setMacMute(_ muted: Bool) async throws {
+        try await post("/api/set-mute", body: ["muted": muted])
+    }
+
+    struct MacAudioInfo: Codable { let current: String; let isHeadphones: Bool }
+    func macAudioInfo() async throws -> MacAudioInfo {
+        try await get("/api/audio-output-info")
+    }
+
     private func post(_ path: String, body: [String: Any] = [:]) async throws {
         var req = URLRequest(url: url(path))
         req.httpMethod = "POST"

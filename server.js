@@ -3763,6 +3763,39 @@ app.post("/api/mute", async (_req, res) => {
   }
 });
 
+// Explicit set mute state (vs /api/mute which toggles). Used by
+// the iOS phone-sync mode to mute Mac when iPhone has the
+// headphones connected (and vice versa).
+app.post("/api/set-mute", async (req, res) => {
+  const { muted } = req.body || {};
+  if (typeof muted !== "boolean") return res.status(400).json({ error: "Missing muted bool" });
+  try {
+    await execP(`osascript -e 'set volume output muted ${muted ? "true" : "false"}'`);
+    res.json({ ok: true, muted });
+  } catch {
+    res.status(500).json({ error: "Mute failed" });
+  }
+});
+
+// Mac's current audio output + classification of whether it's a
+// headphone-class device (BT headphones, AirPods, USB headphones).
+// Used by iOS sync mode to decide which side gets unmuted.
+app.get("/api/audio-output-info", async (_req, res) => {
+  try {
+    const { stdout } = await execP("SwitchAudioSource -c -t output");
+    const current = stdout.trim();
+    // Classify: AirPods, "Headphones", anything containing common
+    // BT headphone brand markers. Speakers/Display/HDMI/Built-in
+    // count as NOT headphones.
+    const lower = current.toLowerCase();
+    const isHeadphones = /\b(airpods|airpod|headphone|beats|sony|bose|sennheiser|jabra|jbl|blackshark|razer|hifiman|edifier|akg|shure|earpods|earbuds|wf-|wh-|wi-)\b/.test(lower)
+                      || lower.includes("powerbeats");
+    res.json({ current, isHeadphones });
+  } catch {
+    res.json({ current: "", isHeadphones: false });
+  }
+});
+
 // Toggle mpv video visibility (audio-only mode)
 app.post("/api/mpv-video", async (req, res) => {
   const { hidden } = req.body;

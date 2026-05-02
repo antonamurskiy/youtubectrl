@@ -61,6 +61,10 @@ final class PhoneModeStore {
                 services.liveSync.reset()
                 services.liveSync.start()
             }
+            // Headphone-side detection: in sync mode play on whichever
+            // device has the headphones, mute the other. iPhone wins
+            // ties (its AVPlayer is the active rendering surface).
+            await applyHeadphoneRouting(services: services)
         } catch {
             lastError = String(describing: error)
         }
@@ -139,6 +143,36 @@ final class PhoneModeStore {
         services.avHost.stop()
         services.avHost.clearNowPlaying()
         try? await services.api.stopPhoneStream()
+        // Restore Mac mute state — sync mode may have muted it.
+        try? await services.api.setMacMute(false)
+        services.avHost.setMuted(false)
         mode = .computer
+    }
+
+    /// In sync mode, route audio to whichever side has headphones
+    /// connected and mute the other so the user doesn't get double
+    /// audio. iPhone wins ties (its AVPlayer is the rendering surface).
+    @MainActor
+    func applyHeadphoneRouting(services: ServiceContainer) async {
+        let phoneHasPhones = services.avHost.hasHeadphonesAttached
+        let macInfo = try? await services.api.macAudioInfo()
+        let macHasPhones = macInfo?.isHeadphones ?? false
+
+        // Decision matrix:
+        //   phone-only  → unmute phone, mute Mac
+        //   mac-only    → mute phone, unmute Mac
+        //   both        → unmute phone (iPhone wins), mute Mac
+        //   neither     → unmute both (use whichever's louder)
+        let phoneActive = phoneHasPhones || (!phoneHasPhones && !macHasPhones)
+        let macActive = macHasPhones && !phoneHasPhones
+
+        services.avHost.setMuted(!phoneActive)
+        try? await services.api.setMacMute(!macActive)
+
+        await services.ui.toast(
+            phoneActive && !macActive ? "Audio: phone (\(phoneHasPhones ? "headphones" : "speaker"))"
+            : macActive ? "Audio: Mac (\(macInfo?.current ?? "headphones"))"
+            : "Audio: phone + Mac"
+        )
     }
 }
