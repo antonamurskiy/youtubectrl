@@ -24,8 +24,7 @@ final class WSClient {
         // Force the receive callback onto the main queue so PlaybackStore
         // mutations (which back @Observable views) propagate to SwiftUI
         // reliably. Default delegate queue is a background serial queue
-        // and off-main @Observable writes silently fail to re-render
-        // dependent views (title, macStatus, etc.).
+        // and off-main @Observable writes silently fail to re-render.
         self.session = URLSession(configuration: .default,
                                   delegate: nil,
                                   delegateQueue: OperationQueue.main)

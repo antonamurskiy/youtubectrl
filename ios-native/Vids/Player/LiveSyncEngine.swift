@@ -13,8 +13,12 @@ import Observation
 final class LiveSyncEngine {
     // Tunables
     let learningRate: Double = 0.7
-    let seekThresholdSec: Double = 0.5
-    let seekCooldownSec: Double = 2.5
+    // Bumped 0.5 → 1.5s and 2.5 → 5s — was triggering visible AVPlayer
+    // skips on tiny drifts that the user perceived as the player
+    // jumping around. Slower correction = smoother watch experience;
+    // long-running drift still gets caught.
+    let seekThresholdSec: Double = 1.5
+    let seekCooldownSec: Double = 5.0
     let smoothingWindow: Int = 5
     let stableVarianceMs: Double = 80
     let outlierThresholdSec: Double = 10  // drop drift > this from EMA
