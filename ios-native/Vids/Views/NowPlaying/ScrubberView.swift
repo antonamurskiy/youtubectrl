@@ -14,7 +14,15 @@ struct ScrubberView: UIViewRepresentable {
         v.onSeek = { [weak services] pct in
             guard let services else { return }
             let target = pct * (Double(playback.duration > 0 ? playback.duration : 0))
-            Task { try? await services.api.seek(target) }
+            // In phone-only mode the AVPlayer IS the source of truth
+            // (mpv is muted/hidden) — seek it directly. In sync mode
+            // mpv is the source and the phone resyncs from there. In
+            // computer mode just seek mpv.
+            if services.phoneMode.mode == .phoneOnly {
+                Task { await services.avHost.seek(toSeconds: target) }
+            } else {
+                Task { try? await services.api.seek(target) }
+            }
         }
         // Hoist scrub preview into the SwiftUI overlay above NPBar —
         // ScrubberUIView publishes drag state, RootView renders the
