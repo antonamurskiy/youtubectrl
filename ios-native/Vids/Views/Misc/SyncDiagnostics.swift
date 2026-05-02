@@ -11,10 +11,15 @@ struct SyncDiagnostics: View {
     var body: some View {
         if phoneMode.mode == .sync {
             VStack(alignment: .trailing, spacing: 2) {
-                row("drift", driftLabel(services.liveSync.rawDriftMs))
-                row("smooth", fmt(services.liveSync.smoothedDriftMs, suffix: "ms"))
-                row("bias", fmt(services.liveSync.biasMs, suffix: "ms"))
-                row("seek", lastSeekAge)
+                if !playback.phoneSyncOk {
+                    row("status", "no sync data")
+                    row("hint", "server PDT N/A")
+                } else {
+                    row("drift", driftLabel(services.liveSync.rawDriftMs))
+                    row("smooth", fmt(services.liveSync.smoothedDriftMs, suffix: "ms"))
+                    row("bias", fmt(services.liveSync.biasMs, suffix: "ms"))
+                    row("seek", lastSeekAge)
+                }
                 if playback.isLive { row("live", "yes") }
             }
             .font(.system(size: 10, design: .monospaced))
