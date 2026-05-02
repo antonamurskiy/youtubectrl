@@ -147,6 +147,8 @@ struct PlaybackPayload: Codable {
     let absoluteMs: Double?
     let phoneSyncOk: Bool?
     let macStatus: MacStatus?
+    let audioOutput: String?
+    let audioBattery: Int?
     let tmuxWindows: [TmuxWindow]?
     let tmuxColors: [String: String]?
     let claudeState: String?

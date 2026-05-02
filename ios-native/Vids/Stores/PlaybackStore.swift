@@ -24,6 +24,8 @@ final class PlaybackStore {
     var phoneSyncOk: Bool = true
 
     var macStatus = MacStatus(locked: false, screenOff: false, ethernet: false, keepAwake: false, frontApp: nil)
+    var audioOutput: String = ""
+    var audioBattery: Int? = nil
     var claudeState: String = "idle"
     var claudeOptions: [ClaudeOption] = []
     var claudeQuestion: String? = nil
@@ -52,6 +54,8 @@ final class PlaybackStore {
         if let v = p.absoluteMs { absoluteMs = v }
         if let v = p.phoneSyncOk { phoneSyncOk = v }
         if let v = p.macStatus, v != macStatus { macStatus = v }
+        if let v = p.audioOutput { audioOutput = v }
+        if let v = p.audioBattery { audioBattery = v }
         if let v = p.claudeState, v != claudeState { claudeState = v }
         if let v = p.claudeOptions, v != claudeOptions { claudeOptions = v }
         if let v = p.claudeQuestion, v != claudeQuestion { claudeQuestion = v }

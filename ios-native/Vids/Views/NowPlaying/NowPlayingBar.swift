@@ -221,11 +221,41 @@ struct NowPlayingBar: View {
 
     private var audioButton: some View {
         Button(action: { ui.audioSheetOpen = true }) {
-            Image(systemName: "speaker.wave.2.fill")
-                .font(Font.app(14))
-                .foregroundStyle(Color.appText.opacity(0.65))
+            HStack(spacing: 3) {
+                Image(systemName: audioOutputSymbol)
+                    .font(Font.app(14))
+                    .foregroundStyle(Color.appText.opacity(0.65))
+                if let pct = playback.audioBattery {
+                    Text("\(pct)")
+                        .font(Font.app(9, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(audioBatteryColor(pct))
+                }
+            }
         }
         .buttonStyle(.plain)
+    }
+
+    /// Map the active audio output device name to an SF Symbol —
+    /// covers AirPods family, headphones, HomePod, AirPlay, built-in
+    /// speaker, and external display speakers.
+    private var audioOutputSymbol: String {
+        let n = playback.audioOutput.lowercased()
+        if n.contains("airpods max") { return "airpodsmax" }
+        if n.contains("airpods pro") { return "airpodspro" }
+        if n.contains("airpods")     { return "airpods" }
+        if n.contains("homepod")     { return "homepod.fill" }
+        if n.contains("beats")       { return "beats.headphones" }
+        if n.contains("headphone")   { return "headphones" }
+        if n.contains("airplay")     { return "airplayaudio" }
+        if n.contains("display") || n.contains("lg ") || n.contains("monitor") { return "tv" }
+        if n.contains("macbook") || n.contains("built")    { return "laptopcomputer" }
+        return "speaker.wave.2.fill"
+    }
+
+    private func audioBatteryColor(_ pct: Int) -> Color {
+        if pct <= 20 { return Color(hex: "#cc4040") }
+        if pct <= 40 { return Color(hex: "#e5b567") }
+        return Color.appText.opacity(0.55)
     }
 
     private var pipButton: some View {

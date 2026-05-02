@@ -105,13 +105,13 @@ struct SecretMenu: View {
                 if child.id != last {
                     LinearGradient(
                         colors: [
-                            Color.white.opacity(0.0),
-                            Color.white.opacity(0.06),
-                            Color.white.opacity(0.0),
+                            Color.white.opacity(0.04),
+                            Color.white.opacity(0.18),
+                            Color.white.opacity(0.04),
                         ],
                         startPoint: .leading, endPoint: .trailing
                     )
-                    .frame(height: 0.5)
+                    .frame(height: 1)
                 }
             }
         }

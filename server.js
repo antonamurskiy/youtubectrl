@@ -3633,12 +3633,37 @@ app.get("/api/live-status", async (req, res) => {
 // and should always work.
 let _cachedAudioOut = null;
 let _cachedAudioOutAt = 0;
+/// Battery % of the currently active audio device when it's a BT
+/// peripheral — null when output is built-in / wired. Refreshed
+/// alongside _cachedAudioOut in isProtectedAudioOutput().
+let _cachedAudioBattery = null;
 async function isProtectedAudioOutput() {
   try {
     const now = Date.now();
     if (!_cachedAudioOut || (now - _cachedAudioOutAt) > 3000) {
       _cachedAudioOut = (await execP("SwitchAudioSource -c -t output")).stdout.trim();
       _cachedAudioOutAt = now;
+      // Try to match the active output to a connected BT peripheral
+      // and pick up its battery %. Only meaningful for AirPods etc.
+      _cachedAudioBattery = null;
+      try {
+        const want = (_cachedAudioOut || "").toLowerCase();
+        if (!want.includes("macbook") && !want.includes("lg ") && !want.includes("display")) {
+          const [{ stdout }, batteryMap] = await Promise.all([
+            execP("blueutil --paired --format json", {
+              env: { ...process.env, BLUEUTIL_USE_SYSTEM_PROFILER: "1" }
+            }),
+            getBluetoothBatteryMap(),
+          ]);
+          const devices = JSON.parse(stdout);
+          const match = devices.find(d => {
+            const n = (d.name || "").toLowerCase();
+            return n && (want.includes(n) || n.includes(want));
+          });
+          const bat = match ? batteryMap[(match.address || "").toLowerCase()] : null;
+          if (bat?.battery != null) _cachedAudioBattery = bat.battery;
+        }
+      } catch {}
     }
     const name = (_cachedAudioOut || "").toLowerCase();
     return name.includes("macbook") || name.includes("lg ");
@@ -6776,6 +6801,11 @@ function startWsSync() {
         state = { type: "playback", playing: false };
       }
       state.macStatus = _macStatusCache;
+      // Current audio output device + battery (for BT devices). Lets
+      // the iOS now-playing bar pick the right SF Symbol (airpods /
+      // speaker / homepod / headphones) and show battery %.
+      state.audioOutput = _cachedAudioOut || null;
+      state.audioBattery = _cachedAudioBattery ?? null;
       state.claudeState = claudeState;
       if (claudeOptions.length) state.claudeOptions = claudeOptions;
       if (claudeQuestion) state.claudeQuestion = claudeQuestion;
