@@ -36,6 +36,7 @@
 		9F4003B6DE9EF1A22E8F1C9E /* AudioOutputSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680E1B2FD41746EA8CD4E5D4 /* AudioOutputSheet.swift */; };
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
 		B12D8C50F808793B28FECC15 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33FABF28AB81A46AF9E93598 /* GlassCard.swift */; };
+		B200A15FCA33B6F576DABC3D /* LegacyBlurView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5C8611651CCC288B183D704 /* LegacyBlurView.swift */; };
 		B286EBE1F4C705F0CCA021AF /* Skeleton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 865103F6DE2AF3C66792596A /* Skeleton.swift */; };
 		B34F373A1FBCF3E5F5FE1C32 /* TerminalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */; };
 		B41C2EC4A91F9FA1A1F3E9F2 /* ClaudeQuickReply.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98EF5E940F2BEE19C09BF3AD /* ClaudeQuickReply.swift */; };
@@ -87,6 +88,7 @@
 		BA16E099AF62AF37E5C3C310 /* WSClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WSClient.swift; sourceTree = "<group>"; };
 		C01B92142190D3825B2F82AE /* FeedListView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FeedListView.swift; sourceTree = "<group>"; };
 		C0B7CFE15E3082B8C87ABCBB /* PushHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushHandler.swift; sourceTree = "<group>"; };
+		C5C8611651CCC288B183D704 /* LegacyBlurView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LegacyBlurView.swift; sourceTree = "<group>"; };
 		D728266A389F940C9A20B51F /* CommentsPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommentsPanel.swift; sourceTree = "<group>"; };
 		DBBC8B0D72054C178C9628EA /* RootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootView.swift; sourceTree = "<group>"; };
 		DCC0F52D7AFAAAFECE31A519 /* AVPlayerHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerHost.swift; sourceTree = "<group>"; };
@@ -183,6 +185,7 @@
 			isa = PBXGroup;
 			children = (
 				33FABF28AB81A46AF9E93598 /* GlassCard.swift */,
+				C5C8611651CCC288B183D704 /* LegacyBlurView.swift */,
 			);
 			path = Common;
 			sourceTree = "<group>";
@@ -388,6 +391,7 @@
 				C277191434F21FEEE7B87B05 /* Haptics.swift in Sources */,
 				7E79863CD7BB9B0797EA31E7 /* HeaderView.swift in Sources */,
 				97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */,
+				B200A15FCA33B6F576DABC3D /* LegacyBlurView.swift in Sources */,
 				F76934D828ACD4C1B9E7110A /* LiveSyncEngine.swift in Sources */,
 				452CC9E21E5858F6607697B8 /* NowPlayingBar.swift in Sources */,
 				4F878C4C0E6835D2C3E4C48C /* PasteSuppressor.swift in Sources */,
