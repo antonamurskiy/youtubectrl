@@ -185,13 +185,17 @@ struct NowPlayingBar: View {
     }
 
     private func npBtn(active: Bool, systemName: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+        Button(action: { Haptics.tap(); action() }) {
             Image(systemName: systemName)
                 .font(Font.app(14, weight: .medium))
                 .frame(width: 36, height: 32)
                 .foregroundStyle(active ? Color(hex: "#8ec07c") : Color.appText.opacity(0.65))
                 .background(active ? Color(hex: "#8ec07c").opacity(0.15) : .clear)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
+                // Explicit hit shape — bar's outer .contentShape was
+                // swallowing taps when the inner background was .clear
+                // (transparent backgrounds don't claim hit tests).
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
