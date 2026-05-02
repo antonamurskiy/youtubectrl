@@ -86,7 +86,12 @@ struct RootView: View {
             // Phone-sync / phone-only video frame, hosting AVPlayerHost.containerView.
             // Sized via GeometryReader from the parent so it adapts to
             // landscape + iPad regular size class.
-            if phoneMode.mode == .sync || phoneMode.mode == .phoneOnly {
+            // Hide the inline frame while PiP is active — the
+            // AVPlayerLayer's content has moved to the system PiP
+            // window, leaving only a black panel where the inline
+            // video used to be.
+            if (phoneMode.mode == .sync || phoneMode.mode == .phoneOnly)
+                && !services.avHost.pipActive {
                 GeometryReader { outer in
                     let availW = outer.size.width
                     let availH = outer.size.height - 90  // header + safe area
