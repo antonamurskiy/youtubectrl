@@ -66,6 +66,11 @@ struct VideoCellView: View {
             .padding(.horizontal, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // Disable any implicit animation inside the cell — the
+        // hosting configuration was animating the cell's content
+        // appearance (title text replacing nil, thumbnail fading in)
+        // which read as "minimised → expand" when scrolling into view.
+        .transaction { $0.animation = nil }
         .task(id: video.videoId) { await loadThumb() }
     }
 
