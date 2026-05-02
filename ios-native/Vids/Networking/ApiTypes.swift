@@ -127,6 +127,13 @@ struct TmuxWindow: Codable, Hashable, Identifiable {
 
     enum CodingKeys: String, CodingKey { case index, name, active, title }
 
+    init(index: Int, name: String, active: Bool, title: String? = nil) {
+        self.index = index
+        self.name = name
+        self.active = active
+        self.title = title
+    }
+
     // Custom decoder defaults missing/null fields so a single malformed
     // tmux window broadcast (e.g. {"index":null,"active":false} mid-
     // startup) doesn't blow up the entire PlaybackPayload decode and

@@ -65,47 +65,36 @@ struct TerminalView: View {
                     }
                     return SwiftUI.Color(red: 40/255, green: 40/255, blue: 40/255).opacity(0.7)
                 }()
-                // Top-right cluster of color-coded glass capsules,
-                // one per tmux window. Each capsule's tint comes from
-                // terminal.colors[name] (per-window color picker);
-                // active window is heavy weight + full text color,
-                // inactive is dim.
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    GlassEffectContainer(spacing: 6) {
-                        HStack(spacing: 6) {
-                            ForEach(terminal.windows) { w in
-                                let pillTint: SwiftUI.Color = {
-                                    if let hex = terminal.resolveColor(w.name) {
-                                        return Color(hex: hex).opacity(0.7)
-                                    }
-                                    return tint
-                                }()
-                                Button(action: { Task { try? await services.api.tmuxSelect(index: w.index) } }) {
-                                    Text(w.name)
-                                        .font(Font.app(13, weight: w.active ? .heavy : .semibold))
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 7)
-                                        .foregroundStyle(w.active ? Color.appText : Color.appText.opacity(0.55))
-                                }
-                                .buttonStyle(.plain)
-                                .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
-                                .simultaneousGesture(
-                                    LongPressGesture(minimumDuration: 0.5)
-                                        .onEnded { _ in renaming = w }
-                                )
-                            }
-                        }
+                // Native iOS 26 segmented Picker — OS-owned Liquid
+                // Glass chrome + magnify-on-drag lens. With optimistic
+                // flip on tap (selection writes to terminal.windows
+                // immediately, server confirms on next broadcast).
+                let activeIdx = terminal.windows.firstIndex(where: { $0.active }) ?? 0
+                Picker("Window", selection: Binding(
+                    get: { activeIdx },
+                    set: { newIdx in
+                        guard newIdx < terminal.windows.count, newIdx != activeIdx else { return }
+                        let w = terminal.windows[newIdx]
+                        optimisticallySelect(window: w)
+                        Task { try? await services.api.tmuxSelect(index: w.index) }
                     }
-                    .fixedSize()
+                )) {
+                    ForEach(Array(terminal.windows.enumerated()), id: \.offset) { idx, w in
+                        Text(w.name).tag(idx)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
-                // Pin the tab strip to the top safe area regardless
-                // of keyboard. PTY content (the host below) still
-                // resizes with the keyboard so visible rows stay
-                // above it.
                 .ignoresSafeArea(.keyboard, edges: .bottom)
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 0.5).onEnded { _ in
+                        if activeIdx < terminal.windows.count {
+                            renaming = terminal.windows[activeIdx]
+                        }
+                    }
+                )
             }
         }
         .onDisappear {
@@ -137,6 +126,18 @@ struct TerminalView: View {
         // UIScrollView-based UIKeyInput conformance. Call resign
         // directly on the captured TerminalView reference.
         terminal.dismissKeyboard?()
+    }
+
+    /// Optimistic local active-flag flip so the terminal background
+    /// retints the moment the user taps a tab, without waiting for
+    /// the next server broadcast (~1s).
+    private func optimisticallySelect(window w: TmuxWindow) {
+        terminal.windows = terminal.windows.map { existing in
+            TmuxWindow(index: existing.index,
+                       name: existing.name,
+                       active: existing.index == w.index,
+                       title: existing.title)
+        }
     }
 
     private func switchTmuxWindow(by delta: Int) {
