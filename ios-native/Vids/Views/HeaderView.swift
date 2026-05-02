@@ -22,6 +22,25 @@ struct HeaderView: View {
     /// derived from content (font + vertical padding) so type-size
     /// changes don't fight a hardcoded frame.
     private static let pillFont: CGFloat = 13
+    private static let pillHeight: CGFloat = 44
+
+    init(searchFocused: Binding<Bool>) {
+        self._searchFocused = searchFocused
+        // Match the segmented Picker's font to the rest of the pills
+        // and clear its native dark-grey backdrop so the outer glass
+        // capsule shows through (was rendering as "another bg
+        // inside the capsule").
+        let font = UIFont.systemFont(ofSize: Self.pillFont, weight: .semibold)
+        UISegmentedControl.appearance().setTitleTextAttributes(
+            [.font: font, .foregroundColor: UIColor.systemGray], for: .normal
+        )
+        UISegmentedControl.appearance().setTitleTextAttributes(
+            [.font: font, .foregroundColor: UIColor.white], for: .selected
+        )
+        UISegmentedControl.appearance().backgroundColor = .clear
+        UISegmentedControl.appearance().selectedSegmentTintColor =
+            UIColor.white.withAlphaComponent(0.18)
+    }
 
     var body: some View {
         GlassEffectContainer(spacing: 6) {
@@ -55,7 +74,7 @@ struct HeaderView: View {
                         .frame(width: 60, alignment: .leading)
                 }
                 .padding(.horizontal, 18)
-                .padding(.vertical, 12)
+                .frame(height: Self.pillHeight)
                 .glassEffect(.regular.tint(pillTint).interactive(), in: Capsule())
                 .clipShape(Capsule())
 
