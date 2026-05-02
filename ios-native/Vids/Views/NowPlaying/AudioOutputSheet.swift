@@ -9,7 +9,7 @@ struct AudioOutputSheet: View {
     @Environment(UIStore.self) private var ui
     @State private var outputs: [ApiClient.AudioOutput] = []
     @State private var btDevices: [ApiClient.BluetoothDevice] = []
-    @State private var btShown: Bool = false
+    @State private var btShown: Bool = true
     @State private var volume: Double = 0.5
     @State private var muted: Bool = false
 
@@ -21,7 +21,9 @@ struct AudioOutputSheet: View {
                 bluetoothCard
             }
             .padding(.horizontal, 16)
-            .padding(.top, 12)
+            // 28pt top clears the sheet's drag indicator handle —
+            // matches the secret menu spacing.
+            .padding(.top, 28)
             .padding(.bottom, 24)
         }
         .scrollContentBackground(.hidden)
@@ -29,6 +31,8 @@ struct AudioOutputSheet: View {
         .task {
             await loadOutputs()
             await loadVolume()
+            // Bluetooth section is open by default; pre-load devices.
+            btDevices = (try? await services.api.bluetoothDevices()) ?? []
         }
     }
 
