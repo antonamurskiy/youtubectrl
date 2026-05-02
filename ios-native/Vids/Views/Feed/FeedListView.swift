@@ -27,7 +27,7 @@ struct FeedListView: UIViewRepresentable {
                 // Island. Top inset = ~60pt safe area + 36pt header
                 // pill + gap = ~110pt so the first row starts under
                 // the floating header.
-                section.contentInsets = .init(top: 110, leading: 12, bottom: 8, trailing: 12)
+                section.contentInsets = .init(top: 60, leading: 12, bottom: 8, trailing: 12)
                 return section
             }
             // Absolute height instead of estimated — estimated()
@@ -49,7 +49,7 @@ struct FeedListView: UIViewRepresentable {
             let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .absolute(cellH)), subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 12
-            section.contentInsets = .init(top: 110, leading: 0, bottom: 280, trailing: 0)
+            section.contentInsets = .init(top: 60, leading: 0, bottom: 280, trailing: 0)
             return section
         })
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)

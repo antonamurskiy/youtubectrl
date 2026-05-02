@@ -114,8 +114,25 @@ struct RootView: View {
                 .zIndex(19)
             }
 
-            // NowPlayingBar lives inside MainTabView's
-            // .tabViewBottomAccessory — see MainTabView.swift.
+            // NowPlayingBar — sibling overlay just above the tab bar.
+            // iOS 26 standard tab bar is ≈49pt + bottom safe area; we
+            // pad NPBar's bottom by that. .tabViewBottomAccessory
+            // rendered the bar tiny because that slot expects a
+            // collapsed mini-player pill, not our full control bar.
+            if playback.playing && !(terminal.open && terminal.keyboardOpen) {
+                NowPlayingBar()
+                    .frame(maxWidth: hSize == .regular ? 600 : .infinity)
+                    .frame(maxWidth: .infinity)
+                    .onGeometryChange(for: CGFloat.self) { proxy in
+                        proxy.size.height
+                    } action: { newValue in
+                        npBarHeight = newValue
+                    }
+                    .padding(.bottom, 56)   // tab-bar height
+                    .ignoresSafeArea(.keyboard, edges: .bottom)
+                    .transition(.opacity)
+                    .zIndex(10)
+            }
 
             // FAB stack (terminal toggle + refresh). Bottom padding tracks
             // whether NP bar is mounted + whether keyboard is up.

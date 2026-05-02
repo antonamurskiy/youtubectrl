@@ -57,14 +57,11 @@ struct MainTabView: View {
                 Task { await feed.load(tab: tab, api: services.api) }
             }
         }
-        // NowPlayingBar lives ABOVE the tab bar like Apple Music's
-        // mini-player. iOS 26 ships .tabViewBottomAccessory exactly
-        // for this. Hidden when terminal is up + keyboard.
-        .tabViewBottomAccessory {
-            if playback.playing && !(terminal.open && terminal.keyboardOpen) {
-                NowPlayingBar()
-            }
-        }
+        // NowPlayingBar is NOT placed in .tabViewBottomAccessory —
+        // that slot expects a small mini-player pill (Apple Music
+        // collapsed style), and our NPBar is a full multi-row
+        // control surface. Instead it overlays in RootView, padded
+        // above the tab bar.
     }
 
     private func icon(for tab: FeedTab) -> String {
