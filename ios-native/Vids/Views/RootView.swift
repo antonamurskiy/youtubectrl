@@ -176,7 +176,7 @@ struct RootView: View {
                     // Island blur in without a hard horizontal edge.
                     Rectangle()
                         .fill(.regularMaterial)
-                        .frame(height: proxy.safeAreaInsets.top + 220)
+                        .frame(height: proxy.safeAreaInsets.top + 110)
                         .mask(
                             // Hold full-opacity blur for the top
                             // 35% (covers Dynamic Island + header
