@@ -184,6 +184,15 @@ struct FeedListView: UIViewRepresentable {
                             .font(Font.app(svcs.fonts.size))
                     }
                     .margins(.all, 0)
+                    // Default UIHostingConfiguration reports the
+                    // SwiftUI content's intrinsic size to the
+                    // collection layout. When it's smaller than the
+                    // cell's absolute frame (e.g., title hasn't
+                    // measured yet), the host shrinks then animates
+                    // back to the cell frame — that's the "zoom in".
+                    // .never tells the cell to ignore intrinsic size
+                    // and just fill the layout-defined frame.
+                    .minSize(width: 0, height: 0)
                     cell.backgroundConfiguration = .clear()
                     cell.layer.removeAllAnimations()
                 }
@@ -234,6 +243,16 @@ struct FeedListView: UIViewRepresentable {
                 cell.transform = .identity
                 cell.alpha = 1
                 cell.layer.removeAllAnimations()
+                cell.contentView.layer.removeAllAnimations()
+                // Walk subview tree and kill animations on every
+                // layer — UIHostingConfiguration inserts SwiftUI's
+                // hosting view as a deep child whose own layer
+                // animations are what we're fighting.
+                func killAnims(_ v: UIView) {
+                    v.layer.removeAllAnimations()
+                    for s in v.subviews { killAnims(s) }
+                }
+                killAnims(cell.contentView)
             }
         }
 
