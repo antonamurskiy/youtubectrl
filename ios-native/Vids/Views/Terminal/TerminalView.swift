@@ -101,6 +101,11 @@ struct TerminalView: View {
                 }
                 .padding(.horizontal, 8)
                 .padding(.top, 4)
+                // Pin the tab strip to the top safe area regardless
+                // of keyboard. PTY content (the host below) still
+                // resizes with the keyboard so visible rows stay
+                // above it.
+                .ignoresSafeArea(.keyboard, edges: .bottom)
             }
         }
         .onDisappear {
@@ -114,9 +119,6 @@ struct TerminalView: View {
         .padding(.bottom, bottomInset)
         .background(theme.resolvedSurface)
         .ignoresSafeArea(.container, edges: .bottom)
-        // Don't let the soft keyboard push the tab strip down/up —
-        // its position should stay pinned to the safe-area top.
-        .ignoresSafeArea(.keyboard, edges: .all)
         // KB dismiss button moved into FABStack as a third FAB so it
         // shares the same coordinate system + spacing as the others.
         .sheet(item: Binding(
