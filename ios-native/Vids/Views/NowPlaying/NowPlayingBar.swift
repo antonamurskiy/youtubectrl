@@ -146,8 +146,12 @@ struct NowPlayingBar: View {
         // computation. No extra strokeBorder rim — Liquid Glass
         // already paints its own directional highlight, and any
         // additional stroke fights the system rim.
+        // Untinted .regular Liquid Glass to match the native tab bar /
+        // Apple Music's mini-player. Earlier .tint(barTint).interactive()
+        // muddied the material — heavy 0.7 tint killed the refraction
+        // and .interactive() made the whole bar bounce on every touch.
         .glassEffect(
-            .regular.tint(barTint).interactive(),
+            .regular,
             in: RoundedRectangle(cornerRadius: 28, style: .continuous)
         )
         // Publish the bar's frame in screen-global coords so the
