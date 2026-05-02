@@ -20,25 +20,24 @@ struct SecretMenu: View {
         // on iPhone 17 Pro. Card insets 20pt from screen edges, 24pt
         // gap between cards, 26pt corner radius.
         ScrollView {
-            // Plain VStack (no GlassEffectContainer) so each card
-            // keeps its individual border + drop shadow — matches
-            // AudioOutputSheet, which previously had borders while
-            // SecretMenu's container was merging them away.
-            VStack(spacing: 14) {
-                volumeSection.glassCard()
-                findMySection.glassCard()
-                syncOffsetSection.glassCard()
-                macSection.glassCard()
-                audioOutputSection.glassCard()
-                bluetoothSection.glassCard()
-                fontSection.glassCard()
-                brightnessSection.glassCard()
+            // GlassEffectContainer merges adjacent glass cards into
+            // one continuous Liquid Glass surface — drops the
+            // individual borders so the sections read as one body.
+            GlassEffectContainer(spacing: 14) {
+                VStack(spacing: 14) {
+                    volumeSection.glassCard()
+                    findMySection.glassCard()
+                    syncOffsetSection.glassCard()
+                    macSection.glassCard()
+                    audioOutputSection.glassCard()
+                    bluetoothSection.glassCard()
+                    fontSection.glassCard()
+                    brightnessSection.glassCard()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 28)
+                .padding(.bottom, 28)
             }
-            .padding(.horizontal, 20)
-            // Clearance for the sheet's drag indicator handle —
-            // without this the first card sits right under it.
-            .padding(.top, 28)
-            .padding(.bottom, 28)
         }
         .scrollContentBackground(.hidden)
         // Drop the system blue accent — propagates to Toggle, Slider,

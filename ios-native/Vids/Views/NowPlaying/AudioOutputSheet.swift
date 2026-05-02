@@ -14,7 +14,10 @@ struct AudioOutputSheet: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 14) {
+            // GlassEffectContainer merges the cards' borders into a
+            // single continuous surface (matches SecretMenu).
+            GlassEffectContainer(spacing: 14) {
+                VStack(spacing: 14) {
                 CardSection(nil) { volumeRow }
                     .glassCard()
 
@@ -54,10 +57,11 @@ struct AudioOutputSheet: View {
                     }
                 }
                 .glassCard()
+                }
+                .padding(.horizontal, 20)
+                .padding(.top, 28)
+                .padding(.bottom, 28)
             }
-            .padding(.horizontal, 20)
-            .padding(.top, 28)
-            .padding(.bottom, 28)
         }
         .scrollContentBackground(.hidden)
         .task {
