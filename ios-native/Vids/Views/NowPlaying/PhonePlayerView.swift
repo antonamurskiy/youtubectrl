@@ -17,5 +17,14 @@ struct PhonePlayerView: UIViewRepresentable {
     }
     func updateUIView(_ uiView: UIView, context: Context) {
         host.containerView.frame = uiView.bounds
+        // Re-attach in case it was moved away (e.g., earlier PiP cycle)
+        // and ensure it's visible — earlier "computer mode" fix paused
+        // the AVPlayer + isHidden = true; restoring here on every
+        // SwiftUI update guarantees phone-mode shows the video.
+        if host.containerView.superview !== uiView {
+            host.containerView.removeFromSuperview()
+            uiView.addSubview(host.containerView)
+        }
+        host.containerView.isHidden = false
     }
 }
