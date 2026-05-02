@@ -354,11 +354,6 @@ struct RootView: View {
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
                     .ignoresSafeArea(.container, edges: [.top, .bottom])
-                    // iOS 26 default top scroll-edge effect shrinks
-                    // content as it approaches the safe-area edge.
-                    // Disabled so thumbnails stay full-size all the
-                    // way under the Dynamic Island.
-                    .scrollEdgeEffectStyle(.hard, for: .top)
                 if feed.currentVideos.isEmpty {
                     if let err = feed.lastError {
                         Text(err)

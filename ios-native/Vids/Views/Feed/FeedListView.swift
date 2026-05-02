@@ -51,6 +51,13 @@ struct FeedListView: UIViewRepresentable {
         })
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)
         cv.backgroundColor = .clear
+        // iOS 26 applies a "soft" UIScrollEdgeEffect to the top edge
+        // (Liquid Glass lensing of content scrolling under the safe
+        // area) — visible as thumbnails zooming as they approach
+        // the Dynamic Island. .scrollEdgeEffectStyle only swaps
+        // hard/soft style; .isHidden = true is what actually disables
+        // the visual effect.
+        cv.topEdgeEffect.isHidden = true
         cv.alwaysBounceVertical = true
         cv.delegate = context.coordinator
         cv.prefetchDataSource = context.coordinator
