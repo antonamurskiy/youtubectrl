@@ -123,21 +123,19 @@ private struct TabsRow: View {
             HStack(spacing: 2) {
                 ForEach(FeedTab.allCases) { tab in
                     let active = activeTab == tab
-                    Button(action: { onTap(tab) }) {
-                        Text(tab.label)
-                            .font(Font.app(fontSize, weight: .semibold))
-                            // Bigger inner padding + explicit hit
-                            // shape so each tab claims a 44pt tap
-                            // target. Without contentShape the
-                            // Button only hit-tests the painted text
-                            // bounding box, which was tiny.
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 10)
-                            .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
-                            .contentShape(Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
+                    Text(tab.label)
+                        .font(Font.app(fontSize, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 10)
+                        .foregroundStyle(active ? Color.appText : Color.appText.opacity(0.5))
+                        .contentShape(Capsule())
+                        // Glass under the active label tracks touch
+                        // for the iOS 26 magnifier effect. Buttons
+                        // were eating the drag — onTapGesture only
+                        // fires on tap-up so the glass still gets
+                        // raw touch events.
+                        .modifier(ActiveTabGlass(active: active, tint: highlightTint, ns: ns, id: tab.label))
+                        .onTapGesture { onTap(tab) }
                 }
             }
             .fixedSize()
