@@ -23,17 +23,18 @@ struct FeedListView: UIViewRepresentable {
                 let section = NSCollectionLayoutSection(group: group)
                 section.orthogonalScrollingBehavior = .continuousGroupLeadingBoundary
                 section.interGroupSpacing = 8
-                // Top padding clears the floating glass header pill
-                // (search/tabs/dots) hovering over the feed.
-                section.contentInsets = .init(top: 60, leading: 12, bottom: 8, trailing: 12)
+                // Top inset clears the safe area (~60pt) + 36pt
+                // header pill + 4pt gap; first row sits just below
+                // the floating nav.
+                section.contentInsets = .init(top: 100, leading: 12, bottom: 8, trailing: 12)
                 return section
             }
             let item = NSCollectionLayoutItem(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)))
             let group = NSCollectionLayoutGroup.vertical(layoutSize: NSCollectionLayoutSize(widthDimension: .fractionalWidth(1), heightDimension: .estimated(280)), subitems: [item])
             let section = NSCollectionLayoutSection(group: group)
             section.interGroupSpacing = 12
-            // 60pt top clears the floating header pill.
-            section.contentInsets = .init(top: 60, leading: 0, bottom: 280, trailing: 0)
+            // Same 100pt top — safe area + header pill + gap.
+            section.contentInsets = .init(top: 100, leading: 0, bottom: 280, trailing: 0)
             return section
         }
         let cv = UICollectionView(frame: .zero, collectionViewLayout: layout)

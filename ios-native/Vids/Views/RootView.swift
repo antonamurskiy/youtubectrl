@@ -315,7 +315,11 @@ struct RootView: View {
             }
             ZStack(alignment: .top) {
                 FeedListView(onSwipe: cycleFeedTab(by:))
-                    .ignoresSafeArea(.container, edges: .bottom)
+                    // Extend into top safe area too so cells scroll
+                    // BEHIND the Dynamic Island (with the floating
+                    // header pill blurring over them) instead of
+                    // hitting an opaque gray strip at the top.
+                    .ignoresSafeArea(.container, edges: [.top, .bottom])
                 if feed.currentVideos.isEmpty {
                     if let err = feed.lastError {
                         Text(err)
