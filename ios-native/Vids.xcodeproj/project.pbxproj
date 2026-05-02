@@ -36,6 +36,7 @@
 		8E92BC457ECE29753485A29E /* ScrubberView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E7A60F533EA88740A8701DF /* ScrubberView.swift */; };
 		92CB69148F1B17964BFE1A20 /* FeedListView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C01B92142190D3825B2F82AE /* FeedListView.swift */; };
 		97FA04A95C7511DD61A6D074 /* KeyboardObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */; };
+		9D204D82A64B5115FEE0C322 /* TmuxStripWindowHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4ED1DBE674926615A8CCD276 /* TmuxStripWindowHost.swift */; };
 		9F4003B6DE9EF1A22E8F1C9E /* AudioOutputSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 680E1B2FD41746EA8CD4E5D4 /* AudioOutputSheet.swift */; };
 		9FA83B36840C6E5519AC6573 /* PlaybackStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BDA1156BDF3A07DD262BD9A /* PlaybackStore.swift */; };
 		B12D8C50F808793B28FECC15 /* GlassCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33FABF28AB81A46AF9E93598 /* GlassCard.swift */; };
@@ -70,6 +71,7 @@
 		42457BC72FA994917802D752 /* MainTabView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = MainTabView.swift; sourceTree = "<group>"; };
 		47049B680884787ECFCBCA84 /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
 		4A01D4016AEF3F3A85662251 /* KeyboardObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardObserver.swift; sourceTree = "<group>"; };
+		4ED1DBE674926615A8CCD276 /* TmuxStripWindowHost.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TmuxStripWindowHost.swift; sourceTree = "<group>"; };
 		4F22D79B5DC8DD3E7DAA7599 /* TmuxTabStrip.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TmuxTabStrip.swift; sourceTree = "<group>"; };
 		4F91E9E068675B931E6A9A39 /* ScrubPreviewOverlay.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrubPreviewOverlay.swift; sourceTree = "<group>"; };
 		52D4C7D4575FAF706DB5953D /* QualityMenu.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QualityMenu.swift; sourceTree = "<group>"; };
@@ -137,6 +139,7 @@
 				AB1395DC5F0A7CD35F8E1218 /* TerminalView.swift */,
 				2116528FFABAA61D8A1A88DC /* TmuxRenamePopover.swift */,
 				4F22D79B5DC8DD3E7DAA7599 /* TmuxTabStrip.swift */,
+				4ED1DBE674926615A8CCD276 /* TmuxStripWindowHost.swift */,
 			);
 			path = Terminal;
 			sourceTree = "<group>";
@@ -427,6 +430,7 @@
 				20679D20FB8C8A779EC62D9F /* MainTabView.swift in Sources */,
 				4F3BBD7873E99C1B5015A883 /* StatusDotsPill.swift in Sources */,
 				239458F878EE4972285AFC1C /* TmuxTabStrip.swift in Sources */,
+				9D204D82A64B5115FEE0C322 /* TmuxStripWindowHost.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -61,20 +61,18 @@ struct MainTabView: View {
                 Task { await feed.load(tab: tab, api: services.api) }
             }
         }
-        // Belt-and-braces initial load — ServiceContainer.start()
-        // already loads .rec, but if mount races that or if the user
-        // first lands on a non-.rec tab we still want a fresh fetch.
-        // Also sync the TabView selection to the persisted
-        // feed.activeTab so the visual state matches the theme tint
-        // (was opening with green bg whenever previous session ended
-        // on the Ru tab — selection stayed at .rec, feed.activeTab
-        // was .ru, theme used .ru's green tint).
+        // Always launch on Rec, regardless of last-session persisted
+        // activeTab. The previous behavior (sync to feed.activeTab)
+        // surprised the user with red/green/etc. bg on launch when
+        // they'd left off on a tinted tab. Force feed.activeTab back
+        // to .rec so the theme tint matches the visible tab.
         .task {
-            if selection != .feed(feed.activeTab) {
-                selection = .feed(feed.activeTab)
+            if feed.activeTab != .rec {
+                feed.activeTab = .rec
             }
+            selection = .feed(.rec)
             if feed.currentVideos.isEmpty {
-                await feed.load(tab: feed.activeTab, api: services.api)
+                await feed.load(tab: .rec, api: services.api)
             }
         }
         // NowPlayingBar is NOT placed in .tabViewBottomAccessory —

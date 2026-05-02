@@ -210,27 +210,20 @@ struct RootView: View {
                 .ignoresSafeArea()
 
         }
-        // Tmux tab strip — pinned to top-right via an absolute-position
-        // overlay using GeometryReader. SwiftUI's standard alignment +
-        // .ignoresSafeArea(.keyboard) didn't pin it because the parent
-        // ZStack's layout still got the keyboard inset propagated.
-        // Position math: x = container.width - strip.width - padding;
-        // y = safeAreaInsets.top + padding. Both are screen-relative
-        // and unaffected by keyboard.
-        .overlay(alignment: .topLeading) {
-            if terminal.open {
-                GeometryReader { geo in
-                    let count = max(1, terminal.windows.count)
-                    let stripWidth = CGFloat(count) * 64
-                    TmuxTabStrip(renaming: $renamingTmux)
-                        .position(
-                            x: geo.size.width - stripWidth / 2 - 8,
-                            y: geo.safeAreaInsets.top + 22
-                        )
-                }
-                .ignoresSafeArea(.keyboard, edges: .all)
-            }
-        }
+        // Tmux tab strip — hosted directly in the UIWindow via
+        // UIHostingController so it bypasses every SwiftUI safe-area
+        // and keyboard-avoidance heuristic. Multiple SwiftUI-only
+        // attempts (.ignoresSafeArea, .position via GeometryReader,
+        // outer ZStack siblings) all kept shifting up with the
+        // keyboard because the propagated bottom safe-area inset
+        // somehow reached the strip's frame either via parent layout
+        // or via UIKit's transform during keyboard-up animation.
+        .background(
+            TmuxStripWindowHost(
+                visible: terminal.open && terminal.windows.count > 1,
+                renaming: $renamingTmux
+            )
+        )
         .sheet(item: Binding(
             get: { renamingTmux },
             set: { renamingTmux = $0 }
