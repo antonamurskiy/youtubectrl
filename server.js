@@ -6307,6 +6307,32 @@ function pushApnsHealth(title, body) {
     payload: { kind: "health" },
   });
 }
+// Debug: inject a fake Claude prompt so the iOS dialog + APNs banner
+// can be tested without waiting for a real Claude session to ask.
+// curl -s -X POST http://localhost:3000/api/_debug/claude-prompt
+//   -H "content-type: application/json"
+//   -d '{"question":"Continue?","options":[{"n":"1","text":"Yes"},{"n":"2","text":"No"}]}'
+app.post("/api/_debug/claude-prompt", (req, res) => {
+  const { question, options } = req.body || {};
+  if (!Array.isArray(options) || options.length < 1) {
+    return res.status(400).json({ error: "need options array" });
+  }
+  claudeQuestion = question || "";
+  claudeOptions = options;
+  claudeState = "waiting";
+  broadcastClaude();
+  // Auto-clear after 30s so test state doesn't stick.
+  setTimeout(() => {
+    if (claudeState === "waiting") {
+      claudeState = "idle";
+      claudeOptions = [];
+      claudeQuestion = "";
+      broadcastClaude();
+    }
+  }, 30000);
+  res.json({ ok: true });
+});
+
 app.post("/api/apns-register", (req, res) => {
   const { token } = req.body || {};
   if (!token || typeof token !== "string" || !/^[a-f0-9]{40,}$/i.test(token)) {

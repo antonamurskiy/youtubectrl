@@ -316,23 +316,31 @@ struct RootView: View {
             // so closing the panel always tucks it away.
             if !new { terminal.dismissKeyboard?() }
         }
+        // Mirror persisted terminal.open to ThemeStore at first paint
+        // so `resolved` picks up the tmux tint immediately. Without
+        // this, relaunching with the terminal already open showed
+        // the tab tint (or default gray) until the user toggled
+        // the panel — the onChange above only fires on transitions,
+        // never on initial-equal state.
+        .task { theme.terminalOpen = terminal.open }
         .onChange(of: terminal.activeWindow?.name ?? "") { _, _ in
             // When the active tmux window changes, paint the body bg
             // with that window's color so the whole app shifts to
             // match the pane you're working in.
-            if let name = terminal.activeWindow?.name,
-               let hex = terminal.resolveColor(name) {
-                theme.activeTmuxTint = Color(hex: hex)
-            } else {
-                theme.activeTmuxTint = nil
-            }
+            applyActiveTmuxTint()
         }
         .onChange(of: terminal.colors) { _, _ in
             // Color picker commit also updates the active tint live.
-            if let name = terminal.activeWindow?.name,
-               let hex = terminal.resolveColor(name) {
-                theme.activeTmuxTint = Color(hex: hex)
-            }
+            applyActiveTmuxTint()
+        }
+        // Re-eval whenever the windows array changes — e.g. on the
+        // first WS broadcast after relaunch, terminal.windows goes
+        // from [] → populated, but onChange(activeWindow?.name)
+        // sometimes misses that transition because the Optional?? ""
+        // collapses both nil and "" to the same key. Without this
+        // hook the tint stayed nil until the user nudged something.
+        .onChange(of: terminal.windows.count) { _, _ in
+            applyActiveTmuxTint()
         }
         .onChange(of: playback.playing) { _, new in
             // Mac-side hardware volume control is only useful when the
@@ -389,4 +397,17 @@ struct RootView: View {
     }
 
     // feedView + cycleFeedTab removed — feed lives in MainTabView.
+
+    /// Re-evaluate the active tmux window's color and push it into
+    /// ThemeStore. Called on activeWindow change, colors-map change,
+    /// and once at mount via .task.
+    @MainActor
+    private func applyActiveTmuxTint() {
+        if let name = terminal.activeWindow?.name,
+           let hex = terminal.resolveColor(name) {
+            theme.activeTmuxTint = Color(hex: hex)
+        } else {
+            theme.activeTmuxTint = nil
+        }
+    }
 }

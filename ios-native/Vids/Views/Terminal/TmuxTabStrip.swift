@@ -20,8 +20,13 @@ struct TmuxTabStrip: View {
             TmuxSegmentedRep(
                 titles: terminal.windows.map { $0.name },
                 selectedIndex: activeIdx,
-                tint: theme.activeTmuxTint.flatMap { UIColor($0).withAlphaComponent(0.85) }
-                       ?? UIColor(white: 0.45, alpha: 0.7),
+                // Always a light translucent white overlay — Apple's
+                // standard segmented control look. Per-window tmux
+                // tint paints the surrounding panel chrome already;
+                // tinting the active capsule on top of that produced
+                // a same-color-on-same-color blob that didn't read
+                // as "selected."
+                tint: UIColor.white.withAlphaComponent(0.22),
                 font: fonts.font(size: 13),
                 onSelect: { newIdx in
                     guard newIdx < terminal.windows.count, newIdx != activeIdx else { return }
@@ -73,9 +78,25 @@ private struct TmuxSegmentedRep: UIViewRepresentable {
         lp.minimumPressDuration = 0.5
         sc.addGestureRecognizer(lp)
         sc.selectedSegmentTintColor = tint
-        sc.setTitleTextAttributes([.font: font], for: .normal)
-        sc.setTitleTextAttributes([.font: font], for: .selected)
+        applyTextAttributes(sc)
         return sc
+    }
+
+    private func applyTextAttributes(_ sc: UISegmentedControl) {
+        // Active segment: pure white. Inactive: dim cream so the
+        // active one stands out by contrast. Same font as the rest
+        // of the app — DON'T swap to system bold (loses Berkeley Mono /
+        // user-selected family).
+        let activeAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor.white,
+        ]
+        let inactiveAttrs: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: UIColor(red: 0xeb/255, green: 0xdb/255, blue: 0xb2/255, alpha: 0.55),
+        ]
+        sc.setTitleTextAttributes(inactiveAttrs, for: .normal)
+        sc.setTitleTextAttributes(activeAttrs, for: .selected)
     }
 
     func updateUIView(_ sc: UISegmentedControl, context: Context) {
@@ -85,8 +106,7 @@ private struct TmuxSegmentedRep: UIViewRepresentable {
             for (i, t) in titles.enumerated() {
                 sc.insertSegment(withTitle: t, at: i, animated: false)
             }
-            sc.setTitleTextAttributes([.font: font], for: .normal)
-            sc.setTitleTextAttributes([.font: font], for: .selected)
+            applyTextAttributes(sc)
         } else {
             for (i, t) in titles.enumerated() {
                 if sc.titleForSegment(at: i) != t {
